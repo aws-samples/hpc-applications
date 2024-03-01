@@ -45,20 +45,5 @@ mpirun -np $SLURM_JOB_NUM_NODES -ppn 1 /bin/bash -c "sync && echo 3 | sudo tee /
 echo "Enabling Transparent Huge Pages (THP)"
 mpirun -np $SLURM_JOB_NUM_NODES -ppn 1 /bin/bash -c "echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled"
 
-declare -a fluent_args=(
-  "3ddp"
-  "-g"
-  "-t${SLURM_NPROCS}"
-  "-cnf=hostfile"
-  "-platform=intel"
-  "-nosyslog"
-  "-noloadchk"
-  "-ssh"
-  "-mpi=intel"
-  "-i $(basename ${journal_file%.*})"
-)
-
-"${benchmark_file%.*}"
-
-echo "Run Fluent Benchmark"
-"${APP_BIN_PATH}" "${fluent_args[@]}" || exit $?
+echo "Run Fluent: ${APP_BIN_PATH} 3ddp -g -t${SLURM_NPROCS} -cnf=hostfile -platform=intel -nosyslog -noloadchk -ssh -mpi=intel -i $(basename ${journal_file})"
+"${APP_BIN_PATH}" 3ddp -g -t${SLURM_NPROCS} -cnf=hostfile -platform=intel -nosyslog -noloadchk -ssh -mpi=intel -i $(basename ${journal_file}) || exit $?
