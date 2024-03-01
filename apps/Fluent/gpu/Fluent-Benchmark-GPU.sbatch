@@ -47,11 +47,5 @@ ln -s bench/fluent/v6/${benchmark_file%.*}/cas_dat/* .
 #echo "Enabling Transparent Huge Pages (THP)"
 #mpirun -np $SLURM_JOB_NUM_NODES -ppn 1 /bin/bash -c "echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled"
 
-declare -a fluent_benchmark_args=(
-  "-gpu" 
-  "-cores ${SLURM_NPROCS}" 
-  "-cases ${benchmark_file%.*}"
-)
-
-echo "Run Fluent Benchmark:" "${APP_BIN_PATH}" "${fluent_benchmark_args[@]}"
-python3 "${APP_BIN_PATH}" "${fluent_benchmark_args[@]}" > output.log 2>&1
+echo "Run Fluent Benchmark: /fsx/ansys_inc/v241/commonfiles/CPython/3_10/linx64/Release/python/bin/python  ${APP_BIN_PATH} -gpu -cores ${SLURM_NPROCS} -cases ${benchmark_file%.*}"
+/fsx/ansys_inc/v241/commonfiles/CPython/3_10/linx64/Release/python/bin/python "${APP_BIN_PATH}" -gpu -cores ${SLURM_NPROCS} -cases ${benchmark_file%.*} > output.log 2>&1
