@@ -1,9 +1,12 @@
 # HPC Application Best Practices on AWS
-
 This repository contains HPC application best practices, specifically designed and optimized to run on AWS.<br>
 In particular, these best practices take into account the peculiarity of AWS HPC specific services and EC2 instances, in order to get the best out of them.<br>
 This Repository is mainteined by AWS HPC Solution Architects, which will take care of updating and improving these best practices as new AWS HPC services are released or new settings/tuning are discovered.<br>
 This Repository is not intended to be an AWS supported product or service.<br>
+
+## HPC Application Benchmarks
+In addition to HPC application best practices, this repository will include the HPC application benchmark.<br>
+For all the supported applications we could run a benchmark using public/known dataset, we will also publish metric and/or charts showing the expected performance and scalability.
 
 ## AWS HPC Services being used
  * [AWS ParallelCluster](https://aws.amazon.com/hpc/parallelcluster/) and its [Documentation](https://docs.aws.amazon.com/parallelcluster/latest/ug/what-is-aws-parallelcluster.html)
@@ -14,7 +17,6 @@ This Repository is not intended to be an AWS supported product or service.<br>
  * AWS EC2 [Hpc7g](https://aws.amazon.com/ec2/instance-types/hpc7g/) Instances
 
 ## HPC Application best practices supported:
-
 1. [Fluent](https://github.com/aws-samples/hpc-applications/tree/main/apps/Fluent)
 2. [Abaqus](https://github.com/aws-samples/hpc-applications/tree/main/apps/Abaqus)
 3. [LS-Dyna](https://github.com/aws-samples/hpc-applications/tree/main/apps/LS-Dyna)
