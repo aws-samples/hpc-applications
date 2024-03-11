@@ -21,7 +21,7 @@ This Repository is not intended to be an AWS supported product or service.<br>
 4. [Optistruct](https://github.com/aws-samples/hpc-applications/tree/main/apps/Optistruct)
 5. [Starccm+](https://github.com/aws-samples/hpc-applications/tree/main/apps/Starccm)
 
-**_NOTE:_**  This list is being updated with additional application best practices on a constant basis.
+**_NOTE:_**  This list is being updated with additional application best practices on a regular basis.
 
 ## Security
 
