@@ -23,6 +23,8 @@ dataset_dat=${4:-"/fsx/MY_FLUENT_EXAMPLE/MY_DAT_FILE.dat.gz"}
 basedir=${BASE_DIR:-"/fsx"}
 fluent_mode=${FLUENT_MODE:-"3ddp"}
 
+export ANSYSLMD_LICENSE_FILE=${FLUENT_LICENSE:-"1055@172.31.89.151"}
+
 APP_BIN_PATH="${basedir}/ansys_inc/${fluentversion}/fluent/bin/fluent"
 export FLUENT_ARCH=lnamd64
 
