@@ -1,11 +1,9 @@
 #!/bin/bash
 #SBATCH --exclusive
 #SBATCH --nodes=1
-#SBATCH --ntasks=8
+#SBATCH --gpus=8
 #SBATCH --constraint=g5.48xlarge
 #SBATCH --partition=g5
-#SBATCH --time=12:00:00
-#SBATCH --chdir=/fsx/slurm-out/fluent
 
 ######################## EFA settings ######################## 
 export I_MPI_OFI_LIBRARY_INTERNAL=0
@@ -23,6 +21,7 @@ journal_file=${2:-"/fsx/MY_FLUENT_EXAMPLE/MY_JOURNAL_FILE.jou"}
 dataset_cas=${3:-"/fsx/MY_FLUENT_EXAMPLE/MY_CAS_FILE.cas.gz"}
 dataset_dat=${4:-"/fsx/MY_FLUENT_EXAMPLE/MY_DAT_FILE.dat.gz"}
 basedir=${BASE_DIR:-"/fsx"}
+fluent_mode=${FLUENT_MODE:-"3ddp"}
 
 APP_BIN_PATH="${basedir}/ansys_inc/${fluentversion}/fluent/bin/fluent"
 export FLUENT_ARCH=lnamd64 
@@ -47,5 +46,5 @@ mpirun -np $SLURM_JOB_NUM_NODES -ppn 1 /bin/bash -c "sync && echo 3 | sudo tee /
 echo "Enabling Transparent Huge Pages (THP)"
 mpirun -np $SLURM_JOB_NUM_NODES -ppn 1 /bin/bash -c "echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled"
 
-echo "Run Fluent: ${APP_BIN_PATH} 3ddp -g -cnf=hostfile -ssh -mpi=intel -gpuapp -i $(basename ${journal_file})"
-"${APP_BIN_PATH}" 3ddp -g -cnf=hostfile -ssh -mpi=intel -gpuapp -i $(basename ${journal_file}) || exit $?
+echo "Run Fluent: ${APP_BIN_PATH} ${fluent_mode} -g -cnf=hostfile -ssh -mpi=intel -t8 -gpuapp -i $(basename ${journal_file})"
+"${APP_BIN_PATH}" ${fluent_mode} -g -cnf=hostfile -ssh -mpi=intel -t8 -gpuapp -i $(basename ${journal_file}) | tee output.$SLURM_JOBID.out
