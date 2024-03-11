@@ -5,7 +5,6 @@
 #SBATCH --constraint=g5.48xlarge
 #SBATCH --partition=g5
 #SBATCH --time=12:00:00
-#SBATCH --chdir=/fsx/slurm-out/fluent
 
 ######################## EFA settings ######################## 
 export I_MPI_OFI_LIBRARY_INTERNAL=0
@@ -22,6 +21,7 @@ export INTELMPI_ROOT="$(dirname $(dirname $(which mpirun)))"
 fluentversion=${1:-"v241"}
 benchmark_uri=${2:-"s3://YOUR_BUCKET/f1_racecar_140m.tar"}
 basedir=${BASE_DIR:-"/fsx"}
+export ANSYSLMD_LICENSE_FILE=${FLUENT_LICENSE:-"1055@172.31.89.151"}
 
 benchmark_file=$(basename ${benchmark_uri})
 APP_BIN_PATH="${basedir}/ansys_inc/${fluentversion}/fluent/bench/bin/fluent_benchmark_gpu.py"

@@ -20,6 +20,7 @@ export INTELMPI_ROOT="$(dirname $(dirname $(which mpirun)))"
 fluentversion=${1:-"v241"}
 benchmark_uri=${2:-"s3://YOUR_BUCKET/f1_racecar_140m.tar"}
 basedir=${BASE_DIR:-"/fsx"}
+export ANSYSLMD_LICENSE_FILE=${FLUENT_LICENSE:-"1055@172.31.89.151"}
 
 benchmark_file=$(basename ${benchmark_uri})
 APP_BIN_PATH="${basedir}/ansys_inc/${fluentversion}/fluent/bin/fluentbench.pl"
@@ -46,4 +47,4 @@ echo "Enabling Transparent Huge Pages (THP)"
 mpirun -np $SLURM_JOB_NUM_NODES -ppn 1 /bin/bash -c "echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled"
 
 echo "Run Fluent Benchmark: ${APP_BIN_PATH} ${benchmark_file%.*} -t${SLURM_NPROCS} -cnf=hostfile -part=4 -platform=intel -nosyslog -noloadchk -ssh -mpi=intel -norm"
-"${APP_BIN_PATH}" ${benchmark_file%.*} -t${SLURM_NPROCS} -cnf=hostfile -part=4 -platform=intel -nosyslog -noloadchk -ssh -mpi=intel -norm || exit $?
+"${APP_BIN_PATH}" ${benchmark_file%.*} -t${SLURM_NPROCS} -cnf=hostfile -part=4 -platform=intel -nosyslog -noloadchk -ssh -mpi=intel -norm | tee output.$SLURM_JOBID.out
