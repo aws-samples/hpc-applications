@@ -25,7 +25,7 @@ basedir=${BASE_DIR:-"/fsx"}
 starccm_bin=${STARCCM_BIN:-"${basedir}/Siemens/${APP_VERSION}/STAR-CCM+${APP_VERSION}/star/bin/starccm+"}
 starccm_sim_file=$(basename ${starccm_sim})
 
-#for POD license only
+#example for POD license only, customize as needed
 license_arn=${LICENSE_ARN:-"arn:aws:secretsmanager:XXXXXXXX"}
 PODLIC="$(aws secretsmanager get-secret-value --secret-id ${license_arn} --query SecretString --output text --region ${cfn_region} )"
 LICENSEOPTS="-power -podkey ${PODLIC} -licpath 1999@flex.cd-adapco.com"
