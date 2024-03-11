@@ -18,7 +18,7 @@ For all the supported applications we could run a benchmark using public/known d
 
 ## HPC Application best practices supported:
 1. [Fluent](https://github.com/aws-samples/hpc-applications/tree/main/apps/Fluent)
-2. [Abaqus](https://github.com/aws-samples/hpc-applications/tree/main/apps/Abaqus)
+2. [Abaqus](https://github.com/aws-samples/hpc-applications/tree/main/apps/Abacus)
 3. [LS-Dyna](https://github.com/aws-samples/hpc-applications/tree/main/apps/LS-Dyna)
 4. [Optistruct](https://github.com/aws-samples/hpc-applications/tree/main/apps/Optistruct)
 5. [Starccm+](https://github.com/aws-samples/hpc-applications/tree/main/apps/Starccm)
