@@ -20,7 +20,7 @@ export INTEL_MPI_PATH="${I_MPI_ROOT}"
 . '/etc/parallelcluster/cfnconfig'
 
 APP_VERSION=${1:-"18.06.007"}
-starccm_sim=${2:-"/fsx/YOUR_BUCKET/myStarccmModel.sim"}
+starccm_sim=${2:-"/fsx/MY_STARCCM_EXAMPLE/myStarccmModel.sim"}
 basedir=${BASE_DIR:-"/fsx"}
 starccm_bin=${STARCCM_BIN:-"${basedir}/Siemens/${APP_VERSION}/STAR-CCM+${APP_VERSION}/star/bin/starccm+"}
 starccm_sim_file=$(basename ${starccm_sim})
@@ -45,9 +45,6 @@ scontrol show nodes $SLURM_NODELIST | grep NodeHostName= | awk '{print $2}' | se
 mpirun -np $SLURM_JOB_NUM_NODES -ppn 1 /bin/bash -c "sync && echo 3 | sudo tee /proc/sys/vm/drop_caches"
 mpirun -np $SLURM_JOB_NUM_NODES -ppn 1 /bin/bash -c "echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled"
 
-echo "Start time:" $(date +%Y-%m-%d_%H:%M:%S) > solvertime.txt
-STARTTIME="$(date +%s)"
-
 "${starccm_bin}" \
     -batch \
     -pio \
@@ -59,8 +56,3 @@ STARTTIME="$(date +%s)"
     -fabric OFI \
     -batch-report \
     ${starccm_sim_file} > "${starccm_sim_file%.*}.log" 2>&1
-    
-echo "End time: " `date` >> solvertime.txt
-ENDTIME="$(date +%s)"
-echo "End time: " $(date +%Y-%m-%d_%H:%M:%S) >> solvertime.txt
-echo "Duration: $[ENDTIME-STARTTIME] seconds" >> solvertime.txt
