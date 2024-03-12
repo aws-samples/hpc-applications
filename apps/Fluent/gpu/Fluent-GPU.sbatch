@@ -48,4 +48,4 @@ echo "Enabling Transparent Huge Pages (THP)"
 mpirun -np $SLURM_JOB_NUM_NODES -ppn 1 /bin/bash -c "echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled"
 
 echo "Run Fluent: ${APP_BIN_PATH} ${fluent_mode} -g -cnf=hostfile -ssh -mpi=intel -t8 -gpuapp -i $(basename ${journal_file})"
-"${APP_BIN_PATH}" ${fluent_mode} -g -cnf=hostfile -ssh -mpi=intel -t8 -gpuapp -i $(basename ${journal_file}) | tee output.$SLURM_JOBID.out
+"${APP_BIN_PATH}" ${fluent_mode} -g -cnf=hostfile -ssh -mpi=intel -t${SLURM_GPUS} -gpuapp -i $(basename ${journal_file}) | tee output.$SLURM_JOBID.out
