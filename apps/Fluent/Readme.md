@@ -23,4 +23,8 @@ In this repository we will provide best practices for the following Fluent versi
 
 # Performance
 
-....
+![ANSYS Fluent f1_racecar_140m X core Performance](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/f1_racecar_140mXcore.png?raw=true)
+
+![ANSYS Fluent f1_racecar_140m X core Performance at scale](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/f1_racecar_140mXcoreAtScale.png?raw=true)
+
+![ANSYS Fluent f1_racecar_140m X instance Performance](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/f1_racecar_140mXinstance.png?raw=true)
