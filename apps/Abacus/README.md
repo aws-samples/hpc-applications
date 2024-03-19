@@ -2,11 +2,12 @@
 
 [Abaqus](https://www.3ds.com/products-services/simulia/products/abaqus/) is a software suite for finite element analysis and computer-aided engineering developed by [Dassault System](https://www.3ds.com/) (DS).
 
-Abaqus is part of the [Simulia](https://www.3ds.com/products-services/simulia/) product suite. It consists of various core software products aiming at accelerating the process of evaluating the performance, reliability, and safety of materials and products before committing to physical prototypes.
+Abaqus is part of the [Simulia](https://www.3ds.com/products-services/simulia/) product suite. It consists of various core software products aimed at accelerating the process of evaluating the performance, reliability, and safety of materials and products before committing to physical prototypes.
 
 This repository focuses on 2 specific software:
- * Abaqus/Standard (or Implicit), a general-purpose Finite-Element analyzer that employs implicit integration scheme (traditional).
- * Abaqus/Explicit, a special-purpose Finite-Element analyzer that employs explicit integration scheme to solve highly nonlinear systems with many complex contacts under transient loads.
+
+ * Abaqus/Standard (or Implicit), a general-purpose finite-element analyzer that employs an implicit integration scheme (traditional).
+ * Abaqus/Explicit, a special-purpose finite-element analyzer that employs an explicit integration scheme to solve highly nonlinear systems with many complex contacts under transient loads.
 
 # Versions
 
@@ -18,14 +19,14 @@ In this repository we will provide best practices for the following Abaqus versi
 
 # Installation
 
-Abaqus installer only supports a few selected type of Linux Operating systems. 
+The Abaqus installer only supports a few selected type of Linux operating systems. 
 
-[Amazon Linux 2](https://aws.amazon.com/amazon-linux-2/) (AL2) is not one of those. So, if you are planning to install Abaqus on AL2 you need to work the installer araound.
+[Amazon Linux 2](https://aws.amazon.com/amazon-linux-2/) (AL2) is not one of those. So, if you are planning to install Abaqus on AL2 you need to work around the installer.
 
 This is pretty straightforward as the installer checks the operating system being among the supported ones using `lsb_release`. 
 
-It is enough to backup the actual `lsb_release` file `sudo mv /usr/bin/lsb_release /usr/bin/lsb_release_OLD`,
-Then create a new `lsb_release`, like the following:
+All that's needed is to backup the actual `lsb_release` file `sudo mv /usr/bin/lsb_release /usr/bin/lsb_release_OLD`,
+and then create a new `lsb_release`, like the following:
 
 ```bash
 #!/bin/bash
@@ -33,14 +34,11 @@ Then create a new `lsb_release`, like the following:
 echo "CentOS"
 ```
 
-Save it and give execution permissions.
+Once saved, give it execution permissions. After installation, you can return your backed-up file: `sudo mv /usr/bin/lsb_release_OLD /usr/bin/lsb_release`
 
-After the installation you can move the backed up file back: `sudo mv /usr/bin/lsb_release_OLD /usr/bin/lsb_release`
+The Abaqus installation process is interactive and can be done via terminal by running `./StartTUI.sh` or via graphical interface `./StartGUI.sh`
 
-Abaqus installation process is interactive and can be done via Terminal by running `./StartTUI.sh` or via graphical interface `./StartGUI.sh` 
-
-**_NOTE:_**  For the full Abaqus installation guide please refer to the official documentation.
-
+**_NOTE:_**  For the full Abaqus installation guide, please refer to the official documentation.
 
 # Key settings
 
