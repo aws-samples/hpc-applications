@@ -1,6 +1,6 @@
 # ANSYS Fluent
 
-ANSYS [Fluent](https://www.ansys.com/products/fluids/ansys-fluent) is a general-purpose computational fluid dynamics (CFD) software used to model fluid flow, heat and mass transfer, chemical reactions, and more. 
+ANSYS [Fluent](https://www.ansys.com/products/fluids/ansys-fluent) is general-purpose computational fluid dynamics (CFD) software used to model fluid flow, heat and mass transfer, chemical reactions, and more. 
 Developed by [ANSYS](https://www.ansys.com/) it offers support for CPU (x86) and GPU solvers. An Arm-based version that will run on AWS Graviton is under development and available as a beta from Ansys.
 
 # Versions
