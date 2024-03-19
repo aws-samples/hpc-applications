@@ -1,4 +1,4 @@
-# HPC Application Best Practices on AWS
+# HPC application best practices on AWS
 This repository contains HPC application best practices, specifically designed for, and optimized to run, on AWS.<br>
 In particular, these best practices take into account the peculiarity of AWS HPC-specific services and EC2 instances, in order to get the best out of them.<br>
 This repo is mainteined by AWS HPC Solution Architects, who will take care of updating and improving these best practices AWS services evolve or new settings/tunings are discovered. This is **not intended** to be an AWS supported product or service, though.<br>
