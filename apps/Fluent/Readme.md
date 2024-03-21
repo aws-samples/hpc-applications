@@ -33,8 +33,12 @@ It is computed by dividing the number of seconds in a day (86400 seconds) by the
 This chart shows the per-core performance of ANSYS Fluent running the f1_racecar_140m on all the different sizes of the AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) Instances.
 ![ANSYS Fluent f1_racecar_140m X core Performance on AMD-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Fluent/f1_racecar_140mXcoreAMD.png?raw=true)
 <br><br>
-This chart shows the per-core performance at scale of ANSYS Fluent running the f1_racecar_140m on AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) Instances Vs. [Hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) Instances
+This chart shows the per-core performance at scale of ANSYS Fluent running the f1_racecar_140m on AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) Vs. [Hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) Instances
 ![ANSYS Fluent f1_racecar_140m X core Performance at scale](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Fluent/f1_racecar_140mXcoreAtScaleAMD.png?raw=true)
 <br><br>
-This chart shows the per-instance performance of ANSYS Fluent running the f1_racecar_140m on AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) Instances and [Hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) Instances
+This chart shows the per-instance performance of ANSYS Fluent running the f1_racecar_140m on AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) and [Hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) Instances
 ![ANSYS Fluent f1_racecar_140m X instance Performance](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Fluent/f1_racecar_140mXinstanceAMD.png?raw=true)
+<br><br>
+This chart shows the per-instance performance of ANSYS Fluent running the f1_racecar_140m on AWS EC2 [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6i/) and [c5n](https://aws.amazon.com/it/ec2/instance-types/c5/) Instances
+![ANSYS Fluent f1_racecar_140m X instance Performance](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Fluent/f1_racecar_140mXinstanceINTEL.png?raw=true)
+
