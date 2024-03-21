@@ -1,14 +1,12 @@
-# HPC Application Best Practices on AWS
-This repository contains HPC application best practices, specifically designed and optimized to run on AWS.<br>
-In particular, these best practices take into account the peculiarity of AWS HPC specific services and EC2 instances, in order to get the best out of them.<br>
-This Repository is mainteined by AWS HPC Solution Architects, which will take care of updating and improving these best practices as new AWS HPC services are released or new settings/tuning are discovered.<br>
-This Repository is not intended to be an AWS supported product or service.<br>
+# HPC application best practices on AWS
+This repository contains HPC application best practices, specifically designed for, and optimized to run, on AWS.<br>
+In particular, these best practices take into account the peculiarity of AWS HPC-specific services and EC2 instances, in order to get the best out of them.<br>
+This repo is mainteined by AWS HPC Solution Architects, who will take care of updating and improving these best practices as AWS services evolve or new settings/tunings are discovered. This is **not intended** to be an AWS supported product or service, though.<br>
 
-## HPC Application Benchmarks
-In addition to HPC application best practices, this repository will include the HPC application benchmark.<br>
-For all the supported applications we could run a benchmark using public/known dataset, we will also publish metric and/or charts showing the expected performance and scalability.
+## HPC application Benchmarks
+In addition to application best practices, this repo will include some HPC application benchmarks. For all the included applications, we've run some benchmarks using public datasets. We'll publish our data and some charts to show the performance and scalability you should be aiming to achieve.
 
-## AWS HPC Services being used
+## AWS HPC products and services being used
  * [AWS ParallelCluster](https://aws.amazon.com/hpc/parallelcluster/) and its [Documentation](https://docs.aws.amazon.com/parallelcluster/latest/ug/what-is-aws-parallelcluster.html)
  * [Elastic Fabric Adapter](https://aws.amazon.com/hpc/efa/) (EFA) and its [Documentation](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa.html)
  * [Amazon FSx for Lustre](https://aws.amazon.com/fsx/lustre/) and its [Documentation](https://docs.aws.amazon.com/fsx/latest/LustreGuide/what-is.html)
@@ -16,14 +14,14 @@ For all the supported applications we could run a benchmark using public/known d
  * AWS EC2 [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6i/) Instances
  * AWS EC2 [Hpc7g](https://aws.amazon.com/ec2/instance-types/hpc7g/) Instances
 
-## HPC Application best practices supported:
+## HPC application best practices included:
 1. [Fluent](https://github.com/aws-samples/hpc-applications/tree/main/apps/Fluent)
 2. [Abaqus](https://github.com/aws-samples/hpc-applications/tree/main/apps/Abaqus)
 3. [LS-Dyna](https://github.com/aws-samples/hpc-applications/tree/main/apps/LS-Dyna)
 4. [Optistruct](https://github.com/aws-samples/hpc-applications/tree/main/apps/Optistruct)
 5. [Starccm+](https://github.com/aws-samples/hpc-applications/tree/main/apps/Starccm)
 
-**_NOTE:_**  This list is being updated with additional application best practices on a regular basis.
+**_NOTE:_**  We're updating this list regularly to include additional application, but we're starting with mostly CAE applications.
 
 ## Security
 
