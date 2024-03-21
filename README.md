@@ -21,7 +21,12 @@ In addition to application best practices, this repo will include some HPC appli
 4. [Optistruct](https://github.com/aws-samples/hpc-applications/tree/main/apps/Optistruct)
 5. [Starccm+](https://github.com/aws-samples/hpc-applications/tree/main/apps/Starccm)
 
-**_NOTE:_**  We're updating this list regularly to include additional application, but we're starting with mostly CAE applications.
+## Request a HPC application best practice
+
+We're starting with the most common HPC applications, specificaly in the CAE area.  
+We're also updating the list of included HPC application best practice regularly, based on your feedback.
+So, feel free to request a new HPC application best practice from the [ISSUES](https://github.com/aws-samples/hpc-applications/issues) .
+We will do our best to satisfay your requests.
 
 ## Security
 
