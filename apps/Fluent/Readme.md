@@ -8,7 +8,7 @@ Developed by [ANSYS](https://www.ansys.com/) it offers support for CPU (x86) and
 In this repository we will provide best practices for all the Fluent versions starting from 2020 and newer.
 For Fluent version 2019 (v195) and older please refer to this [Blog Post](https://aws.amazon.com/it/blogs/compute/running-ansys-fluent-on-amazon-ec2-c5n-with-elastic-fabric-adapter-efa/)
 
-Fluent supports CPU and GPU solvers. Please refefr to:
+Fluent supports CPU and GPU solvers. Please refer to:
   * [This example script for CPU-based simulations](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/x86/Fluent.sbatch)
   * [This example script for GPU-based simulations](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/gpu/Fluent-GPU.sbatch)
 
