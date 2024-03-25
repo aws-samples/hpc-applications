@@ -1,12 +1,12 @@
 # ANSYS Fluent
 
-ANSYS [Fluent](https://www.ansys.com/products/fluids/ansys-fluent) (Fluent) is general-purpose computational fluid dynamics (CFD) software used to model fluid flow, heat and mass transfer, chemical reactions, and more. 
+ANSYS [Fluent](https://www.ansys.com/products/fluids/ansys-fluent) (Fluent) is a general-purpose computational fluid dynamics (CFD) software used to model fluid flow, heat and mass transfer, chemical reactions, and more. 
 Developed by [ANSYS](https://www.ansys.com/) it offers support for CPU (x86) and GPU solvers. An Arm-based version that will run on AWS Graviton is under development and available as a beta from Ansys.
 
 # Versions
 
 In this repository we will provide best practices for all the Fluent versions starting from 2020 and newer.
-For Fluent version 2019 (v195) and older please refer to this [Blog Post](https://aws.amazon.com/it/blogs/compute/running-ansys-fluent-on-amazon-ec2-c5n-with-elastic-fabric-adapter-efa/)
+For Fluent version 2019 (v195) and older please refer to this [Blog Post](https://aws.amazon.com/it/blogs/compute/running-ansys-fluent-on-amazon-ec2-c5n-with-elastic-fabric-adapter-efa/) .
 
 Fluent supports CPU and GPU solvers. Please refer to:
   * [This example script for CPU-based simulations](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/x86/Fluent.sbatch)
@@ -17,7 +17,7 @@ Fluent supports CPU and GPU solvers. Please refer to:
 
 # Installation
 
-Fluent is a software suite available on Windows and on Linux. <br>
+Fluent is supported on both Windows and on Linux machines.<br>
 In this repository we will share an example script to install Fluent on a Linux system.<br>
 Fluent installation is relatively easy. You can have a look at [this example script](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/Fluent-Install.sh) to create your own installation procedure, or you can execute this script as follow:
 
@@ -25,12 +25,13 @@ Fluent installation is relatively easy. You can have a look at [this example scr
 ./Fluent-Install.sh /fsx s3://your_bucket/FLUIDSTRUCTURES_2022R1_LINX64.tgz
 ```
 
-  * The first parameter is the root base directory where you want to install Fluent.
-  * The second parameter is the s3 URI where you have stored your FLuent installation file.
+  * This is working example installation script that run unattended.
+  * The first parameter is the base directory where you want to install Fluent. If you pass `/fsx` the Fluent will be installed under `/fsx/ansys_inc` .
+  * The second parameter is the [S3](https://aws.amazon.com/pm/serv-s3/) URI pointing to installation file (tar.gz).
 
 <br>
 
-For running Fluent as a multi-node job, it is required to install Fluent in a shared directory, possibly a parallel file system.<br>
+For running Fluent on multiple nodes, it is required to install it in a shared directory, possibly a parallel file system.<br>
 We would strongly recommend to use [Amazon FSx for Lustre](https://aws.amazon.com/fsx/lustre/), more info in the official [documentation](https://docs.aws.amazon.com/fsx/latest/LustreGuide/what-is.html) .
 
 # Key settings & tips (performance related ones) :
@@ -38,17 +39,18 @@ We would strongly recommend to use [Amazon FSx for Lustre](https://aws.amazon.co
   * Fluent is a compute and memory bandwidth bound code. 
     * the best instance types for running it are the ones with higher amount of cores, and higher memory bandwidth per core.
     * As of today, the instance that shows the **best price/performance** is the [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) .
-  * Fluent is a software that scales very well: the simulation time decreases proportionally to the numbrer of cores being used.
+  * Fluent is a software that scales nicely: the simulation time decreases proportionally to the numbrer of cores being used.
     * It is possible to achieve (almost) linear scaling by solving a mesh using max. between **30k-50k cells per core**.
     * This range is influenced by the complexity of your simulation and the phisics of your models. 
+    * For example below (The f1_racecar_140m) has 140 Milions of cell. This model can be solved achieving a great scalability using up to ~4500cores (140 Milions of cell / 30k cells per core = ~4500cores)
 
-  * `-platform=intel` This parameter tells Fluent to use an `AVX2` optimized binary. You can get up to 10-15% better performance by using AVX2 instructions.
-  * `-mpi=intel` This parameter specifies the MPI implementation. At the moment, `IntelMPI` offer better performance on AWS.
-  * `-t` his parameter specifies number of processors used to run your simulation.
+  * `-platform=intel` This parameter tells Fluent to use an `AVX2` optimized binary. You can get up to **10-15% better performance** by using AVX2 instructions.
+  * `-mpi=intel` This parameter specifies the MPI implementation. At the moment, `IntelMPI` is the MPI library that offer better performance on AWS.
+  * `-t` This parameter specifies the number of cores used to run the simulation.
 
 # Performance
 
-This section shows the benchmark results of Running Fluent v241 running a public dataset called f1_racecar_140m.<br>
+This section shows the benchmark results of Fluent v241 running a public dataset called f1_racecar_140m.<br>
 This case is an external flow over a Formula-1 Race car. The case has around 140 million Hex-core cells and uses the realizable k-e turbulence model and the Pressure based coupled solver, Least Squares cell based, pseudo transient solver.<br>
 For more information about Fluent benchmarks please refer to the [official web page](https://www.ansys.com/it-solutions/benchmarks-overview).<br>
 
