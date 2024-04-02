@@ -11,36 +11,53 @@ This repository focuses on 2 specific software:
 
 # Versions
 
-In this repository we will provide best practices for the following Abaqus versions:
- * [2019](https://)
- * [2021](https://)
- * [2022](https://)
- * [2023](https://) 
+In this repository we will provide best practices for the following Abaqus versions 2021 (and newer)
+
 
 # Installation
 
-The Abaqus installer only supports a few selected type of Linux operating systems. 
+The Abaqus installer only supports a few selected types of Linux operating systems. [ `RHEL` `CentOS` and `SUSE`] <br>
+Abaqus is typically distributed as `tar` files.<br>
+For example Abaqus 2021 is comprised of 5 tar files named like `2021.AM_SIM_Abaqus_Extend.AllOS.1-5.tar ... 2021.AM_SIM_Abaqus_Extend.AllOS.5-5.tar` . <br>
+Uncompress them with `tar xvf 2021.AM_SIM_Abaqus_Extend.AllOS.1-5.tar ... 2021.AM_SIM_Abaqus_Extend.AllOS.5-5.tar` .
+In order to install Abaqus go into `AM_SIM_Abaqus_Extend.AllOS/1`; The Abaqus installation process is interactive and can be done via terminal by running `./StartTUI.sh` or via graphical interface `./StartGUI.sh`
+<br><br>
+The Installer will ask you to choose the installation directory and will suggest `/usr/SIMULIA/EstProducts/<Abaqus_version>`, please change that to you shared Filesystem ([Amazon FSx for Lustre](https://aws.amazon.com/fsx/lustre/)), like `/fsx/SIMULIA/EstProducts/<Abaqus_version>`
+<br>
+Same for the `CAE commands directory path`, please change the suggested dir `/var/DassaultSystemes/SIMULIA/Commands` to `/fsx/DassaultSystemes/SIMULIA/Commands`
+<br>
+and for the `SIMULIA Established Products` please change `/var/DassaultSystemes/SIMULIA/CAE/plugins/<Abaqus_version>` to `/fsx/DassaultSystemes/SIMULIA/CAE/plugins/<Abaqus_version>`
 
 [Amazon Linux 2](https://aws.amazon.com/amazon-linux-2/) (AL2) is not one of those. So, if you are planning to install Abaqus on AL2 you need to work around the installer.
 
 This is pretty straightforward as the installer checks the operating system being among the supported ones using `lsb_release`. 
 
 All that's needed is to backup the actual `lsb_release` file `sudo mv /usr/bin/lsb_release /usr/bin/lsb_release_OLD`,
-and then create a new `lsb_release`, like the following:
+and then create a new `lsb_release` that just print `CentOS`, once saved, give it execution permissions:
 
 ```bash
+sudo mv /usr/bin/lsb_release /usr/bin/lsb_release_OLD
+
+sudo bash -c 'cat <<EOF > /usr/bin/lsb_release
 #!/bin/bash
 
 echo "CentOS"
+EOF'
+
+sudo chmod +x /usr/bin/lsb_release
 ```
 
-Once saved, give it execution permissions. After installation, you can return your backed-up file: `sudo mv /usr/bin/lsb_release_OLD /usr/bin/lsb_release`
-
-The Abaqus installation process is interactive and can be done via terminal by running `./StartTUI.sh` or via graphical interface `./StartGUI.sh`
+After installation, you can return your backed-up file: `sudo mv /usr/bin/lsb_release_OLD /usr/bin/lsb_release`
 
 **_NOTE:_**  For the full Abaqus installation guide, please refer to the official documentation.
 
-# Key settings
+#  Key settings & tips (performance related ones) :
+
+  * Abaqus is a memory and (for Standard/Implicit simulations) IO bound code. So the best instance types are the ones with high memory per-core ratio (8:1 or 16:1). This would allow `in-core` simulations.
+  * Abaqus Standard/Implicit can also benefit from fast IO, see below how to use the local NVMe disk (when available) of some AWS EC2 instances for the Abaqus scratch.
+    * The best instance type for running Abaqus Standard/Implicit simulations is [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6i) .
+    * The best instance type for running Abaqus Explicit simulations is [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a) .
+  
 
 Abaqus key settings are stored and managed in the Abaqus configuration file **abaqus_v6.env** file. 
 
