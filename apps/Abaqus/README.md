@@ -27,13 +27,13 @@ The Installer will ask you to choose the installation directory and will suggest
 Same for the `CAE commands directory path`, please change the suggested dir `/var/DassaultSystemes/SIMULIA/Commands` to `/fsx/DassaultSystemes/SIMULIA/Commands`
 <br>
 and for the `SIMULIA Established Products` please change `/var/DassaultSystemes/SIMULIA/CAE/plugins/<Abaqus_version>` to `/fsx/DassaultSystemes/SIMULIA/CAE/plugins/<Abaqus_version>`
-
-[Amazon Linux 2](https://aws.amazon.com/amazon-linux-2/) (AL2) is not one of those. So, if you are planning to install Abaqus on AL2 you need to work around the installer.
+<br><br>
+Even if it works, at the moment [Amazon Linux 2](https://aws.amazon.com/amazon-linux-2/) (AL2) is not one of the supported Operating Systems. 
+<br> If you are planning to install Abaqus on AL2 you need to work around the installer.
 
 This is pretty straightforward as the installer checks the operating system being among the supported ones using `lsb_release`. 
 
-All that's needed is to backup the actual `lsb_release` file `sudo mv /usr/bin/lsb_release /usr/bin/lsb_release_OLD`,
-and then create a new `lsb_release` that just print `CentOS`, once saved, give it execution permissions:
+All that's needed is to backup the actual `lsb_release` and then create a new `lsb_release` that just print `CentOS`, once saved, give it execution permissions:
 
 ```bash
 sudo mv /usr/bin/lsb_release /usr/bin/lsb_release_OLD
