@@ -18,8 +18,8 @@ In this repository we will provide best practices for the following Abaqus versi
 
 The Abaqus installer only supports a few selected types of Linux operating systems. [ `RHEL` `CentOS` and `SUSE`] <br>
 Abaqus is typically distributed as `tar` files.<br>
-For example Abaqus 2021 is comprised of 5 tar files named like `2021.AM_SIM_Abaqus_Extend.AllOS.1-5.tar ... 2021.AM_SIM_Abaqus_Extend.AllOS.5-5.tar` . <br>
-Uncompress them with `tar xvf 2021.AM_SIM_Abaqus_Extend.AllOS.1-5.tar ... 2021.AM_SIM_Abaqus_Extend.AllOS.5-5.tar` .
+For example Abaqus 2021 is comprised of 5 tar files named like `2021.AM_SIM_Abaqus_Extend.AllOS.1-5.tar ... 2021.AM_SIM_Abaqus_Extend.AllOS.5-5.tar` .<br>
+Uncompress them with `tar xvf 2021.AM_SIM_Abaqus_Extend.AllOS.1-5.tar ... 2021.AM_SIM_Abaqus_Extend.AllOS.5-5.tar` .<br>
 In order to install Abaqus go into `AM_SIM_Abaqus_Extend.AllOS/1`; The Abaqus installation process is interactive and can be done via terminal by running `./StartTUI.sh` or via graphical interface `./StartGUI.sh`
 <br><br>
 The Installer will ask you to choose the installation directory and will suggest `/usr/SIMULIA/EstProducts/<Abaqus_version>`, please change that to you shared Filesystem ([Amazon FSx for Lustre](https://aws.amazon.com/fsx/lustre/)), like `/fsx/SIMULIA/EstProducts/<Abaqus_version>`
