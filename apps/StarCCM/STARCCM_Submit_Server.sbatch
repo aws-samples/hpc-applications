@@ -1,58 +1,62 @@
 #!/bin/bash
-#SBATCH -t 50:00:00
-#SBATCH --ntasks=384
 #SBATCH --nodes=2
-#SBATCH --constraint=hpc7a.96xlarge
 #SBATCH --partition=hpc7a
+#SBATCH --output=%x_%j.out
 #SBATCH --exclusive
 
-export I_MPI_OFI_LIBRARY_INTERNAL=0
+
+# This is a submit script pared right down to the bare minuimum of what is needed to run on AWS.
+# Submit this on SLURM using sbatch thisScript.sbatch 18.06.007 sim_file.sim macro.java
+# It assumes the software has been installed on the FSx for Lustre file store at the /fsx/Siemens
+# location with the remainder of the path using the Siemens defaults.
+
+# Note that this script is a bare minimum to get up and running; there are no optimisations for
+# particular AWS instances or scripting for advanced license options
+
+# What is different between this and the standard submit simple batch file? This file is a server
+# file which means that when launched, it will load the simulation file on the compute nodes. The
+# output file will specify the 'core-0' core, which is the main server core that can be connected
+# to using the STAR-CCM+ Graphical User Interface. Note that if you use this script the job will
+# sit there waiting to be connected to. It will sit idle until a user connects to the server and
+# starts something running. It also won't stop automatically unless done by a user.
+
+# Note also that this script uses Intel MPI built into STAR-CCM+, not OpenMPI.
+# Lastly, the version of libfabric called assumes this script is being used on AWS ParallelCluster
+# with libfabric in the install location that uses.
+
+
 module load intelmpi
-export FI_MR_CACHE_MONITOR=memhooks
+# Tell Intel MPI to use external libfabric version with:
+export I_MPI_OFI_LIBRARY_INTERNAL=0
 export I_MPI_FABRICS=shm:ofi
 export I_MPI_OFI_PROVIDER=efa
+# This is to ensure the correct EFA fabrics are used.
+
+
+# Some HPC instances have multiple NICs and so we enable this with Intel MPI with the following command:
 export I_MPI_MULTIRAIL=1
-module load libfabric-aws
+
 export FI_EFA_FORK_SAFE=1
-export I_MPI_DEBUG=5
-export INTEL_MPI_PATH="${I_MPI_ROOT}"
 
-. '/etc/parallelcluster/cfnconfig'
-
+# Specify STAR-CCM+ version to use
 APP_VERSION=${1:-"18.06.007"}
+# Specify a default sim file you want to use.
 starccm_sim=${2:-"/fsx/MY_STARCCM_EXAMPLE/myStarccmModel.sim"}
-basedir=${BASE_DIR:-"/fsx"}
-starccm_bin=${STARCCM_BIN:-"${basedir}/Siemens/${APP_VERSION}/STAR-CCM+${APP_VERSION}/star/bin/starccm+"}
+# Specify a macro file you want to use. Note that if this is left blank the simulation will just solve.
+MACRO=${3:-""}
 starccm_sim_file=$(basename ${starccm_sim})
 
-#example for POD license only, customize as needed
-license_arn=${LICENSE_ARN:-"arn:aws:secretsmanager:XXXXXXXX"}
-PODLIC="$(aws secretsmanager get-secret-value --secret-id ${license_arn} --query SecretString --output text --region ${cfn_region} )"
+# Example for Power On Demand license only, customize as needed. For example, if using a license server, then
+# that should be referred to here.
 LICENSEOPTS="-power -podkey ${PODLIC} -licpath 1999@flex.cd-adapco.com"
 
-TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-workdir="$(readlink -m "${basedir}/${SLURM_JOB_NAME%.*}")/${starccm_sim_file%.*}/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)-${SLURM_NPROCS}-$(date "+%d-%m-%Y-%H-%M")"
-
-echo "Execution directory is: ${workdir}"
-mkdir -p "${workdir}" && cd "${workdir}"
-
-cd "${workdir}"
-cp $0 .
-ln -s "${starccm_sim}" .
-
-scontrol show nodes $SLURM_NODELIST | grep NodeHostName= | awk '{print $2}' | sed 's/NodeHostName=//' >hostfile
-
-mpirun -np $SLURM_JOB_NUM_NODES -ppn 1 /bin/bash -c "sync && echo 3 | sudo tee /proc/sys/vm/drop_caches"
-mpirun -np $SLURM_JOB_NUM_NODES -ppn 1 /bin/bash -c "echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled"
-
-"${starccm_bin}" \
-    -batch \
+# Check the path to STAR-CCM+ (with the app version variable) points to the install of STAR-CCM+
+/fsx/Siemens/${APP_VERSION}/STAR-CCM+${APP_VERSION}/star/bin/starccm+ \
     -pio \
-    -np ${SLURM_NTASKS} \
     -bs slurm \
     ${LICENSEOPTS} \
     -mpi intel \
-    -xsystemlibfabric -ldlibpath ${LD_LIBRARY_PATH} \
+    -xsystemlibfabric -ldlibpath /opt/amazon/efa/lib64 \
     -fabric OFI \
-    -batch-report \
+    -server \
     ${starccm_sim_file} > "${starccm_sim_file%.*}.log" 2>&1
