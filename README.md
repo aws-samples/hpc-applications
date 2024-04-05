@@ -20,7 +20,7 @@ In addition to application best practices, this repo will include some HPC appli
 2. [Abaqus](https://github.com/aws-samples/hpc-applications/tree/main/apps/Abaqus)
 3. [LS-Dyna](https://github.com/aws-samples/hpc-applications/tree/main/apps/LS-Dyna)
 4. [Optistruct](https://github.com/aws-samples/hpc-applications/tree/main/apps/Optistruct)
-5. [Starccm+](https://github.com/aws-samples/hpc-applications/tree/main/apps/StarCCM)
+5. [STAR-CCM+](https://github.com/aws-samples/hpc-applications/tree/main/apps/StarCCM)
 
 ## Request a HPC application best practice
 
