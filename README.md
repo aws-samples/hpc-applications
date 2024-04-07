@@ -24,7 +24,7 @@ In addition to application best practices, this repo will include some HPC appli
 
 ## Request a HPC application best practice
 
-We're starting with the most common HPC applications, specificaly in the CAE market.  <br>
+We're starting with the most common HPC applications, specifically in the CAE market.  <br>
 We're also updating the list of included HPC application best practice regularly, based on your feedback.<br>
 So, feel free to request a new HPC application best practice from the [ISSUES](https://github.com/aws-samples/hpc-applications/issues) .<br>
 We will do our best to satisfay your requests.<br>
