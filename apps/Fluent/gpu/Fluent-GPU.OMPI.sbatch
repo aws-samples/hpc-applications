@@ -6,14 +6,12 @@
 #SBATCH --partition=g5
 
 ######################## EFA settings ######################## 
-export I_MPI_OFI_LIBRARY_INTERNAL=0
-module load intelmpi
-export I_MPI_DEBUG=5
-export I_MPI_FABRICS=shm:ofi
-export I_MPI_OFI_PROVIDER=efa
-export I_MPI_MULTIRAIL=1
+module load openmpi/4.1.6    
+#export  FI_PROVIDER="efa"
+#export OMPI_MCA_mtl_ofi_verbose=1
+#export FI_EFA_RECVWIN_SIZE=65536
 module load libfabric-aws
-export INTELMPI_ROOT="$(dirname $(dirname $(which mpirun)))"
+export OPENMPI_ROOT="$(dirname $(dirname $(which mpirun)))"
 ######################## EFA settings ######################## 
 
 fluentversion=${1:-"v241"}
@@ -41,11 +39,11 @@ ln -s "${journal_file}" .
 ln -s "${dataset_cas}" .
 ln -s "${dataset_dat}" .
 
-echo "Drop caches on all nodes"
-mpirun -np $SLURM_JOB_NUM_NODES -ppn 1 /bin/bash -c "sync && echo 3 | sudo tee /proc/sys/vm/drop_caches"
+#echo "Drop caches on all nodes"
+#mpirun -np $SLURM_JOB_NUM_NODES -ppn 1 /bin/bash -c "sync && echo 3 | sudo tee /proc/sys/vm/drop_caches"
 
-echo "Enabling Transparent Huge Pages (THP)"
-mpirun -np $SLURM_JOB_NUM_NODES -ppn 1 /bin/bash -c "echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled"
+#echo "Enabling Transparent Huge Pages (THP)"
+#mpirun -np $SLURM_JOB_NUM_NODES -ppn 1 /bin/bash -c "echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled"
 
-echo "Run Fluent: ${APP_BIN_PATH} ${fluent_mode} -g -cnf=hostfile -mpiopt=-genv I_MPI_DEBUG 5 -ssh -mpi=intel -t${SLURM_NPROCS} -gpu -gpu_remap -i $(basename ${journal_file})"
-"${APP_BIN_PATH}" ${fluent_mode} -g -cnf=hostfile -mpiopt="-genv I_MPI_DEBUG 5" -ssh -mpi=intel -t${SLURM_NPROCS} -gpu -gpu_remap -i $(basename ${journal_file}) | tee output.$SLURM_JOBID.out
+echo "Run Fluent: ${APP_BIN_PATH} ${fluent_mode} -g -cnf=hostfile -ssh -mpi=openmpi -t${SLURM_NPROCS} -gpuapp -i $(basename ${journal_file})"
+"${APP_BIN_PATH}" ${fluent_mode} -g -cnf=hostfile -ssh -mpi=openmpi -t${SLURM_NPROCS} -gpu -gpu_remap -i $(basename ${journal_file}) | tee output.$SLURM_JOBID.out
