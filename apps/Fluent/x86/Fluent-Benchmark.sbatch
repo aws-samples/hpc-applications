@@ -20,7 +20,7 @@ export INTELMPI_ROOT="$(dirname $(dirname $(which mpirun)))"
 fluentversion=${1:-"v241"}
 benchmark_uri=${2:-"s3://YOUR_BUCKET/f1_racecar_140m.tar"}
 basedir=${BASE_DIR:-"/fsx"}
-export ANSYSLMD_LICENSE_FILE=${FLUENT_LICENSE:-"1055@172.31.89.151"}
+export ANSYSLMD_LICENSE_FILE=${ANSYSLMD_LICENSE_FILE:-"1055@XXX.YYY.ZZZ.XYZ"}
 
 benchmark_file=$(basename ${benchmark_uri})
 APP_BIN_PATH="${basedir}/ansys_inc/${fluentversion}/fluent/bin/fluentbench.pl"
