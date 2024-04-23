@@ -26,7 +26,7 @@ HeadNode:
     AllowedIps: 0.0.0.0/0
   CustomActions:
     OnNodeConfigured:
-    Script: s3://<<YOUR_BUCKET>>/post-install.headnode.sh
+      Script: s3://<<YOUR_BUCKET>>/post-install.headnode.sh
   Iam:
     AdditionalIamPolicies:
       - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore

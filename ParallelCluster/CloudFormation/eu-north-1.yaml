@@ -1,0 +1,268 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: HPC-Application-Best-Practice
+Metadata: 
+  AWS::CloudFormation::Interface:
+    ParameterGroups: 
+      - 
+        Label: 
+          default: ""
+        Parameters: 
+          - PublicSubnetAId
+          - PrivateSubnetAId
+          - FSx
+          - KeyName
+          - ClusterSecurityGroup
+    ParameterLabels: 
+      PublicSubnetAId: 
+        default: 'Public Subnet:'
+      PrivateSubnetAId: 
+        default: 'Private Subnet:'
+      FSx: 
+        default: 'FSx:'
+      KeyName: 
+        default: 'KeyName:'
+      ClusterSecurityGroup:
+        default: 'Security Group:'
+Parameters:
+    PublicSubnetAId: 
+      Description: 'Please, enter the ID of the Public Subnet you wish to use (if you want to re-use an existing one), or just leave "AUTO".'
+      Type: String
+      AllowedPattern: ^(AUTO|subnet-[0-9a-z]+)$
+      Default : AUTO
+    PrivateSubnetAId: 
+      Description: 'Please, enter the ID of the Private Subnet you wish to use (if you want to re-use an existing one), or just leave "AUTO".'
+      Type: String
+      AllowedPattern: ^(AUTO|subnet-[0-9a-z]+)$
+      Default : AUTO
+    ClusterSecurityGroup: 
+      Description: 'Please, enter the ID of the Security Group you wish to use (if you want to re-use an existing one), or just leave "AUTO".'
+      Type: String
+      AllowedPattern: ^(AUTO|sg-[0-9a-z]+)$
+      Default : AUTO
+    FSx: 
+      Description: 'Please, enter your FSx ID, or just leave "AUTO" if you want to re-use an existing one.'
+      Type: String
+      AllowedPattern: ^(AUTO|fs-[0-9a-z]+)$
+      Default : AUTO
+    KeyName:
+      Type: AWS::EC2::KeyPair::KeyName
+      Description: 'Name of the key pair to ssh into the cluster HeadNode'
+Conditions:
+  CreateVpc: !Equals [!Ref PublicSubnetAId, AUTO]
+  CreateStorage: !Equals [!Ref FSx, AUTO]
+Resources:
+  HPCNetworkStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateVpc
+    Properties:
+      TemplateURL: https://hpc-applications-best-practice.s3.eu-west-1.amazonaws.com/HPC-Networking.yaml
+  HPCStorageStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateStorage
+    Properties:
+      TemplateURL: https://hpc-applications-best-practice.s3.eu-west-1.amazonaws.com/HPC-Storage.yaml
+      Parameters:
+        PrivateSubnet: !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnetAId]
+        SecurityGroup: !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
+  PclusterClusterProvider:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub
+        - https://${AWS::Region}-aws-parallelcluster.s3.${AWS::Region}.${AWS::URLSuffix}/parallelcluster/${Version}/templates/custom_resource/cluster.yaml
+        - { Version: 3.9.1, Region: !Ref AWS::Region }
+  PclusterCluster:
+    Type: Custom::PclusterCluster
+    Properties:
+      ServiceToken: !GetAtt [ PclusterClusterProvider , Outputs.ServiceToken ]
+      ClusterName: !Sub 'pc-${AWS::StackName}'
+      ClusterConfiguration:
+        Imds:
+          ImdsSupport: v2.0
+        Region: eu-north-1
+        Image:
+          Os: alinux2
+        HeadNode:
+          InstanceType: m6i.4xlarge
+          Networking:
+            SubnetId: !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PublicSubnetA, !Ref PublicSubnetAId]
+            AdditionalSecurityGroups:
+              - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
+          DisableSimultaneousMultithreading: false
+          Ssh:
+            KeyName: !Ref KeyName
+          SharedStorageType: Efs
+          LocalStorage:
+            RootVolume:
+              Size: 100
+              Encrypted: true
+              VolumeType: gp3
+              DeleteOnTermination: true
+          Dcv:
+            Enabled: true
+            Port: 8443
+            AllowedIps: 0.0.0.0/0
+          CustomActions:
+            OnNodeConfigured:
+              Script: s3://hpc-applications-best-practice/post-install.headnode.sh
+          Iam:
+            #AdditionalIamPolicies:
+            #  - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+            #  - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+            S3Access:
+              - BucketName: '*'
+                EnableWriteAccess: true
+          Imds:
+            Secured: True
+        Scheduling:
+          Scheduler: slurm
+          SlurmSettings:
+            ScaledownIdletime: 10
+            QueueUpdateStrategy: TERMINATE
+            EnableMemoryBasedScheduling: true
+          SlurmQueues:
+            - Name: hpc7a
+              CapacityType: ONDEMAND
+              Networking:
+                SubnetIds: 
+                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnetAId]
+                AdditionalSecurityGroups:
+                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
+                PlacementGroup:
+                  Enabled: true
+              ComputeResources:
+                - Name: hpc7a-96xlarge
+                  InstanceType: hpc7a.96xlarge
+                  MinCount: 0
+                  MaxCount: 200
+                  Efa:
+                    Enabled: true
+                - Name: hpc7a-48xlarge
+                  InstanceType: hpc7a.48xlarge
+                  MinCount: 0
+                  MaxCount: 200
+                  Efa:
+                    Enabled: true
+                - Name: hpc7a-24xlarge
+                  InstanceType: hpc7a.24xlarge
+                  MinCount: 0
+                  MaxCount: 200
+                  Efa:
+                    Enabled: true
+                - Name: hpc7a-12xlarge
+                  InstanceType: hpc7a.12xlarge
+                  MinCount: 0
+                  MaxCount: 200
+                  Efa:
+                    Enabled: true
+              Iam:
+                #AdditionalIamPolicies:
+                #  - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+                #  - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+                S3Access:
+                  - BucketName: '*'
+                    EnableWriteAccess: true
+              CustomActions:
+                OnNodeConfigured:
+                  Script: s3://hpc-applications-best-practice/post-install.compute.sh
+            - Name: hpc6id
+              CapacityType: ONDEMAND
+              Networking:
+                SubnetIds: 
+                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnetAId]
+                AdditionalSecurityGroups:
+                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
+                PlacementGroup:
+                  Enabled: true
+              ComputeResources:
+                - Name: hpc6id-32xlarge
+                  InstanceType: hpc6id.32xlarge
+                  MinCount: 0
+                  MaxCount: 200
+                  Efa:
+                    Enabled: true
+              Iam:
+                #AdditionalIamPolicies:
+                #  - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+                #  - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+                S3Access:
+                  - BucketName: '*'
+                    EnableWriteAccess: true
+              CustomActions:
+                OnNodeConfigured:
+                  Script: s3://hpc-applications-best-practice/post-install.compute.sh
+            - Name: hpc6a
+              CapacityType: ONDEMAND
+              Networking:
+                SubnetIds: 
+                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnetAId]
+                AdditionalSecurityGroups:
+                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
+                PlacementGroup:
+                  Enabled: true
+              ComputeResources:
+                - Name: hpc6a-48xlarge
+                  InstanceType: hpc6a.48xlarge
+                  MinCount: 0
+                  MaxCount: 200
+                  Efa:
+                    Enabled: true
+              Iam:
+                #AdditionalIamPolicies:
+                #  - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+                #  - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+                S3Access:
+                  - BucketName: '*'
+                    EnableWriteAccess: true
+              CustomActions:
+                OnNodeConfigured:
+                  Script: s3://hpc-applications-best-practice/post-install.compute.sh
+            - Name: c5n
+              CapacityType: ONDEMAND
+              Networking:
+                SubnetIds: 
+                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnetAId]
+                AdditionalSecurityGroups:
+                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
+                PlacementGroup:
+                  Enabled: true
+              ComputeResources:
+                - Name: c5n-18xlarge
+                  InstanceType: c5n.18xlarge
+                  MinCount: 0
+                  MaxCount: 200
+                  Efa:
+                    Enabled: true
+              Iam:
+                #AdditionalIamPolicies:
+                #  - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+                #  - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+                S3Access:
+                  - BucketName: '*'
+                    EnableWriteAccess: true
+              CustomActions:
+                OnNodeConfigured:
+                  Script: s3://hpc-applications-best-practice/post-install.compute.sh
+        SharedStorage:
+          - Name: FsxLustre
+            StorageType: FsxLustre
+            MountDir: /fsx
+            FsxLustreSettings:
+              FileSystemId: !If [CreateStorage, !GetAtt HPCStorageStack.Outputs.FileSystemId, !Ref FSx]
+        Monitoring:
+          DetailedMonitoring: true
+          Logs:
+            CloudWatch:
+              Enabled: true
+              RetentionInDays: 30
+              DeletionPolicy: Retain
+            Rotation:
+              Enabled: true
+          Dashboards:
+            CloudWatch:
+              Enabled: true
+Outputs:
+  HeadNodeIp:
+    Description: The Public IP address of the HeadNode
+    Value: !GetAtt [ PclusterCluster, headNode.publicIpAddress ]
+  FileSystemId:
+    Value: !If [CreateStorage, !GetAtt HPCStorageStack.Outputs.FileSystemId, !Ref FSx]

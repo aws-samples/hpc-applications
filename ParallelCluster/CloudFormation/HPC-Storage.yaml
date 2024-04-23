@@ -1,0 +1,31 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: HPC-Networking
+Parameters:
+  PrivateSubnet:
+    Description: The ID of your private subnet.
+    Type: String
+    AllowedPattern: ^(subnet-[0-9a-z]+)$
+  SecurityGroup:
+    Description: The ID of the SecurityGroup you want to attach.
+    Type: String
+    AllowedPattern: ^(sg-[0-9a-z]+)$
+Resources:
+  FSxLustre:
+    Type: AWS::FSx::FileSystem
+    Properties:
+      FileSystemType: LUSTRE
+      StorageCapacity: 1200
+      StorageType: SSD
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref SecurityGroup
+      LustreConfiguration:
+        WeeklyMaintenanceStartTime: "1:00:00"
+        DeploymentType: PERSISTENT_2
+        PerUnitStorageThroughput: 1000
+        DataCompressionType: LZ4
+      FileSystemTypeVersion: "2.15"
+Outputs:
+  FileSystemId:
+    Value: !Ref FSxLustre
