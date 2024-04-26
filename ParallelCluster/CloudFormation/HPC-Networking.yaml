@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: HPC-Networking
 
 Parameters:
-  CidrBlock:
+  CidrBlockVPC:
     AllowedPattern: '((\d{1,3})\.){3}\d{1,3}/\d{1,2}'
     Default: 10.3.0.0/16
     Description: VPC CIDR Block (eg 10.3.0.0/16)
@@ -75,7 +75,7 @@ Resources:
   VPC:
     Type: AWS::EC2::VPC
     Properties:
-      CidrBlock: !Ref CidrBlock
+      CidrBlock: !Ref CidrBlockVPC
       EnableDnsHostnames: true
       EnableDnsSupport: true
       Tags:
@@ -246,10 +246,10 @@ Resources:
           Ref: VPC
         SecurityGroupIngress:
         - IpProtocol: -1
-          CidrIp: !Ref CidrBlock
+          CidrIp: !Ref CidrBlockVPC
         SecurityGroupEgress:
         - IpProtocol: -1
-          CidrIp: !Ref CidrBlock
+          CidrIp: !Ref CidrBlockVPC
 
 Outputs:
   VPC:
