@@ -5,7 +5,7 @@ This repo is maintained by AWS HPC Solution Architects, who will take care of up
 
 ## Get Started 
 
-### 1-Click deployment
+### On existing Clusters
 
 If you already have a cluster up&running and you want to try these best practices, then you can `git clone` this repository:
 ```
@@ -13,7 +13,7 @@ git clone https://github.com/aws-samples/hpc-applications.git
 ```
 Then, (if needed) customize the sbatch example launch script for the application you want to try and run it. 
 
-### 1-Click deployment
+### Build a new HPC Cluster (1-Click deployment)
 
 In case you don't have a cluster ready, you can use one of the CloudFormation templates we have prpared for you.<br> 
 Find below a few Tempaltes to create a new HPC cluster with just 1-Click.<br>
@@ -69,4 +69,3 @@ See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more inform
 ## License
 
 This library is licensed under the MIT-0 License. [See the LICENSE file](LICENSE).
-
