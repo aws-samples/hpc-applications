@@ -7,26 +7,18 @@ Metadata:
         Label: 
           default: ""
         Parameters: 
-          - PublicSubnetAId
-          - PrivateSubnetAId
+          - PrivateSubnet
           - FSx
           - ClusterSecurityGroup
     ParameterLabels: 
-      PublicSubnetAId: 
-        default: 'Public Subnet:'
-      PrivateSubnetAId: 
+      PrivateSubnet: 
         default: 'Private Subnet:'
       FSx: 
         default: 'FSx:'
       ClusterSecurityGroup:
         default: 'Security Group:'
 Parameters:
-    PublicSubnetAId: 
-      Description: 'Please, enter the ID of the Public Subnet you wish to use (if you want to re-use an existing one), or just leave "AUTO".'
-      Type: String
-      AllowedPattern: ^(AUTO|subnet-[0-9a-z]+)$
-      Default : AUTO
-    PrivateSubnetAId: 
+    PrivateSubnet: 
       Description: 'Please, enter the ID of the Private Subnet you wish to use (if you want to re-use an existing one), or just leave "AUTO".'
       Type: String
       AllowedPattern: ^(AUTO|subnet-[0-9a-z]+)$
@@ -42,7 +34,7 @@ Parameters:
       AllowedPattern: ^(AUTO|fs-[0-9a-z]+)$
       Default : AUTO
 Conditions:
-  CreateVpc: !Equals [!Ref PublicSubnetAId, AUTO]
+  CreateVpc: !Equals [!Ref PrivateSubnet, AUTO]
   CreateStorage: !Equals [!Ref FSx, AUTO]
 Resources:
   HPCNetworkStack:
@@ -56,7 +48,7 @@ Resources:
     Properties:
       TemplateURL: https://hpc-applications-best-practice.s3.eu-west-1.amazonaws.com/HPC-Storage.yaml
       Parameters:
-        PrivateSubnet: !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnetAId]
+        PrivateSubnet: !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnet]
         SecurityGroup: !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
   PClusterPolicy:
     Type: AWS::IAM::ManagedPolicy
@@ -92,7 +84,7 @@ Resources:
         HeadNode:
           InstanceType: m6i.2xlarge
           Networking:
-            SubnetId: !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnetAId]
+            SubnetId: !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnet]
             AdditionalSecurityGroups:
               - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
           DisableSimultaneousMultithreading: false
@@ -126,7 +118,7 @@ Resources:
               CapacityType: ONDEMAND
               Networking:
                 SubnetIds: 
-                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnetAId]
+                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnet]
                 AdditionalSecurityGroups:
                   - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
                 PlacementGroup:
@@ -170,7 +162,7 @@ Resources:
               CapacityType: ONDEMAND
               Networking:
                 SubnetIds: 
-                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnetAId]
+                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnet]
                 AdditionalSecurityGroups:
                   - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
                 PlacementGroup:
@@ -196,7 +188,7 @@ Resources:
               CapacityType: ONDEMAND
               Networking:
                 SubnetIds: 
-                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnetAId]
+                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnet]
                 AdditionalSecurityGroups:
                   - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
                 PlacementGroup:
@@ -222,7 +214,7 @@ Resources:
               CapacityType: ONDEMAND
               Networking:
                 SubnetIds: 
-                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnetAId]
+                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnet]
                 AdditionalSecurityGroups:
                   - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
                 PlacementGroup:
