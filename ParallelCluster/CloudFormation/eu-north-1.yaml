@@ -10,7 +10,6 @@ Metadata:
           - PublicSubnetAId
           - PrivateSubnetAId
           - FSx
-          - KeyName
           - ClusterSecurityGroup
     ParameterLabels: 
       PublicSubnetAId: 
@@ -19,8 +18,6 @@ Metadata:
         default: 'Private Subnet:'
       FSx: 
         default: 'FSx:'
-      KeyName: 
-        default: 'KeyName:'
       ClusterSecurityGroup:
         default: 'Security Group:'
 Parameters:
@@ -44,9 +41,6 @@ Parameters:
       Type: String
       AllowedPattern: ^(AUTO|fs-[0-9a-z]+)$
       Default : AUTO
-    KeyName:
-      Type: AWS::EC2::KeyPair::KeyName
-      Description: 'Name of the key pair to ssh into the cluster HeadNode'
 Conditions:
   CreateVpc: !Equals [!Ref PublicSubnetAId, AUTO]
   CreateStorage: !Equals [!Ref FSx, AUTO]
@@ -64,9 +58,23 @@ Resources:
       Parameters:
         PrivateSubnet: !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnetAId]
         SecurityGroup: !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
+  PClusterPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub 'pc-attach-policy-${AWS::StackName}'
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - iam:AttachRolePolicy
+              - iam:DetachRolePolicy
+            Resource: "*"
   PclusterClusterProvider:
     Type: AWS::CloudFormation::Stack
     Properties:
+      Parameters:
+        AdditionalIamPolicies: !Ref PClusterPolicy
       TemplateURL: !Sub
         - https://${AWS::Region}-aws-parallelcluster.s3.${AWS::Region}.${AWS::URLSuffix}/parallelcluster/${Version}/templates/custom_resource/cluster.yaml
         - { Version: 3.9.1, Region: !Ref AWS::Region }
@@ -82,14 +90,12 @@ Resources:
         Image:
           Os: alinux2
         HeadNode:
-          InstanceType: m6i.4xlarge
+          InstanceType: m6i.2xlarge
           Networking:
-            SubnetId: !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PublicSubnetA, !Ref PublicSubnetAId]
+            SubnetId: !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnetAId]
             AdditionalSecurityGroups:
               - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
           DisableSimultaneousMultithreading: false
-          Ssh:
-            KeyName: !Ref KeyName
           SharedStorageType: Efs
           LocalStorage:
             RootVolume:
@@ -97,17 +103,13 @@ Resources:
               Encrypted: true
               VolumeType: gp3
               DeleteOnTermination: true
-          Dcv:
-            Enabled: true
-            Port: 8443
-            AllowedIps: 0.0.0.0/0
           CustomActions:
             OnNodeConfigured:
               Script: s3://hpc-applications-best-practice/post-install.headnode.sh
           Iam:
-            #AdditionalIamPolicies:
-            #  - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-            #  - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+            AdditionalIamPolicies:
+              - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+              - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
             S3Access:
               - BucketName: '*'
                 EnableWriteAccess: true
@@ -155,9 +157,9 @@ Resources:
                   Efa:
                     Enabled: true
               Iam:
-                #AdditionalIamPolicies:
-                #  - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-                #  - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+                AdditionalIamPolicies:
+                  - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+                  - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
                 S3Access:
                   - BucketName: '*'
                     EnableWriteAccess: true
@@ -181,9 +183,9 @@ Resources:
                   Efa:
                     Enabled: true
               Iam:
-                #AdditionalIamPolicies:
-                #  - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-                #  - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+                AdditionalIamPolicies:
+                  - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+                  - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
                 S3Access:
                   - BucketName: '*'
                     EnableWriteAccess: true
@@ -207,9 +209,9 @@ Resources:
                   Efa:
                     Enabled: true
               Iam:
-                #AdditionalIamPolicies:
-                #  - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-                #  - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+                AdditionalIamPolicies:
+                  - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+                  - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
                 S3Access:
                   - BucketName: '*'
                     EnableWriteAccess: true
@@ -233,9 +235,9 @@ Resources:
                   Efa:
                     Enabled: true
               Iam:
-                #AdditionalIamPolicies:
-                #  - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-                #  - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+                AdditionalIamPolicies:
+                  - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+                  - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
                 S3Access:
                   - BucketName: '*'
                     EnableWriteAccess: true
@@ -263,6 +265,13 @@ Resources:
 Outputs:
   HeadNodeIp:
     Description: The Public IP address of the HeadNode
-    Value: !GetAtt [ PclusterCluster, headNode.publicIpAddress ]
+    Value: !GetAtt [ PclusterCluster, headNode.privateIpAddress ]
   FileSystemId:
     Value: !If [CreateStorage, !GetAtt HPCStorageStack.Outputs.FileSystemId, !Ref FSx]
+  SystemManagerUrl:
+    Description: URL to access the HeadNode via SystemManager
+    Value: !Sub
+      - https://${ConsoleDomain}/systems-manager/session-manager/${InstanceId}?region=${AWS::Region}
+      - { ConsoleDomain: !Sub '${AWS::Region}.console.aws.amazon.com',
+          InstanceId: !GetAtt [ PclusterCluster, headNode.instanceId ]
+        }
