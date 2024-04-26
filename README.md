@@ -29,6 +29,29 @@ We're also updating the list of included HPC application best practice regularly
 So, feel free to request a new HPC application best practice from the [ISSUES](https://github.com/aws-samples/hpc-applications/issues) .<br>
 We will do our best to satisfy your requests.<br>
 
+## 1-Click deployment
+
+If you already have a cluster up&running and you want to try these best practices, then you can just `git clone` this repository:
+```
+git clone https://github.com/aws-samples/hpc-applications.git
+```
+<br>
+<br>
+
+In case you don't have a cluster ready, you can use the CloudFormation template below to create a new one with just 1-Click.
+Select your preferred AWS Region amond the supported ones. You will be asked a few questions about Networking and Storage; 
+if you have no idea how to answer or what these services are, just leave the detault values: `AUTO`. 
+The 1-Click deployment procedure will take care of creating everything needed for your HPC Cluster to run.
+
+| Region       | Launch                                                                                                                                                                                                                                                                                                             | 
+|--------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| US  | --- |
+| Ohio (us-east-2)   | [![Launch](https://samdengler.github.io/cloudformation-launch-stack-button-svg/images/us-east-2.svg)](https://console.aws.amazon.com/cloudformation/home?region=us-east-2) |
+| EU  |---|
+| Stockholm (eu-north-1)   | [![Launch](https://samdengler.github.io/cloudformation-launch-stack-button-svg/images/eu-north-1.svg)](https://eu-north-1.console.aws.amazon.com/cloudformation/home?region=eu-north-1#/stacks/quickcreate?templateURL=https%3A%2F%2Fhpc-applications-best-practice.s3.eu-west-1.amazonaws.com%2Feu-north-1.yaml&stackName=test2&param_PublicSubnetAId=AUTO&param_FSx=AUTO&param_PrivateSubnetAId=AUTO) |
+| APJ |---|
+
+
 ## Security
 
 See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
