@@ -11,7 +11,7 @@ If you already have a cluster up&running and you want to try these best practice
 ```
 git clone https://github.com/aws-samples/hpc-applications.git
 ```
-Then, (if needed) customize the sbatch example launch script for the application you want to try and run it. 
+Then, (if needed) customize the example launch script for the application you want to try and run it. 
 
 ### Build a new HPC Cluster (1-Click deployment)
 
