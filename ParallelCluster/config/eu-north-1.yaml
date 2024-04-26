@@ -4,7 +4,7 @@ Region: eu-north-1
 Image:
   Os: alinux2
 HeadNode:
-  InstanceType: m6i.4xlarge
+  InstanceType: m6i.2xlarge
   Networking:
     SubnetId: <<subnet-1234567890>> #MUST BE IN eun1-az2
     AdditionalSecurityGroups:
