@@ -35,6 +35,8 @@ The 1-Click deployment procedure will take care of creating everything needed fo
 | APJ | --- | --- |
 | Tokyo (ap-northeast-1) | Arm | [![Launch](https://samdengler.github.io/cloudformation-launch-stack-button-svg/images/ap-northeast-1.svg)](https://console.aws.amazon.com/) |
 
+<br>
+<br>
 After the CloudFormation stack is completed you can go to the `Output` tab and click on the `SystemManagerUrl` link. <br>
 This link will let you access the HeadNode via SystemManager without using any password or certificate. <br>
 (see the image below)
