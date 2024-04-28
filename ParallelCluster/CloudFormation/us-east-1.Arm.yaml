@@ -87,8 +87,7 @@ Resources:
             SubnetId: !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnet]
             AdditionalSecurityGroups:
               - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
-          DisableSimultaneousMultithreading: false
-          SharedStorageType: Efs
+          #SharedStorageType: Efs
           LocalStorage:
             RootVolume:
               Size: 100
