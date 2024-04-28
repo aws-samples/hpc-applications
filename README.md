@@ -7,7 +7,7 @@ This repo is maintained by AWS HPC Solution Architects, who will take care of up
 
 ### On existing Clusters
 
-If you already have a cluster up&running and you want to try these best practices, then you can `git clone` this repository:
+If you already have a cluster up&running and you want to try these best practices, you can `git clone` this repository:
 ```
 git clone https://github.com/aws-samples/hpc-applications.git
 ```
@@ -15,8 +15,8 @@ Then, (if needed) customize the example launch script for the application you wa
 
 ### Build a new HPC Cluster (1-Click deployment)
 
-In case you don't have a cluster ready, you can use one of the CloudFormation templates we have prpared for you.<br> 
-Find below a few Tempaltes to create a new HPC cluster with just 1-Click.<br>
+In case you don't have a cluster ready, you can use one of the CloudFormation templates we prepared for you.<br> 
+Find below a few Templates to create a new HPC cluster with just 1-Click.<br>
 Select your preferred AWS Region among the supported ones. You will be asked a few questions about Networking and Storage; <br>
 If you have no idea how to answer or what these services are, just leave the detault values: `AUTO`. <br>
 The 1-Click deployment procedure will take care of creating everything needed for your HPC Cluster to run.<br>
@@ -34,6 +34,12 @@ The 1-Click deployment procedure will take care of creating everything needed fo
 | Ireland (eu-west-1)       | Arm | [![Launch](https://samdengler.github.io/cloudformation-launch-stack-button-svg/images/eu-west-1.svg)](https://console.aws.amazon.com/) |
 | APJ | --- | --- |
 | Tokyo (ap-northeast-1) | Arm | [![Launch](https://samdengler.github.io/cloudformation-launch-stack-button-svg/images/ap-northeast-1.svg)](https://console.aws.amazon.com/) |
+
+After the CloudFormation stack is completed you can go to the `Output` tab and click on the `SystemManagerUrl` link. <br>
+This link will let you access the HeadNode via SystemManager without using any password or certificate. <br>
+(see the image below)
+
+![CloudFormation Output Tab](https://github.com/aws-samples/hpc-applications/blob/main/Doc/CloudFormationOutput.png?raw=true)
 
 
 ## HPC application Benchmarks
