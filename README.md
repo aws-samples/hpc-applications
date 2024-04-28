@@ -39,7 +39,7 @@ After the CloudFormation stack is completed you can go to the `Output` tab and c
 This link will let you access the HeadNode via SystemManager without using any password or certificate. <br>
 (see the image below)
 
-![CloudFormation Output Tab](https://github.com/aws-samples/hpc-applications/blob/main/Doc/CloudFormationOutput.png?raw=true)
+![CloudFormation Output Tab](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/CloudFormationOutput.png?raw=true)
 
 
 ## HPC application Benchmarks
