@@ -1,0 +1,93 @@
+Imds:
+  ImdsSupport: v2.0
+Region: us-east-1
+Image:
+  Os: alinux2
+HeadNode:
+  InstanceType: m7g.4xlarge
+  Networking:
+    SubnetId: <<subnet-1234567890>>
+    AdditionalSecurityGroups:
+      - <<sg-1234567890>>
+  #SharedStorageType: Efs
+  LocalStorage:
+    RootVolume:
+      Size: 100
+      Encrypted: true
+      VolumeType: gp3
+      DeleteOnTermination: true
+  CustomActions:
+    OnNodeConfigured:
+      Script: s3://hpc-applications-best-practice/post-install.headnode.sh
+  Iam:
+    AdditionalIamPolicies:
+      - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+    S3Access:
+      - BucketName: '*'
+        EnableWriteAccess: true
+  Imds:
+    Secured: True
+Scheduling:
+  Scheduler: slurm
+  SlurmSettings:
+    ScaledownIdletime: 10
+    QueueUpdateStrategy: TERMINATE
+    EnableMemoryBasedScheduling: true
+  SlurmQueues:
+    - Name: hpc7g
+      CapacityType: ONDEMAND
+      Networking:
+        SubnetIds: 
+          - <<subnet-1234567890>>
+        AdditionalSecurityGroups:
+          - <<sg-1234567890>>
+        PlacementGroup:
+          Enabled: true
+      ComputeResources:
+        - Name: hpc7g-16xlarge
+          InstanceType: hpc7g.16xlarge
+          MinCount: 0
+          MaxCount: 200
+          Efa:
+            Enabled: true
+        - Name: hpc7g-8xlarge
+          InstanceType: hpc7g.8xlarge
+          MinCount: 0
+          MaxCount: 200
+          Efa:
+            Enabled: true
+        - Name: hpc7g-4xlarge
+          InstanceType: hpc7g.4xlarge
+          MinCount: 0
+          MaxCount: 200
+          Efa:
+            Enabled: true
+      Iam:
+        AdditionalIamPolicies:
+          - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+          - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+        S3Access:
+          - BucketName: '*'
+            EnableWriteAccess: true
+      CustomActions:
+        OnNodeConfigured:
+          Script: s3://hpc-applications-best-practice/post-install.compute.sh
+SharedStorage:
+  - Name: FsxLustre
+    StorageType: FsxLustre
+    MountDir: /fsx
+    FsxLustreSettings:
+      FileSystemId: <<fs-1234567890>>
+Monitoring:
+  DetailedMonitoring: true
+  Logs:
+    CloudWatch:
+      Enabled: true
+      RetentionInDays: 30
+      DeletionPolicy: Retain
+    Rotation:
+      Enabled: true
+  Dashboards:
+    CloudWatch:
+      Enabled: true
