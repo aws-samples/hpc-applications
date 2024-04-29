@@ -29,7 +29,7 @@ Then, (if needed) customize the example launch script for the application you wa
 
 ### Build a new HPC Cluster (1-Click deployment)
 
-You can follow the instructions [here](ParallelCluster) to build a new cluster with just 1-Click. 
+You can follow the instructions [here](ParallelCluster/README.md) to build a new cluster with just 1-Click. 
 
 
 ## HPC application Benchmarks
