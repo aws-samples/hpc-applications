@@ -6,13 +6,10 @@ Image:
 HeadNode:
   InstanceType: m6i.2xlarge
   Networking:
-    SubnetId: <<subnet-1234567890>> #MUST BE IN eun1-az2
+    SubnetId: <<subnet-1234567890>>
     AdditionalSecurityGroups:
       - <<sg-1234567890>>
-      - <<sg-1234567890>>
   DisableSimultaneousMultithreading: false
-  Ssh:
-    KeyName: <<MyKey>>
   SharedStorageType: Efs
   LocalStorage:
     RootVolume:
@@ -20,13 +17,9 @@ HeadNode:
       Encrypted: true
       VolumeType: gp3
       DeleteOnTermination: true
-  Dcv:
-    Enabled: true
-    Port: 8443
-    AllowedIps: 0.0.0.0/0
   CustomActions:
     OnNodeConfigured:
-      Script: s3://<<YOUR_BUCKET>>/post-install.headnode.sh
+      Script: s3://hpc-applications-best-practice/post-install.headnode.sh
   Iam:
     AdditionalIamPolicies:
       - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
@@ -47,9 +40,8 @@ Scheduling:
       CapacityType: ONDEMAND
       Networking:
         SubnetIds: 
-          - <<subnet-1234567890>> #MUST BE IN eun1-az2
+          - <<subnet-1234567890>>
         AdditionalSecurityGroups:
-          - <<sg-1234567890>>
           - <<sg-1234567890>>
         PlacementGroup:
           Enabled: true
@@ -87,14 +79,13 @@ Scheduling:
             EnableWriteAccess: true
       CustomActions:
         OnNodeConfigured:
-          Script: s3://<<YOUR_BUCKET>>/post-install.compute.sh
+          Script: s3://hpc-applications-best-practice/post-install.compute.sh
     - Name: hpc6id
       CapacityType: ONDEMAND
       Networking:
         SubnetIds: 
-          - <<subnet-1234567890>> #MUST BE IN eun1-az2
+          - <<subnet-1234567890>>
         AdditionalSecurityGroups:
-          - <<sg-1234567890>>
           - <<sg-1234567890>>
         PlacementGroup:
           Enabled: true
@@ -114,14 +105,13 @@ Scheduling:
             EnableWriteAccess: true
       CustomActions:
         OnNodeConfigured:
-          Script: s3://<<YOUR_BUCKET>>/post-install.compute.sh
+          Script: s3://hpc-applications-best-practice/post-install.compute.sh
     - Name: hpc6a
       CapacityType: ONDEMAND
       Networking:
         SubnetIds: 
-          - <<subnet-1234567890>> #MUST BE IN eun1-az2
+          - <<subnet-1234567890>>
         AdditionalSecurityGroups:
-          - <<sg-1234567890>>
           - <<sg-1234567890>>
         PlacementGroup:
           Enabled: true
@@ -141,14 +131,13 @@ Scheduling:
             EnableWriteAccess: true
       CustomActions:
         OnNodeConfigured:
-          Script: s3://<<YOUR_BUCKET>>/post-install.compute.sh
+          Script: s3://hpc-applications-best-practice/post-install.compute.sh
     - Name: c5n
       CapacityType: ONDEMAND
       Networking:
         SubnetIds: 
-          - <<subnet-1234567890>> #MUST BE IN eun1-az2
+          - <<subnet-1234567890>>
         AdditionalSecurityGroups:
-          - <<sg-1234567890>>
           - <<sg-1234567890>>
         PlacementGroup:
           Enabled: true
@@ -168,90 +157,13 @@ Scheduling:
             EnableWriteAccess: true
       CustomActions:
         OnNodeConfigured:
-          Script: s3://<<YOUR_BUCKET>>/post-install.compute.sh
-    - Name: g5
-      CapacityType: ONDEMAND
-      Networking:
-        SubnetIds: 
-          - <<subnet-1234567890>> #MUST BE IN eun1-az3
-        AdditionalSecurityGroups:
-          - <<sg-1234567890>>
-          - <<sg-1234567890>>
-        PlacementGroup:
-          Enabled: true
-      ComputeResources:
-        - Name: g5-48xlarge
-          DisableSimultaneousMultithreading: true
-          InstanceType: g5.48xlarge
-          MinCount: 0
-          MaxCount: 200
-          Efa:
-            Enabled: true
-            GdrSupport: true
-        - Name: g5-16xlarge
-          DisableSimultaneousMultithreading: true
-          InstanceType: g5.16xlarge
-          MinCount: 0
-          MaxCount: 200
-          Efa:
-            Enabled: true
-            GdrSupport: true
-      HealthChecks:
-        Gpu:
-          Enabled: true
-      Iam:
-        AdditionalIamPolicies:
-          - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-          - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
-        S3Access:
-          - BucketName: '*'
-            EnableWriteAccess: true
-      CustomActions:
-        OnNodeConfigured:
-          Script: s3://<<YOUR_BUCKET>>/post-install.compute.sh
-    - Name: p5
-      CapacityType: ONDEMAND
-      Networking:
-        SubnetIds: 
-          - <<subnet-1234567890>> #MUST BE IN eun1-az3
-        AdditionalSecurityGroups:
-          - <<sg-1234567890>>
-          - <<sg-1234567890>>
-        PlacementGroup:
-          Enabled: true
-      ComputeResources:
-        - Name: p5-48xlarge
-          DisableSimultaneousMultithreading: true
-          InstanceType: p5.48xlarge
-          MinCount: 0
-          MaxCount: 200
-          Efa:
-            Enabled: true
-            GdrSupport: true
-      HealthChecks:
-        Gpu:
-          Enabled: true
-      Iam:
-        AdditionalIamPolicies:
-          - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-          - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
-        S3Access:
-          - BucketName: '*'
-            EnableWriteAccess: true
-      CustomActions:
-        OnNodeConfigured:
-          Script: s3://<<YOUR_BUCKET>>/post-install.compute.sh
+          Script: s3://hpc-applications-best-practice/post-install.compute.sh
 SharedStorage:
-  - Name: FsxLustreAZ2
+  - Name: FsxLustre
     StorageType: FsxLustre
     MountDir: /fsx
     FsxLustreSettings:
-      FileSystemId: <<fs-1234567890>> #MUST BE IN eun1-az2
-  - Name: FsxLustre
-    StorageType: FsxLustreAZ3
-    MountDir: /fsx2
-    FsxLustreSettings:
-      FileSystemId: <<fs-1234567890>> #MUST BE IN eun1-az3
+      FileSystemId: <<fs-1234567890>>
 Monitoring:
   DetailedMonitoring: true
   Logs:
