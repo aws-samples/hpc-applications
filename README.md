@@ -1,9 +1,9 @@
 # HPC application best practices on AWS
-This repository contains HPC application best practices, specifically designed for, and optimized to run, on AWS.<br>
+This repository contains HPC application best practices, specifically designed for, and optimized to run on AWS.<br>
 In particular, these best practices take into account the peculiarity of AWS HPC-specific services and EC2 instances, in order to get the best out of them.<br>
 This repo is maintained by AWS HPC Solution Architects, who will take care of updating and improving these best practices as AWS services evolve or new settings/tunings are discovered. This is **not intended** to be an AWS supported product or service, though.<br>
 
-## HPC application best practices included:
+## HPC application best practices included (to date):
 1. [Fluent](https://github.com/aws-samples/hpc-applications/tree/main/apps/Fluent)
 2. [Abaqus](https://github.com/aws-samples/hpc-applications/tree/main/apps/Abaqus)
 3. [LS-Dyna](https://github.com/aws-samples/hpc-applications/tree/main/apps/LS-Dyna)
@@ -29,33 +29,7 @@ Then, (if needed) customize the example launch script for the application you wa
 
 ### Build a new HPC Cluster (1-Click deployment)
 
-In case you don't have a cluster ready, you can use one of the CloudFormation templates we prepared for you.<br> 
-Find below a few Templates to create a new HPC cluster with just 1-Click.<br>
-Select your preferred AWS Region among the supported ones. You will be asked a few questions about Networking and Storage; <br>
-If you have no idea how to answer or what these services are, just leave the detault values: `AUTO`. <br>
-The 1-Click deployment procedure will take care of creating everything needed for your HPC Cluster to run.<br>
-<br>
-
-| Region       | Type | Launch                                                                                                                                                                                                                                                                                                             | 
-|--------------| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| US  | --- | --- |
-| N. Virginia (us-east-1) | Arm | [![Launch](https://samdengler.github.io/cloudformation-launch-stack-button-svg/images/us-east-1.svg)](https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/quickcreate?templateURL=https%3A%2F%2Fhpc-applications-best-practice.s3.eu-west-1.amazonaws.com%2Fus-east-1.Arm.yaml&stackName=hpc-best-practice&param_PrivateSubnet=AUTO&param_FSx=AUTO&param_ClusterSecurityGroup=AUTO) |
-| Ohio (us-east-2) | x86 | [![Launch](https://samdengler.github.io/cloudformation-launch-stack-button-svg/images/us-east-2.svg)](https://us-east-2.console.aws.amazon.com/cloudformation/home?region=us-east-2#/stacks/quickcreate?templateURL=https%3A%2F%2Fhpc-applications-best-practice.s3.eu-west-1.amazonaws.com%2Fus-east-2.x86.yaml&stackName=hpc-best-practice&param_PrivateSubnet=AUTO&param_FSx=AUTO&param_ClusterSecurityGroup=AUTO) |
-| EU  | --- | --- |
-| Stockholm (eu-north-1)    | x86 | [![Launch](https://samdengler.github.io/cloudformation-launch-stack-button-svg/images/eu-north-1.svg)](https://eu-north-1.console.aws.amazon.com/cloudformation/home?region=eu-north-1#/stacks/quickcreate?templateURL=https%3A%2F%2Fhpc-applications-best-practice.s3.eu-west-1.amazonaws.com%2Feu-north-1.x86.yaml&stackName=hpc-best-practice&param_PrivateSubnet=AUTO&param_FSx=AUTO&param_ClusterSecurityGroup=AUTO) |
-| Stockholm (eu-north-1)    | GPU | [![Launch](https://samdengler.github.io/cloudformation-launch-stack-button-svg/images/eu-north-1.svg)](https://eu-north-1.console.aws.amazon.com/cloudformation/home?region=eu-north-1#/stacks/quickcreate?templateURL=https%3A%2F%2Fhpc-applications-best-practice.s3.eu-west-1.amazonaws.com%2Feu-north-1.GPU.yaml&stackName=hpc-best-practice&param_PrivateSubnet=AUTO&param_FSx=AUTO&param_ClusterSecurityGroup=AUTO) |
-| Ireland (eu-west-1)       | x86 | [![Launch](https://samdengler.github.io/cloudformation-launch-stack-button-svg/images/eu-west-1.svg)](https://console.aws.amazon.com/) |
-| Ireland (eu-west-1)       | Arm | [![Launch](https://samdengler.github.io/cloudformation-launch-stack-button-svg/images/eu-west-1.svg)](https://console.aws.amazon.com/) |
-| APJ | --- | --- |
-| Tokyo (ap-northeast-1) | x86 | [![Launch](https://samdengler.github.io/cloudformation-launch-stack-button-svg/images/ap-northeast-1.svg)](https://console.aws.amazon.com/) |
-
-<br>
-<br>
-After the CloudFormation stack is completed you can go to the `Output` tab and click on the `SystemManagerUrl` link. <br>
-This link will let you access the HeadNode via SystemManager without using any password or certificate. <br>
-(see the image below)
-
-![CloudFormation Output Tab](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/CloudFormationOutput.png?raw=true)
+You can follow the instructions [here](ParallelCluster) to build a new cluster with just 1-Click. 
 
 
 ## HPC application Benchmarks
