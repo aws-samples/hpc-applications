@@ -4,14 +4,13 @@ Today we have implemented our HPC Application Best Practice using [AWS ParallelC
 AWS ParallelCluster is an open source cluster management tool that makes it easy for you to deploy and manage High Performance Computing (HPC) clusters on AWS. <br>
 ParallelCluster offer a simple graphical user interface [GUI](https://docs.aws.amazon.com/parallelcluster/latest/ug/pcui-using-v3.html) or text file to model and provision the resources needed for your HPC applications in an automated and secure manner. <br>
 It also supports multiple instance types and job submission queues, and job schedulers like AWS Batch and Slurm.<br>
-<br>
 
 ### Build your cluster using the CLI
 You can build your cluster using the AWS ParallelCluster [CLI](https://docs.aws.amazon.com/parallelcluster/latest/ug/pcluster-v3.html). <br> 
 Find example ParallelCluster configuration files under the [config](config) directory. <br>
-This configuration files are not working examples as they need you to replace a few tokens (like `subnet-1234567890` or `sg-1234567890`) with the resources you want to use on your AWS account.<br>
+This configuration files are not working examples as they need you to replace a few tokens (like `subnet-1234567890` or `sg-1234567890`) with the resources you want to use on your AWS account.
 
-### Build your clsuster using CloudFormation (1-Click)
+### Build your cluster using CloudFormation (1-Click)
 In addition, we have build a few working [CloudFormantion](https://aws.amazon.com/cloudformation/) templates that help you to create a new HPC cluster with just 1-Click.<br>
 Select your preferred AWS Region among the supported ones. You will be asked a few questions about Networking and Storage; <br>
 If you have no idea how to answer or what these services are, just leave the detault values: `AUTO`. <br>
