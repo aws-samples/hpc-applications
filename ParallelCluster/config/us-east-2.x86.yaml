@@ -1,0 +1,178 @@
+Imds:
+  ImdsSupport: v2.0
+Region: us-east-2
+Image:
+  Os: alinux2
+HeadNode:
+  InstanceType: m6i.2xlarge
+  Networking:
+    SubnetId: <<subnet-1234567890>>
+    AdditionalSecurityGroups:
+      - <<sg-1234567890>>
+  DisableSimultaneousMultithreading: false
+  SharedStorageType: Efs
+  LocalStorage:
+    RootVolume:
+      Size: 100
+      Encrypted: true
+      VolumeType: gp3
+      DeleteOnTermination: true
+  CustomActions:
+    OnNodeConfigured:
+      Script: s3://hpc-applications-best-practice/post-install.headnode.sh
+  Iam:
+    AdditionalIamPolicies:
+      - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+    S3Access:
+      - BucketName: '*'
+        EnableWriteAccess: true
+  Imds:
+    Secured: True
+Scheduling:
+  Scheduler: slurm
+  SlurmSettings:
+    ScaledownIdletime: 10
+    QueueUpdateStrategy: TERMINATE
+    EnableMemoryBasedScheduling: true
+  SlurmQueues:
+    - Name: hpc7a
+      CapacityType: ONDEMAND
+      Networking:
+        SubnetIds: 
+          - <<subnet-1234567890>>
+        AdditionalSecurityGroups:
+          - <<sg-1234567890>>
+        PlacementGroup:
+          Enabled: true
+      ComputeResources:
+        - Name: hpc7a-96xlarge
+          InstanceType: hpc7a.96xlarge
+          MinCount: 0
+          MaxCount: 200
+          Efa:
+            Enabled: true
+        - Name: hpc7a-48xlarge
+          InstanceType: hpc7a.48xlarge
+          MinCount: 0
+          MaxCount: 200
+          Efa:
+            Enabled: true
+        - Name: hpc7a-24xlarge
+          InstanceType: hpc7a.24xlarge
+          MinCount: 0
+          MaxCount: 200
+          Efa:
+            Enabled: true
+        - Name: hpc7a-12xlarge
+          InstanceType: hpc7a.12xlarge
+          MinCount: 0
+          MaxCount: 200
+          Efa:
+            Enabled: true
+      Iam:
+        AdditionalIamPolicies:
+          - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+          - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+        S3Access:
+          - BucketName: '*'
+            EnableWriteAccess: true
+      CustomActions:
+        OnNodeConfigured:
+          Script: s3://hpc-applications-best-practice/post-install.compute.sh
+    - Name: hpc6id
+      CapacityType: ONDEMAND
+      Networking:
+        SubnetIds: 
+          - <<subnet-1234567890>>
+        AdditionalSecurityGroups:
+          - <<sg-1234567890>>
+        PlacementGroup:
+          Enabled: true
+      ComputeResources:
+        - Name: hpc6id-32xlarge
+          InstanceType: hpc6id.32xlarge
+          MinCount: 0
+          MaxCount: 200
+          Efa:
+            Enabled: true
+      Iam:
+        AdditionalIamPolicies:
+          - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+          - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+        S3Access:
+          - BucketName: '*'
+            EnableWriteAccess: true
+      CustomActions:
+        OnNodeConfigured:
+          Script: s3://hpc-applications-best-practice/post-install.compute.sh
+    - Name: hpc6a
+      CapacityType: ONDEMAND
+      Networking:
+        SubnetIds: 
+          - <<subnet-1234567890>>
+        AdditionalSecurityGroups:
+          - <<sg-1234567890>>
+        PlacementGroup:
+          Enabled: true
+      ComputeResources:
+        - Name: hpc6a-48xlarge
+          InstanceType: hpc6a.48xlarge
+          MinCount: 0
+          MaxCount: 200
+          Efa:
+            Enabled: true
+      Iam:
+        AdditionalIamPolicies:
+          - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+          - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+        S3Access:
+          - BucketName: '*'
+            EnableWriteAccess: true
+      CustomActions:
+        OnNodeConfigured:
+          Script: s3://hpc-applications-best-practice/post-install.compute.sh
+    - Name: c5n
+      CapacityType: ONDEMAND
+      Networking:
+        SubnetIds: 
+          - <<subnet-1234567890>>
+        AdditionalSecurityGroups:
+          - <<sg-1234567890>>
+        PlacementGroup:
+          Enabled: true
+      ComputeResources:
+        - Name: c5n-18xlarge
+          InstanceType: c5n.18xlarge
+          MinCount: 0
+          MaxCount: 200
+          Efa:
+            Enabled: true
+      Iam:
+        AdditionalIamPolicies:
+          - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+          - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+        S3Access:
+          - BucketName: '*'
+            EnableWriteAccess: true
+      CustomActions:
+        OnNodeConfigured:
+          Script: s3://hpc-applications-best-practice/post-install.compute.sh
+SharedStorage:
+  - Name: FsxLustre
+    StorageType: FsxLustre
+    MountDir: /fsx
+    FsxLustreSettings:
+      FileSystemId: <<fs-1234567890>>
+Monitoring:
+  DetailedMonitoring: true
+  Logs:
+    CloudWatch:
+      Enabled: true
+      RetentionInDays: 30
+      DeletionPolicy: Retain
+    Rotation:
+      Enabled: true
+  Dashboards:
+    CloudWatch:
+      Enabled: true
