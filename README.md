@@ -3,6 +3,20 @@ This repository contains HPC application best practices, specifically designed f
 In particular, these best practices take into account the peculiarity of AWS HPC-specific services and EC2 instances, in order to get the best out of them.<br>
 This repo is maintained by AWS HPC Solution Architects, who will take care of updating and improving these best practices as AWS services evolve or new settings/tunings are discovered. This is **not intended** to be an AWS supported product or service, though.<br>
 
+## HPC application best practices included:
+1. [Fluent](https://github.com/aws-samples/hpc-applications/tree/main/apps/Fluent)
+2. [Abaqus](https://github.com/aws-samples/hpc-applications/tree/main/apps/Abaqus)
+3. [LS-Dyna](https://github.com/aws-samples/hpc-applications/tree/main/apps/LS-Dyna)
+4. [Optistruct](https://github.com/aws-samples/hpc-applications/tree/main/apps/Optistruct)
+5. [STAR-CCM+](https://github.com/aws-samples/hpc-applications/tree/main/apps/StarCCM)
+
+## Request a HPC application best practice
+
+We're starting with the most common HPC applications, specifically in the CAE market.  <br>
+We're also updating the list of included HPC application best practice regularly, based on your feedback.<br>
+So, feel free to request a new HPC application best practice from the [ISSUES](https://github.com/aws-samples/hpc-applications/issues) .<br>
+We will do our best to satisfy your requests.<br>
+
 ## Get Started 
 
 ### On existing Clusters
@@ -33,7 +47,7 @@ The 1-Click deployment procedure will take care of creating everything needed fo
 | Ireland (eu-west-1)       | x86 | [![Launch](https://samdengler.github.io/cloudformation-launch-stack-button-svg/images/eu-west-1.svg)](https://console.aws.amazon.com/) |
 | Ireland (eu-west-1)       | Arm | [![Launch](https://samdengler.github.io/cloudformation-launch-stack-button-svg/images/eu-west-1.svg)](https://console.aws.amazon.com/) |
 | APJ | --- | --- |
-| Tokyo (ap-northeast-1) | Arm | [![Launch](https://samdengler.github.io/cloudformation-launch-stack-button-svg/images/ap-northeast-1.svg)](https://console.aws.amazon.com/) |
+| Tokyo (ap-northeast-1) | x86 | [![Launch](https://samdengler.github.io/cloudformation-launch-stack-button-svg/images/ap-northeast-1.svg)](https://console.aws.amazon.com/) |
 
 <br>
 <br>
@@ -55,20 +69,6 @@ In addition to application best practices, this repo will include some HPC appli
  * AWS EC2 [Hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) Instances
  * AWS EC2 [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6i/) Instances
  * AWS EC2 [Hpc7g](https://aws.amazon.com/ec2/instance-types/hpc7g/) Instances
-
-## HPC application best practices included:
-1. [Fluent](https://github.com/aws-samples/hpc-applications/tree/main/apps/Fluent)
-2. [Abaqus](https://github.com/aws-samples/hpc-applications/tree/main/apps/Abaqus)
-3. [LS-Dyna](https://github.com/aws-samples/hpc-applications/tree/main/apps/LS-Dyna)
-4. [Optistruct](https://github.com/aws-samples/hpc-applications/tree/main/apps/Optistruct)
-5. [STAR-CCM+](https://github.com/aws-samples/hpc-applications/tree/main/apps/StarCCM)
-
-## Request a HPC application best practice
-
-We're starting with the most common HPC applications, specifically in the CAE market.  <br>
-We're also updating the list of included HPC application best practice regularly, based on your feedback.<br>
-So, feel free to request a new HPC application best practice from the [ISSUES](https://github.com/aws-samples/hpc-applications/issues) .<br>
-We will do our best to satisfy your requests.<br>
 
 ## Security
 
