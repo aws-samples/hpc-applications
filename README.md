@@ -10,7 +10,7 @@ This repo is maintained by AWS HPC Solution Architects, who will take care of up
 4. [Optistruct](https://github.com/aws-samples/hpc-applications/tree/main/apps/Optistruct)
 5. [STAR-CCM+](https://github.com/aws-samples/hpc-applications/tree/main/apps/StarCCM)
 
-## Request a HPC application best practice
+### Request a HPC application best practice
 
 We're starting with the most common HPC applications, specifically in the CAE market.  <br>
 We're also updating the list of included HPC application best practice regularly, based on your feedback.<br>
