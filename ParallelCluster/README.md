@@ -39,3 +39,6 @@ This link will let you access the HeadNode via SystemManager without using any p
 ![CloudFormation Output Tab](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/CloudFormationOutput.png?raw=true)
 
 You will find a clone of this repository under `/fsx` .
+
+
+> **_NOTE:_**  Please refer to [aws-hpc-recipes](https://github.com/aws-samples/aws-hpc-recipes/) in case you need to leverage advanced AWS ParallelCluster functionalities through interoperable CloudFormation templates designed to work together to build complete HPC environments.
