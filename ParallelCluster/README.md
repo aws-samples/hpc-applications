@@ -31,8 +31,11 @@ The 1-Click deployment procedure will take care of creating everything needed fo
 | Tokyo (ap-northeast-1) | x86 | [![Launch](https://samdengler.github.io/cloudformation-launch-stack-button-svg/images/ap-northeast-1.svg)](https://console.aws.amazon.com/) |
 
 <br>
+
 > **_NOTE:_**  Please refer to [aws-hpc-recipes](https://github.com/aws-samples/aws-hpc-recipes/) in case you need to leverage advanced AWS ParallelCluster functionalities through interoperable CloudFormation templates designed to work together to build complete HPC environments.
+
 <br>
+
 After the CloudFormation stack is completed you can go to the `Output` tab and click on the `SystemManagerUrl` link. <br>
 This link will let you access the HeadNode via SystemManager without using any password or certificate. <br>
 (see the image below)
