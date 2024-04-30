@@ -37,3 +37,5 @@ This link will let you access the HeadNode via SystemManager without using any p
 (see the image below)
 
 ![CloudFormation Output Tab](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/CloudFormationOutput.png?raw=true)
+
+You will find a clone of this repository under `/fsx` .
