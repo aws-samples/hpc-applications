@@ -13,7 +13,7 @@ This configuration files are not working examples as they need you to replace a 
 ### Build your cluster using CloudFormation (1-Click)
 In addition, we have build a few working [CloudFormantion](https://aws.amazon.com/cloudformation/) templates that help you to create a new HPC cluster with just 1-Click.<br>
 Select your preferred AWS Region among the supported ones. You will be asked a few questions about Networking and Storage; <br>
-If you have no idea how to answer or what these services are, just leave the detault values: `AUTO`. <br>
+If you have no idea how to answer or what these services are, just leave the default values: `AUTO`. <br>
 The 1-Click deployment procedure will take care of creating everything needed for your HPC Cluster to run properly.<br>
 <br>
 
