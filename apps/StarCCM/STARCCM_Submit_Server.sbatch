@@ -25,9 +25,9 @@
 # with libfabric in the install location that uses.
 
 
-module load intelmpi
 # Tell Intel MPI to use external libfabric version with:
 export I_MPI_OFI_LIBRARY_INTERNAL=0
+module load intelmpi
 export I_MPI_FABRICS=shm:ofi
 export I_MPI_OFI_PROVIDER=efa
 # This is to ensure the correct EFA fabrics are used.
