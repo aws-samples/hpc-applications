@@ -74,6 +74,6 @@ mp_mode = MPI
 standard_parallel = ALL
 EOF
 
-"${abaqus_bin}" input=${benchmark_file} interactive -job ${benchmark_name} | tee ${benchmark_name}.log
+"${abaqus_bin}" input=$(basename ${input_file}) interactive -job $(basename ${input_file%.*}) | tee $(basename ${input_file%.*}).log
 
 rm -rf "${SCRATCH_DIR}"                                
