@@ -95,4 +95,4 @@ The most important parameters are:
 
 # Performance
 
-![Abaqus s4e](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/s4e.png?raw=true)
+Coming soon!
