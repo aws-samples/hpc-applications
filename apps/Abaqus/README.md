@@ -95,4 +95,8 @@ The most important parameters are:
 
 # Performance
 
+<<<<<<< HEAD
 Coming soon!
+=======
+Coming soon!
+>>>>>>> 74452766afbaf243893a11b903750d5215f2b8ca
