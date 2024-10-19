@@ -9,6 +9,7 @@ This repo is maintained by AWS HPC Solution Architects, who will take care of up
 3. [LS-Dyna](https://github.com/aws-samples/hpc-applications/tree/main/apps/LS-Dyna)
 4. [Optistruct](https://github.com/aws-samples/hpc-applications/tree/main/apps/Optistruct)
 5. [STAR-CCM+](https://github.com/aws-samples/hpc-applications/tree/main/apps/StarCCM)
+6. [CFX](https://github.com/aws-samples/hpc-applications/tree/main/apps/CFX)
 
 ### Request a HPC application best practice
 
