@@ -4,7 +4,7 @@ Ansys [CFX](https://www.ansys.com/products/fluids/ansys-cfx) is a CFD software f
 
 # Versions
 
-In this repository we will provide best practices for all the Fluent versions starting from 2023 and newer.
+In this repository we will provide best practices for all the CFX versions starting from 2023 and newer.
 
 **_NOTE:_**  We will provide best practices for AWS Graviton instances as soon as CFX will officially support ARM-based cpus.
 
