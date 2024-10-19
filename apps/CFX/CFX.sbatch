@@ -31,7 +31,7 @@ echo "Execution directory is: ${workdir}"
 mkdir -p "${workdir}" && cd "${workdir}"
 
 echo "building the MPI hostfile"
-HOST_LIST=$(scontrol show hostname $SLURM_NODELIST | sed -e "s/ /,/g")
+HOST_LIST=$(scontrol show hostname $SLURM_NODELIST)
 
 cp $0 .
 ln -s "${def_file}" .
