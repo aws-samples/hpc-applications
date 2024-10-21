@@ -101,4 +101,4 @@ This chart shows the per-core performance of Abaqus 2024 running the s4e on olde
 ![Abaqus 2024 X core Performance on Intel-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-s4e-Hpc6id.png)
 <br><br>
 This chart shows the per-core performance of Abaqus 2024 running the s4e on older and newr generation of AMD-Based AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc6a/) Instances.
-![Abaqus 2024 X core Performance on AMD-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-s4e-Hpc7aVsHpc6aa.png)
+![Abaqus 2024 X core Performance on AMD-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-s4e-Hpc7aVsHpc6a.png)
