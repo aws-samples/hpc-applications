@@ -93,6 +93,9 @@ This section shows the benchmark results of Abaqus 2024 running common datasets 
 For more information about these benchmarks please refer to the Abaqus offical documentation.<br>
 
 **_NOTE:_**  The benchmark results are based on wallclock time normalized.
+
+## s4e
+
 <br><br>
 This chart shows the per-core performance of Abaqus 2024 running the s4e on all the different sizes of the AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) Instances.
 ![Abaqus 2024 X core Performance on AMD-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-s4e-Hpc7a.png)
@@ -102,3 +105,15 @@ This chart shows the per-core performance of Abaqus 2024 running the s4e on olde
 <br><br>
 This chart shows the per-core performance of Abaqus 2024 running the s4e on older and newr generation of AMD-Based AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc6a/) Instances.
 ![Abaqus 2024 X core Performance on AMD-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-s4e-Hpc7aVsHpc6a.png)
+
+## s9
+
+TBC
+
+## e14_DropTest_v0
+
+TBC
+
+## e13
+
+TBC
