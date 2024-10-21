@@ -97,7 +97,7 @@ For more information about these benchmarks please refer to the Abaqus offical d
 ## s4e
 
 <br><br>
-This chart shows the per-core performance of Abaqus 2024 running the s4e on older and newr generation of AMD-Based AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc6a/) Instances.
+This chart shows the per-core performance of Abaqus 2024 running the s4e on older and newr generation of AMD-Based AWS EC2 [Hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) Instances.
 ![Abaqus 2024 X core Performance on AMD-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-s4e-Hpc7aVsHpc6a.png)
 <br><br>
 This chart shows the per-core performance of Abaqus 2024 running the s4e on all the different sizes of the AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) Instances.
@@ -108,7 +108,16 @@ This chart shows the per-core performance of Abaqus 2024 running the s4e on olde
 
 ## s9
 
-TBC
+<br><br>
+This chart shows the per-core performance of Abaqus 2024 running the s9 on older and newr generation of AMD-Based AWS EC2 [Hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) Instances.
+![Abaqus 2024 X core Performance on AMD-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-s9-Hpc6aVsHpc7a.png)
+<br><br>
+This chart shows the per-core performance of Abaqus 2024 running the s9 on all the different sizes of the AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) Instances.
+![Abaqus 2024 X core Performance on AMD-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-s9-Hpc7a.png)
+<br><br>
+This chart shows the per-core performance of Abaqus 2024 running the s9 on older and newr generation of Intel-based AWS EC2 [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6id/) Instances.
+![Abaqus 2024 X core Performance on Intel-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-s9-Hpc6id.png)
+
 
 ## e14_DropTest_v0
 
