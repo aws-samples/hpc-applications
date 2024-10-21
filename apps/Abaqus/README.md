@@ -123,15 +123,23 @@ This chart shows the per-core performance of Abaqus 2024 running a Standard/Impl
 
 <br><br>
 This chart shows the per-core performance of Abaqus 2024 running an Explicit simulation using the e14_DropTest_v0 dataset on older and newer generation of AMD-Based AWS EC2 [Hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) Instances.
-![Abaqus 2024 X core Performance on AMD-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-s9-Hpc6aVsHpc7a.png)
+![Abaqus 2024 X core Performance on AMD-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-e14_DropTest_v0-1-Hpc6avsHpc7a.png)
 <br><br>
 This chart shows the per-core performance of Abaqus 2024 running an Explicit simulation using the e14_DropTest_v0 dataset on all the different sizes of the AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) Instances.
-![Abaqus 2024 X core Performance on AMD-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-s9-Hpc7a.png)
+![Abaqus 2024 X core Performance on AMD-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-e14_DropTest_v0-1-Hpc7a.png)
 <br><br>
 This chart shows the per-core performance of Abaqus 2024 running an Explicit simulation using the e14_DropTest_v0 dataset on older and newer generation of Intel-based AWS EC2 [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6id/) Instances.
-![Abaqus 2024 X core Performance on Intel-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-s9-Hpc6id.png)
+![Abaqus 2024 X core Performance on Intel-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-e14_DropTest_v0-1-Hpc6id.png)
 
 
 ## e13
 
-TBC
+<br><br>
+This chart shows the per-core performance of Abaqus 2024 running an Explicit simulation using the e13 dataset on older and newer generation of AMD-Based AWS EC2 [Hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) Instances.
+![Abaqus 2024 X core Performance on AMD-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-e13-Hpc6aVsHpc7a.png)
+<br><br>
+This chart shows the per-core performance of Abaqus 2024 running an Explicit simulation using the e13 dataset on all the different sizes of the AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) Instances.
+![Abaqus 2024 X core Performance on AMD-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-e13-Hpc7a.png)
+<br><br>
+This chart shows the per-core performance of Abaqus 2024 running an Explicit simulation using the e13 dataset on older and newer generation of Intel-based AWS EC2 [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6id/) Instances.
+![Abaqus 2024 X core Performance on Intel-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-e13-Hpc6id.png)
