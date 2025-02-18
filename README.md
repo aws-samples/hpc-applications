@@ -4,12 +4,13 @@ In particular, these best practices take into account the peculiarity of AWS HPC
 This repo is maintained by AWS HPC Solution Architects, who will take care of updating and improving these best practices as AWS services evolve or new settings/tunings are discovered. This is **not intended** to be an AWS supported product or service, though.<br>
 
 ## HPC application best practices included (to date):
-1. [Fluent](https://github.com/aws-samples/hpc-applications/tree/main/apps/Fluent)
+1. [ANSYS Fluent](https://github.com/aws-samples/hpc-applications/tree/main/apps/Fluent)
 2. [Abaqus](https://github.com/aws-samples/hpc-applications/tree/main/apps/Abaqus)
 3. [LS-Dyna](https://github.com/aws-samples/hpc-applications/tree/main/apps/LS-Dyna)
 4. [Optistruct](https://github.com/aws-samples/hpc-applications/tree/main/apps/Optistruct)
 5. [STAR-CCM+](https://github.com/aws-samples/hpc-applications/tree/main/apps/StarCCM)
-6. [CFX](https://github.com/aws-samples/hpc-applications/tree/main/apps/CFX)
+6. [ANSYS CFX](https://github.com/aws-samples/hpc-applications/tree/main/apps/CFX)
+7. [ANSYS Mechanical](https://github.com/aws-samples/hpc-applications/tree/main/apps/AnsysMechanical)
 
 ### Request a HPC application best practice
 
