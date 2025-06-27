@@ -52,4 +52,4 @@ echo "Install missing lib"
 mpirun -np $SLURM_JOB_NUM_NODES -ppn 1 /bin/bash -c "sudo yum -y install mesa-libGLU"
 
 # Ansys Mechanical gets the total number of cores from hostlist not from -np
-"${APP_BIN_PATH}" -b -dis -mpi intelmpi -ssh -machines $MACHINES -i $(basename ${input_file}) -o output.log
+"${APP_BIN_PATH}" -b -dis -mpi intelmpi -ssh -machines $machines -i $(basename ${input_file}) -o output.log
