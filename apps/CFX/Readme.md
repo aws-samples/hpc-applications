@@ -41,6 +41,30 @@ We would strongly recommend to use [Amazon FSx for Lustre](https://aws.amazon.co
   * ` -part $SLURM_NPROCS` This parameter specifies the number of cores used to run the simulation.
   * ` -part-large` This parameter is used for large models.
 
+# Execution
+
+CFX can be run on SLURM clusters using two common methods: using the MPI launcher (e.g. `mpirun` from Intel MPI) or using SLURM's `srun` launcher. The main difference is how processor pinning is handled:
+
+- **`mpirun` (Intel MPI launcher)**: Intel MPI performs processor pinning on a per-job basis. Nodes launched with `mpirun` are typically dedicated to a single job (use `#SBATCH --exclusive`) so that the MPI launcher can assign cores without considering other running jobs on the same host.
+
+- **`srun` (SLURM launcher)**: SLURM performs the pinning and takes into account other jobs already running on the node. This allows bin-packing multiple jobs on the same node and generally improves utilization on multi-tenant clusters.
+
+When using Intel MPI, use `-start-method 'Intel MPI Distributed Parallel'` and the `-parallel` flag as usual. Choose `mpirun` when you can dedicate whole nodes to a single job for maximum predictable performance. Choose `srun` when you want SLURM to manage placement and allow multiple jobs per node.
+
+Example sbatch scripts are included in this repository:
+
+- `apps/CFX/CFX-mpirun.sbatch` — example using `mpirun`.
+- `apps/CFX/CFX-srun.sbatch` — example using `srun`.
+
+
+Note about `start-methods.ccl` for the `srun` method
+
+For the `srun` method we provide a helper `start-methods.ccl` file in this repository. Copy it to your CFX configuration directory so CFX can pick the recommended start methods when running under SLURM:
+
+```
+cp apps/CFX/start-methods.ccl ${CFX_INSTALL_ROOT}/config/
+```
+
 # Performance
 
 TBC
