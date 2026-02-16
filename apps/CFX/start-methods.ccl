@@ -10,7 +10,6 @@ SIMULATION CONTROL:
               Option = Direct
               Start Command = "/opt/slurm/bin/srun" --mpi=pmi2 %{executable} %{arguments}
               Shared Library Path = %{mportlibdir}/intel:%{impidir}/lib/release
-              Standard Input Redirection = Automatic
               Executable Suffix = -mpi
               Use Host List = No
               Minimum Partition Count = 1
