@@ -2,9 +2,9 @@ Imds:
   ImdsSupport: v2.0
 Region: eu-north-1
 Image:
-  Os: alinux2
+  Os: alinux2023
 HeadNode:
-  InstanceType: m6i.2xlarge
+  InstanceType: c7a.2xlarge
   Networking:
     SubnetId: <<subnet-1234567890>>
     AdditionalSecurityGroups:
@@ -36,6 +36,32 @@ Scheduling:
     QueueUpdateStrategy: TERMINATE
     EnableMemoryBasedScheduling: true
   SlurmQueues:
+    - Name: hpc8a
+      CapacityType: ONDEMAND
+      Networking:
+        SubnetIds: 
+          - <<subnet-1234567890>>
+        AdditionalSecurityGroups:
+          - <<sg-1234567890>>
+        PlacementGroup:
+          Enabled: true
+      ComputeResources:
+        - Name: hpc8a-96xlarge
+          InstanceType: hpc8a.96xlarge
+          MinCount: 0
+          MaxCount: 200
+          Efa:
+            Enabled: true
+      Iam:
+        AdditionalIamPolicies:
+          - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+          - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+        S3Access:
+          - BucketName: '*'
+            EnableWriteAccess: true
+      CustomActions:
+        OnNodeConfigured:
+          Script: s3://hpc-applications-best-practice/post-install.compute.sh
     - Name: hpc7a
       CapacityType: ONDEMAND
       Networking:
@@ -118,32 +144,6 @@ Scheduling:
       ComputeResources:
         - Name: hpc6a-48xlarge
           InstanceType: hpc6a.48xlarge
-          MinCount: 0
-          MaxCount: 200
-          Efa:
-            Enabled: true
-      Iam:
-        AdditionalIamPolicies:
-          - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-          - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
-        S3Access:
-          - BucketName: '*'
-            EnableWriteAccess: true
-      CustomActions:
-        OnNodeConfigured:
-          Script: s3://hpc-applications-best-practice/post-install.compute.sh
-    - Name: c5n
-      CapacityType: ONDEMAND
-      Networking:
-        SubnetIds: 
-          - <<subnet-1234567890>>
-        AdditionalSecurityGroups:
-          - <<sg-1234567890>>
-        PlacementGroup:
-          Enabled: true
-      ComputeResources:
-        - Name: c5n-18xlarge
-          InstanceType: c5n.18xlarge
           MinCount: 0
           MaxCount: 200
           Efa:

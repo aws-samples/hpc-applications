@@ -69,7 +69,8 @@ Resources:
         AdditionalIamPolicies: !Ref PClusterPolicy
       TemplateURL: !Sub
         - https://${AWS::Region}-aws-parallelcluster.s3.${AWS::Region}.${AWS::URLSuffix}/parallelcluster/${Version}/templates/custom_resource/cluster.yaml
-        - { Version: 3.9.1, Region: !Ref AWS::Region }
+        - Version: 3.14.2
+          Region: !Ref AWS::Region
   PclusterCluster:
     Type: Custom::PclusterCluster
     Properties:
@@ -80,7 +81,7 @@ Resources:
           ImdsSupport: v2.0
         Region: us-east-2
         Image:
-          Os: alinux2
+          Os: alinux2023
         HeadNode:
           InstanceType: m6i.2xlarge
           Networking:
@@ -114,6 +115,38 @@ Resources:
             QueueUpdateStrategy: TERMINATE
             EnableMemoryBasedScheduling: true
           SlurmQueues:
+            - Name: hpc8a
+              CapacityType: ONDEMAND
+              Networking:
+                SubnetIds:
+                  - !If
+                    - CreateVpc
+                    - !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA
+                    - !Ref PrivateSubnet
+                AdditionalSecurityGroups:
+                  - !If
+                    - CreateVpc
+                    - !GetAtt HPCNetworkStack.Outputs.localSG
+                    - !Ref ClusterSecurityGroup
+                PlacementGroup:
+                  Enabled: true
+              ComputeResources:
+                - Name: hpc8a-96xlarge
+                  InstanceType: hpc8a.96xlarge
+                  MinCount: 0
+                  MaxCount: 200
+                  Efa:
+                    Enabled: true
+              Iam:
+                AdditionalIamPolicies:
+                  - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+                  - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+                S3Access:
+                  - BucketName: '*'
+                    EnableWriteAccess: true
+              CustomActions:
+                OnNodeConfigured:
+                  Script: s3://hpc-applications-best-practice/post-install.compute.sh
             - Name: hpc7a
               CapacityType: ONDEMAND
               Networking:
