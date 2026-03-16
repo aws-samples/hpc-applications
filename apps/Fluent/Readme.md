@@ -38,7 +38,7 @@ We would strongly recommend to use [Amazon FSx for Lustre](https://aws.amazon.co
 
   * Fluent is a compute and memory bandwidth bound code. 
     * the best instance types for running it are the ones with higher amount of cores, and higher memory bandwidth per core.
-    * As of today, the instance that shows the **best price/performance** is the [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) .
+    * As of today, the instance that shows the **best price/performance** is the [Hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/) followed by the [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) .
   * Fluent is a software that scales nicely: the simulation time decreases proportionally to the numbrer of cores being used.
     * It is possible to achieve (almost) linear scaling by solving a mesh using max. between **30k-50k cells per core**.
     * This range is influenced by the complexity of your simulation and the phisics of your models. 
@@ -50,21 +50,18 @@ We would strongly recommend to use [Amazon FSx for Lustre](https://aws.amazon.co
 
 # Performance
 
-This section shows the benchmark results of Fluent v241 running a public dataset called f1_racecar_140m.<br>
+This section shows the benchmark results of Fluent running a public dataset called f1_racecar_140m.<br>
 This case is an external flow over a Formula-1 Race car. The case has around 140 million Hex-core cells and uses the realizable k-e turbulence model and the Pressure based coupled solver, Least Squares cell based, pseudo transient solver.<br>
 For more information about Fluent benchmarks please refer to the [official web page](https://www.ansys.com/it-solutions/benchmarks-overview).<br>
 
 **_NOTE:_**  The "Rating" shown in the chatrs below is defined as the number of benchmarks that can be run on a given machine (in sequence) in a 24 hour period. <br>
 It is computed by dividing the number of seconds in a day (86400 seconds) by the number of seconds required to run the benchmark. A higher rating means faster performance.
 <br><br>
-This chart shows the per-core performance of Fluent running the f1_racecar_140m on all the different sizes of the AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) Instances.
+This chart shows the per-core performance of Fluent running the f1_racecar_140m on AWS EC2 [Hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/), [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) and [Hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) Instances.
 ![ANSYS Fluent f1_racecar_140m X core Performance on AMD-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Fluent/f1_racecar_140mXcoreAMD.png?raw=true)
 <br><br>
-This chart shows the per-core performance at scale of Fluent running the f1_racecar_140m on AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) Vs. [Hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) Instances
-![ANSYS Fluent f1_racecar_140m X core Performance at scale](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Fluent/f1_racecar_140mXcoreAtScaleAMD.png?raw=true)
-<br><br>
-This chart shows the per-instance performance of Fluent running the f1_racecar_140m on AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) and [Hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) Instances
-![ANSYS Fluent f1_racecar_140m X instance Performance](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Fluent/f1_racecar_140mXinstanceAMD.png?raw=true)
+This chart shows the per-instance relative performance of Fluent running the f1_racecar_140m (192 cores per node) on AWS EC2 [Hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/) Vs. [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) Instances
+![ANSYS Fluent f1_racecar_140m X instance Performance Hpc8a Vs Hpc7a](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Fluent/f1_racecar_140mXinstanceHpc8aVsHpc7a.png?raw=true)
 <br><br>
 This chart shows the per-instance performance of Fluent running the f1_racecar_140m on AWS EC2 [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6i/) and [c5n](https://aws.amazon.com/it/ec2/instance-types/c5/) Instances
 ![ANSYS Fluent f1_racecar_140m X instance Performance](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Fluent/f1_racecar_140mXinstanceINTEL.png?raw=true)
