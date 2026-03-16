@@ -12,6 +12,12 @@ This repo is maintained by AWS HPC Solution Architects, who will take care of up
 6. [ANSYS CFX](https://github.com/aws-samples/hpc-applications/tree/main/apps/CFX)
 7. [ANSYS Mechanical](https://github.com/aws-samples/hpc-applications/tree/main/apps/AnsysMechanical)
 
+## HPC synthetic benchmarks:
+1. [STREAM](https://github.com/aws-samples/hpc-applications/tree/main/apps/Stream) - Memory bandwidth benchmark
+
+## HPC tuning and configuration guides:
+1. [Flexible Cores Configuration](https://github.com/aws-samples/hpc-applications/tree/main/flexible-cores) - Examples for configuring flexible core counts on Hpc7a and Hpc8a instances using Intel MPI and OpenMPI, including explicit core pinning strategies
+
 ### Request a HPC application best practice
 
 We're starting with the most common HPC applications, specifically in the CAE market.  <br>
@@ -41,6 +47,7 @@ In addition to application best practices, this repo will include some HPC appli
  * [AWS ParallelCluster](https://aws.amazon.com/hpc/parallelcluster/) and its [Documentation](https://docs.aws.amazon.com/parallelcluster/latest/ug/what-is-aws-parallelcluster.html)
  * [Elastic Fabric Adapter](https://aws.amazon.com/hpc/efa/) (EFA) and its [Documentation](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa.html)
  * [Amazon FSx for Lustre](https://aws.amazon.com/fsx/lustre/) and its [Documentation](https://docs.aws.amazon.com/fsx/latest/LustreGuide/what-is.html)
+ * AWS EC2 [Hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/) Instances
  * AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) Instances
  * AWS EC2 [Hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) Instances
  * AWS EC2 [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6i/) Instances
