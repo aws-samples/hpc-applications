@@ -16,7 +16,8 @@ This repo is maintained by AWS HPC Solution Architects, who will take care of up
 1. [STREAM](https://github.com/aws-samples/hpc-applications/tree/main/apps/Stream) - Memory bandwidth benchmark
 
 ## HPC tuning and configuration guides:
-1. [Flexible Cores Configuration](https://github.com/aws-samples/hpc-applications/tree/main/flexible-cores) - Examples for configuring flexible core counts on Hpc7a and Hpc8a instances using Intel MPI and OpenMPI, including explicit core pinning strategies
+1. [Flexible Cores Configuration](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores) - Examples for configuring flexible core counts on Hpc7a and Hpc8a instances using Intel MPI and OpenMPI, including explicit core pinning strategies
+2. [Test EFA](https://github.com/aws-samples/hpc-applications/tree/main/Utils/test-efa) - Scripts and instructions to verify that Elastic Fabric Adapter (EFA) is functioning correctly on your cluster
 
 ### Request a HPC application best practice
 
