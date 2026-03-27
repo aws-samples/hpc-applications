@@ -16,7 +16,7 @@ module load libfabric-aws
 export INTELMPI_ROOT="$(dirname $(dirname $(which mpirun)))"
 ######################## EFA settings ######################## 
 
-fluentversion=${1:-"v241"}
+fluentversion=${1:-"v261"}
 journal_file=${2:-"/fsx/MY_FLUENT_EXAMPLE/MY_JOURNAL_FILE.jou"}
 dataset_cas=${3:-"/fsx/MY_FLUENT_EXAMPLE/MY_CAS_FILE.cas.gz"}
 dataset_dat=${4:-"/fsx/MY_FLUENT_EXAMPLE/MY_DAT_FILE.dat.gz"}
@@ -48,4 +48,4 @@ echo "Enabling Transparent Huge Pages (THP)"
 mpirun -np $SLURM_JOB_NUM_NODES -ppn 1 /bin/bash -c "echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled"
 
 echo "Run Fluent: ${APP_BIN_PATH} ${fluent_mode} -g -cnf=hostfile -mpiopt=-genv I_MPI_DEBUG 5 -ssh -mpi=intel -t${SLURM_NPROCS} -gpu -gpu_remap -i $(basename ${journal_file})"
-"${APP_BIN_PATH}" ${fluent_mode} -g -cnf=hostfile -mpiopt="-genv I_MPI_DEBUG 5" -ssh -mpi=intel -t${SLURM_NPROCS} -gpu -gpu_remap -i $(basename ${journal_file}) | tee output.$SLURM_JOBID.out
+"${APP_BIN_PATH}" ${fluent_mode} -g -cnf=./hostfile -mpiopt="-genv I_MPI_DEBUG 5" -ssh -peth.efa  -mpi=intel -t${SLURM_NPROCS} -gpu -gpu_remap -i $(basename ${journal_file}) | tee output.$SLURM_JOBID.out
