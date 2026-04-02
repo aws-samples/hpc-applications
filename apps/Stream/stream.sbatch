@@ -34,8 +34,8 @@ export OMP_STACKSIZE=256M
 ############# FOR Hpc6a ##################
 # For example, a dual socket AMD 3rd Gen EPYC™ Processor with 96 (48x2) cores,
 # with 1 thread per L3 cache: 12 total places, stride by 8 cores:
-export OMP_PLACES=0:12:8
-export OMP_NUM_THREADS=12
+#export OMP_PLACES=0:12:8
+#export OMP_NUM_THREADS=12
 
 
 ############# FOR Hpc[7-8]a ##################
