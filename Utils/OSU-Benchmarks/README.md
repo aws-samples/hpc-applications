@@ -2,11 +2,11 @@
 
 The [OSU Micro-Benchmarks](https://mvapich.cse.ohio-state.edu/benchmarks/) (OMB) are a widely used suite for evaluating MPI performance. They measure point-to-point latency, bandwidth, and collective operation performance, making them ideal for validating EFA and MPI configurations on HPC clusters.
 
-This directory contains build scripts and Slurm job scripts for running OSU Micro-Benchmarks with both OpenMPI and Intel MPI.
+This directory contains build scripts and Slurm job scripts for running OSU Micro-Benchmarks with both OpenMPI and IntelMPI.
 
 ## Build
 
-Two build scripts are provided, one per MPI implementation. Run the appropriate script from the head node (or a login node with access to `/fsx`):
+Two build scripts are provided, one per MPI implementation. Run the appropriate script from the head-node (or a login node with access to `/fsx`):
 
 **OpenMPI:**
 
@@ -14,7 +14,7 @@ Two build scripts are provided, one per MPI implementation. Run the appropriate 
 bash build_osu_benchmarks_openmpi.sh
 ```
 
-Installs to `/fsx/OSU-Benchmark/install`.
+Installs to `/fsx/OSU-Benchmark-OpenMPI/install`.
 
 **Intel MPI:**
 
