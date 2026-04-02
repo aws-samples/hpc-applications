@@ -19,17 +19,17 @@ The benchmark is particularly useful for:
 
 ## Files
 
-- `stream-build.sh` - Build script that downloads and compiles STREAM with AOCC compiler
+- `stream-build-aocc.sh` - Build script that downloads and compiles STREAM with AOCC 5.1.0 compiler
 - `stream.sbatch` - SLURM batch script for running STREAM on HPC instances
 
 ## Build Process
 
 The build script performs the following steps:
 
-1. Downloads AMD Optimizing C/C++ Compiler (AOCC) 4.0.0
-2. Installs AOCC compiler
+1. Downloads AMD Optimizing C/C++ Compiler (AOCC) 5.1.0
+2. Installs AOCC compiler locally
 3. Downloads the latest STREAM source code from GitHub
-4. Compiles STREAM with aggressive optimization flags
+4. Compiles STREAM with aggressive optimization flags targeting AMD EPYC 5th Gen (znver5)
 
 ### Compilation Flags
 
@@ -46,7 +46,7 @@ clang stream.c \
   -fnt-store \                        # Non-temporal stores
   -O3 -Ofast -ffast-math \           # Aggressive optimizations
   -ffinite-loops \                    # Assume finite loops
-  -march=native \                     # Optimize for target CPU
+  -march=znver5 \                     # Target AMD EPYC 5th Gen (Turin)
   -zopt \                             # AMD-specific optimizations
   -fremap-arrays \                    # Array remapping optimization
   -mllvm -enable-strided-vectorization \  # Strided vectorization
@@ -61,7 +61,7 @@ clang stream.c \
 
 ```bash
 cd apps/Stream
-bash stream-build.sh
+bash stream-build-aocc.sh
 ```
 
 This will:
