@@ -1,0 +1,238 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Build a PCS-compatible AMI with Intel MPI using EC2 Image Builder
+
+Mappings:
+  DistroConfigs:
+    amzn-2:
+      name: Amazon Linux 2
+      deviceName: /dev/xvda
+      size: 100
+      x86: ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+      arm64: ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-arm64-gp2
+    amzn-2023:
+      name: Amazon Linux 2023
+      deviceName: /dev/xvda
+      size: 100
+      x86: ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+      arm64: ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
+    ubuntu-22-04:
+      name: Ubuntu 22.04
+      deviceName: /dev/sda1
+      size: 100
+      x86: ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id
+      arm64: ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/arm64/hvm/ebs-gp2/ami-id
+  InstanceConfigs:
+    x86:
+      default:
+        - c6i.8xlarge
+        - m6i.8xlarge
+    arm64:
+      default:
+        - c7g.8xlarge
+        - m7g.8xlarge
+
+Parameters:
+  Distro:
+    Type: String
+    AllowedValues:
+      - amzn-2
+      - amzn-2023
+      - ubuntu-22-04
+    Default: amzn-2
+  Architecture:
+    Type: String
+    AllowedValues:
+      - x86
+      - arm64
+    Default: x86
+  SemanticVersion:
+    Type: String
+    Default: '0.0.1'
+  HpcRecipesS3Bucket:
+    Type: String
+    Default: aws-hpc-recipes
+    AllowedValues:
+      - aws-hpc-recipes
+      - aws-hpc-recipes-dev
+  HpcRecipesBranch:
+    Type: String
+    Default: main
+
+Conditions:
+  DistroImageStartsWithSsm: !Equals
+    - !Select
+      - 0
+      - !Split
+        - ":"
+        - !FindInMap [DistroConfigs, !Ref Distro, !Ref Architecture]
+    - "ssm"
+
+Resources:
+
+  # IAM Role and Instance Profile for Image Builder
+  ImageBuilderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder
+      Path: /
+
+  ImageBuilderInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref ImageBuilderRole
+
+  # Deploy all HPC Recipes ImageBuilder components via nested stack
+  ImageBuilderComponentsStack:
+    Type: AWS::CloudFormation::Stack
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Parameters:
+        HpcRecipesS3Bucket: !Ref HpcRecipesS3Bucket
+        HpcRecipesBranch: !Ref HpcRecipesBranch
+      TemplateURL: !Sub 'https://${HpcRecipesS3Bucket}.s3.us-east-1.amazonaws.com/${HpcRecipesBranch}/recipes/pcs/hpc_ready_ami/assets/nested-imagebuilder-components.yaml'
+
+  # Custom component: Install Intel MPI
+  IntelMpiInstaller:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Sub 'IntelMpiInstaller-${AWS::StackName}'
+      Description: Install Intel MPI from oneAPI repository
+      Version: '0.0.1'
+      Platform: Linux
+      Data: |
+        name: 'Intel MPI Installer'
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: InstallIntelMpi
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - set -e
+                    - . /etc/os-release
+                    - echo "[oneAPI]" > /tmp/oneAPI.repo
+                    - echo "name=Intel oneAPI repository" >> /tmp/oneAPI.repo
+                    - echo "baseurl=https://yum.repos.intel.com/oneapi" >> /tmp/oneAPI.repo
+                    - echo "enabled=1" >> /tmp/oneAPI.repo
+                    - echo "gpgcheck=1" >> /tmp/oneAPI.repo
+                    - echo "repo_gpgcheck=1" >> /tmp/oneAPI.repo
+                    - echo "gpgkey=https://yum.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB" >> /tmp/oneAPI.repo
+                    - |
+                      if [ "$ID" = "amzn" ] && [ "$VERSION_ID" = "2" ]; then
+                        cp /tmp/oneAPI.repo /etc/yum.repos.d/oneAPI.repo
+                        yum install -y intel-oneapi-mpi intel-oneapi-mpi-devel
+                      elif [ "$ID" = "amzn" ] && [ "$VERSION_ID" = "2023" ]; then
+                        cp /tmp/oneAPI.repo /etc/yum.repos.d/oneAPI.repo
+                        dnf install -y intel-oneapi-mpi intel-oneapi-mpi-devel
+                      elif [ "$ID" = "ubuntu" ]; then
+                        wget -qO - https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor -o /usr/share/keyrings/oneapi-archive-keyring.gpg
+                        echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" > /etc/apt/sources.list.d/oneAPI.list
+                        apt-get update
+                        DEBIAN_FRONTEND=noninteractive apt-get install -y intel-oneapi-mpi intel-oneapi-mpi-devel
+                      fi
+                    - rm -f /tmp/oneAPI.repo
+              - name: CreateModulefile
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - set -e
+                    - |
+                      if [ -d /opt/intel/oneapi/mpi ]; then
+                        INTELMPI_VERSION=$(ls /opt/intel/oneapi/mpi/ | grep -E '^[0-9]' | sort -V | tail -1)
+                        MODULE_DIR="/usr/share/Modules/modulefiles/intelmpi"
+                        mkdir -p "${MODULE_DIR}"
+                        echo "#%Module1.0" > "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "proc ModulesHelp { } { puts stderr \"Intel MPI ${INTELMPI_VERSION}\" }" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "module-whatis \"Intel MPI ${INTELMPI_VERSION}\"" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "set topdir /opt/intel/oneapi/mpi/${INTELMPI_VERSION}" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "prepend-path PATH \$topdir/bin" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "prepend-path LD_LIBRARY_PATH \$topdir/lib" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "prepend-path MANPATH \$topdir/man" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "setenv I_MPI_ROOT \$topdir" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                      fi
+
+  # Image Recipe with all HPC components + Intel MPI
+  PCSImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Components:
+        - ComponentArn: !GetAtt [ImageBuilderComponentsStack, Outputs.UpdateOsComponent]
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/reboot-linux/x.x.x'
+        - ComponentArn: !GetAtt [ImageBuilderComponentsStack, Outputs.OptimizePerformanceComponent]
+        - ComponentArn: !GetAtt [ImageBuilderComponentsStack, Outputs.CloudwatchAgentComponent]
+        - ComponentArn: !GetAtt [ImageBuilderComponentsStack, Outputs.SsmAgentComponent]
+        - ComponentArn: !GetAtt [ImageBuilderComponentsStack, Outputs.EfaInstallerComponent]
+        - ComponentArn: !GetAtt [ImageBuilderComponentsStack, Outputs.LustreInstallerComponent]
+        - ComponentArn: !GetAtt [ImageBuilderComponentsStack, Outputs.EfsUtilsInstallerComponent]
+        - ComponentArn: !GetAtt [ImageBuilderComponentsStack, Outputs.PcsAgentInstallerComponent]
+        - ComponentArn: !GetAtt [ImageBuilderComponentsStack, Outputs.PcsSlurmInstallerComponent]
+        - ComponentArn: !GetAtt [ImageBuilderComponentsStack, Outputs.SpackInstallerComponent]
+        - ComponentArn: !Ref IntelMpiInstaller
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/reboot-test-linux/x.x.x'
+      Description: PCS AMI with Intel MPI
+      Name: !Sub 'pcs-ami-intelmpi-${Distro}-${Architecture}-${AWS::StackName}'
+      ParentImage: !If
+        - DistroImageStartsWithSsm
+        - !Sub
+          - '{{resolve:${AMILookup}}}'
+          - AMILookup: !FindInMap [DistroConfigs, !Ref Distro, !Ref Architecture]
+        - !FindInMap [DistroConfigs, !Ref Distro, !Ref Architecture]
+      Version: !Ref SemanticVersion
+      AdditionalInstanceConfiguration:
+        SystemsManagerAgent:
+          UninstallAfterBuild: false
+      BlockDeviceMappings:
+        - DeviceName: !FindInMap [DistroConfigs, !Ref Distro, deviceName]
+          Ebs:
+            DeleteOnTermination: true
+            VolumeSize: !FindInMap [DistroConfigs, !Ref Distro, size]
+
+  PCSInfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Description: !Sub '${Architecture} infrastructure for PCS AMI build'
+      InstanceProfileName: !Ref ImageBuilderInstanceProfile
+      InstanceTypes: !FindInMap [InstanceConfigs, !Ref Architecture, 'default']
+      InstanceMetadataOptions:
+        HttpPutResponseHopLimit: 1
+        HttpTokens: required
+      Name: !GetAtt PCSImageRecipe.Name
+
+  PCSDistributionConfiguration:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: !GetAtt PCSImageRecipe.Name
+      Description: PCS image distributor
+      Distributions:
+        - Region: !Ref "AWS::Region"
+          AmiDistributionConfiguration:
+            Name: !Sub 'pcs_ami-intelmpi-${Distro}-${Architecture} {{ imagebuilder:buildDate }}'
+            Description: PCS-compatible AMI with Intel MPI
+
+  PCSImage:
+    Type: AWS::ImageBuilder::Image
+    Properties:
+      DistributionConfigurationArn: !GetAtt PCSDistributionConfiguration.Arn
+      ImageRecipeArn: !GetAtt PCSImageRecipe.Arn
+      InfrastructureConfigurationArn: !GetAtt PCSInfrastructureConfiguration.Arn
+
+Outputs:
+  ImageArn:
+    Description: The ARN of the built image
+    Value: !Ref PCSImage
+  AmiId:
+    Description: The AMI ID of the built image
+    Value: !GetAtt PCSImage.ImageId
