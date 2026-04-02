@@ -39,7 +39,9 @@ Then, (if needed) customize the example launch script for the application you wa
 
 ### Build a new HPC Cluster (1-Click deployment)
 
-You can follow the instructions [here](ParallelCluster/README.md) to build a new cluster with just 1-Click. 
+You can build a new HPC cluster with just 1-Click using either:
+ * [AWS ParallelCluster](ParallelCluster/README.md) - Open source cluster management tool
+ * [AWS Parallel Computing Service (PCS)](PCS/README.md) - Managed HPC cluster service
 
 
 ## HPC application Benchmarks
@@ -47,8 +49,11 @@ In addition to application best practices, this repo will include some HPC appli
 
 ## AWS HPC products and services being used
  * [AWS ParallelCluster](https://aws.amazon.com/hpc/parallelcluster/) and its [Documentation](https://docs.aws.amazon.com/parallelcluster/latest/ug/what-is-aws-parallelcluster.html)
+ * [AWS Parallel Computing Service (PCS)](https://aws.amazon.com/pcs/) and its [Documentation](https://docs.aws.amazon.com/pcs/latest/userguide/what-is.html)
  * [Elastic Fabric Adapter](https://aws.amazon.com/hpc/efa/) (EFA) and its [Documentation](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa.html)
  * [Amazon FSx for Lustre](https://aws.amazon.com/fsx/lustre/) and its [Documentation](https://docs.aws.amazon.com/fsx/latest/LustreGuide/what-is.html)
+ * [Amazon EFS](https://aws.amazon.com/efs/) and its [Documentation](https://docs.aws.amazon.com/efs/latest/ug/whatisefs.html)
+ * [EC2 Image Builder](https://aws.amazon.com/image-builder/) and its [Documentation](https://docs.aws.amazon.com/imagebuilder/latest/userguide/what-is-image-builder.html)
  * AWS EC2 [Hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/) Instances
  * AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) Instances
  * AWS EC2 [Hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) Instances
