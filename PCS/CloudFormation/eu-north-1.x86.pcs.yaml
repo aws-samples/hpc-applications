@@ -334,7 +334,7 @@ Resources:
               chown -R ec2-user:ec2-user ${!HOME_DIR}/.ssh
 
               # Set Intel MPI to use SSH for process launching
-              echo "export I_MPI_HYDRA_BOOTSTRAP=ssh" >> /home/ec2-user/.bash_profile
+              echo "export I_MPI_HYDRA_BOOTSTRAP=slurm" >> /home/ec2-user/.bash_profile
 
               --==BOUNDARY==--
             - FsxId: !If
