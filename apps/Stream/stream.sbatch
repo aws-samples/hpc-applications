@@ -7,7 +7,7 @@
 #SBATCH --partition=hpc8a
 #SBATCH --chdir=/fsx/slurm-out/stream
 
-source setenv_AOCC.sh
+source /opt/AMD/aocc-compiler-5.0.0/setenv_AOCC.sh
 
 # For optimal stream performance, it is recommended to set the following OS parameters (requires root/sudo access)
 sync && echo 3 | sudo tee /proc/sys/vm/drop_caches # Clear caches to maximize available RAM
