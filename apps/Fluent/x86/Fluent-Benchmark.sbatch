@@ -14,7 +14,7 @@ export I_MPI_FABRICS=shm:ofi
 export I_MPI_OFI_PROVIDER=efa
 export I_MPI_MULTIRAIL=1
 module load libfabric-aws
-export INTELMPI_ROOT="$(dirname $(dirname $(which mpirun)))"
+export INTELMPI_ROOT="$I_MPI_ROOT"
 ######################## EFA settings ######################## 
 
 fluentversion=${1:-"v241"}
