@@ -1,12 +1,24 @@
 #!/bin/bash
 
-output=$(mpirun -V 2>&1)
-if echo "$output" | grep -q "Open MPI"; then
-    mpi_ver=$(echo "$output" | grep -oP 'Open MPI\) \K[\d.]+')
-elif echo "$output" | grep -q "Intel"; then
-    mpi_ver=$(echo "$output" | grep -oP 'Version \K[\d.]+')
-else
-    mpi_ver="Unknown MPI: $output"
+# Detect MPI version from Fluent log (most reliable - shows what was actually used)
+mpi_ver=""
+if ls *.log &>/dev/null; then
+    intelmpi_ver=$(grep "INTELMPI_ROOT=" *.log 2>/dev/null | grep -oP 'mpi/\K[\d.]+' | head -1)
+    if [ -n "$intelmpi_ver" ]; then
+        mpi_ver="${intelmpi_ver}"
+    fi
+fi
+
+# Fallback to mpirun -V if log detection failed
+if [ -z "$mpi_ver" ]; then
+    output=$(mpirun -V 2>&1)
+    if echo "$output" | grep -q "Open MPI"; then
+        mpi_ver="openmpi $(echo "$output" | grep -oP 'Open MPI\) \K[\d.]+')"
+    elif echo "$output" | grep -q "Intel"; then
+        mpi_ver=$(echo "$output" | grep -oP 'Version \K[\d.]+')
+    else
+        mpi_ver="Unknown MPI: $output"
+    fi
 fi
 
 libfabric_version=${libfabric_version:-$(cat *.log | grep "libfabric version:" | awk '{print $6}' |  head -1)}
@@ -17,7 +29,24 @@ fi
 
 execDate=$(date -Is)
 region=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)
-pc_version=$(cat /opt/parallelcluster/.bootstrapped | sed "s/aws-parallelcluster-cookbook-//g")
+
+# Detect cluster platform: ParallelCluster or PCS
+if [ -f /opt/parallelcluster/.bootstrapped ]; then
+    pc_version=$(cat /opt/parallelcluster/.bootstrapped | sed "s/aws-parallelcluster-cookbook-//g")
+    cluster_platform="ParallelCluster"
+elif [ -f /opt/aws/pcs/version ]; then
+    pc_version=$(grep AGENT_VERSION /opt/aws/pcs/version | cut -d"'" -f2)
+    pc_version="PCS-agent-${pc_version}"
+    # Try to get cluster name from Slurm
+    cluster_name=$(scontrol show config 2>/dev/null | grep ClusterName | awk '{print $3}')
+    if [ -n "$cluster_name" ]; then
+        pc_version="${pc_version} (${cluster_name})"
+    fi
+    cluster_platform="PCS"
+else
+    pc_version="Unknown"
+    cluster_platform="Unknown"
+fi
 
 read_case=$(cat ${benchmark_name}*.out      | grep "Read case time" | awk '{print $5}' | head -1)
 read_data=$(cat ${benchmark_name}*.out      | grep "Read data time" | awk '{print $5}' | head -1)
@@ -59,6 +88,7 @@ cat > ${dynamo_file} <<EOF
     "aws_region": {"S": "${region}"},
     "fluent_version": {"S": "${fluentversion}"},
     "pc_version": {"S": "${pc_version}"},
+    "cluster_platform": {"S": "${cluster_platform}"},
     "libfabric_version": {"S": "${libfabric_version}"},
     "s3": {"S": ""},
     "kernel_version": {"S": "${kernel_version}"},
