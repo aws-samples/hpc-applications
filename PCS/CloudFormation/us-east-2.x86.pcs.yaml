@@ -30,6 +30,11 @@ Parameters:
     Type: String
     AllowedPattern: ^(AUTO|sg-[0-9a-z]+)$
     Default: AUTO
+  VpcId:
+    Description: VPC ID (required when reusing existing subnet, leave "AUTO" otherwise)
+    Type: String
+    AllowedPattern: ^(AUTO|vpc-[0-9a-z]+)$
+    Default: AUTO
   FSx:
     Description: Please, enter your FSx ID, or just leave "AUTO" if you want to
       re-use an existing one.
@@ -88,6 +93,33 @@ Resources:
       Capabilities:
         - CAPABILITY_NAMED_IAM
         - CAPABILITY_AUTO_EXPAND
+
+  # EFA Security Group - always created, self-referencing for EFA traffic
+  EfaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow all traffic between EFA-enabled instances
+      VpcId: !If
+        - CreateVpc
+        - !GetAtt HPCNetworkStack.Outputs.VPC
+        - !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-EFA-SG'
+
+  EfaSGIngressSelf:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EfaSecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref EfaSecurityGroup
+
+  EfaSGEgressSelf:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref EfaSecurityGroup
+      IpProtocol: -1
+      DestinationSecurityGroupId: !Ref EfaSecurityGroup
 
   # IAM Role and Instance Profile for PCS compute nodes
   PCSComputeRole:
@@ -178,7 +210,111 @@ Resources:
           - !GetAtt HPCNetworkStack.Outputs.localSG
           - !Ref ClusterSecurityGroup
 
-  # Launch Template for compute nodes
+  # Launch Template for hpc8a compute nodes (dual EFA)
+  PCSComputeLaunchTemplateHpc8a:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub 'pcs-compute-hpc8a-${AWS::StackName}'
+      LaunchTemplateData:
+        ImageId: !If
+          - BuildAmi
+          - !GetAtt HPCAmiStack.Outputs.AmiId
+          - !Ref CustomAmi
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 100
+              VolumeType: gp3
+              Encrypted: true
+              DeleteOnTermination: true
+        MetadataOptions:
+          HttpTokens: required
+          HttpEndpoint: enabled
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            NetworkCardIndex: 0
+            InterfaceType: efa
+            Groups:
+              - !If
+                - CreateVpc
+                - !GetAtt HPCNetworkStack.Outputs.localSG
+                - !Ref ClusterSecurityGroup
+              - !Ref EfaSecurityGroup
+          - DeviceIndex: 1
+            NetworkCardIndex: 1
+            InterfaceType: efa
+            Groups:
+              - !If
+                - CreateVpc
+                - !GetAtt HPCNetworkStack.Outputs.localSG
+                - !Ref ClusterSecurityGroup
+              - !Ref EfaSecurityGroup
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub 'pcs-compute-hpc8a-${AWS::StackName}'
+        UserData:
+          Fn::Base64: !Sub
+            - |
+              MIME-Version: 1.0
+              Content-Type: multipart/mixed; boundary="==BOUNDARY=="
+
+              --==BOUNDARY==
+              Content-Type: text/cloud-config; charset="us-ascii"
+
+              packages:
+                - amazon-efs-utils
+
+              runcmd:
+                - mkdir -p /tmp/home
+                - rsync -a /home/ /tmp/home
+                - echo "${EfsId}:/ /home efs tls,_netdev" >> /etc/fstab
+                - mount -a -t efs defaults
+                - rsync -a --ignore-existing /tmp/home/ /home
+                - rm -rf /tmp/home/
+
+              --==BOUNDARY==
+              Content-Type: text/x-shellscript; charset="us-ascii"
+
+              #!/bin/bash
+              set -e
+              # Mount FSx Lustre
+              FSX_ID="${FsxId}"
+              REGION="${AWS::Region}"
+              MOUNT_POINT="/fsx"
+              mkdir -p ${!MOUNT_POINT}
+              MOUNT_NAME=$(aws fsx describe-file-systems --file-system-ids ${!FSX_ID} --region ${!REGION} --query 'FileSystems[0].LustreConfiguration.MountName' --output text)
+              mount -t lustre ${!FSX_ID}.fsx.${!REGION}.amazonaws.com@tcp:/${!MOUNT_NAME} ${!MOUNT_POINT}
+              echo "${!FSX_ID}.fsx.${!REGION}.amazonaws.com@tcp:/${!MOUNT_NAME} ${!MOUNT_POINT} lustre defaults,noatime,flock,_netdev 0 0" >> /etc/fstab
+
+              # Setup passwordless SSH for ec2-user
+              HOME_DIR="/home/ec2-user"
+              mkdir -p ${!HOME_DIR}/.ssh && chmod 700 ${!HOME_DIR}/.ssh
+              touch ${!HOME_DIR}/.ssh/authorized_keys && chmod 600 ${!HOME_DIR}/.ssh/authorized_keys
+              if [ ! -f "${!HOME_DIR}/.ssh/id_rsa" ]; then
+                ssh-keygen -t rsa -b 4096 -f ${!HOME_DIR}/.ssh/id_rsa -N ""
+                cat ${!HOME_DIR}/.ssh/id_rsa.pub >> ${!HOME_DIR}/.ssh/authorized_keys
+              fi
+              echo "Host *" > ${!HOME_DIR}/.ssh/config
+              echo "  StrictHostKeyChecking no" >> ${!HOME_DIR}/.ssh/config
+              echo "  UserKnownHostsFile /dev/null" >> ${!HOME_DIR}/.ssh/config
+              echo "  LogLevel ERROR" >> ${!HOME_DIR}/.ssh/config
+              chmod 600 ${!HOME_DIR}/.ssh/config
+              chown -R ec2-user:ec2-user ${!HOME_DIR}/.ssh
+
+              # Ensure Intel MPI uses SSH bootstrap (system-wide)
+              echo 'export I_MPI_HYDRA_BOOTSTRAP=ssh' > /etc/profile.d/impi-bootstrap.sh
+              chmod 644 /etc/profile.d/impi-bootstrap.sh
+
+              --==BOUNDARY==--
+            - FsxId: !If
+                - CreateStorage
+                - !GetAtt HPCStorageStack.Outputs.FileSystemId
+                - !Ref FSx
+              EfsId: !Ref SharedHomeFileSystem
+
+  # Launch Template for other compute nodes (single EFA)
   PCSComputeLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
@@ -198,11 +334,15 @@ Resources:
         MetadataOptions:
           HttpTokens: required
           HttpEndpoint: enabled
-        SecurityGroupIds:
-          - !If
-            - CreateVpc
-            - !GetAtt HPCNetworkStack.Outputs.localSG
-            - !Ref ClusterSecurityGroup
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            InterfaceType: efa
+            Groups:
+              - !If
+                - CreateVpc
+                - !GetAtt HPCNetworkStack.Outputs.localSG
+                - !Ref ClusterSecurityGroup
+              - !Ref EfaSecurityGroup
         TagSpecifications:
           - ResourceType: instance
             Tags:
@@ -250,7 +390,16 @@ Resources:
                 ssh-keygen -t rsa -b 4096 -f ${!HOME_DIR}/.ssh/id_rsa -N ""
                 cat ${!HOME_DIR}/.ssh/id_rsa.pub >> ${!HOME_DIR}/.ssh/authorized_keys
               fi
+              echo "Host *" > ${!HOME_DIR}/.ssh/config
+              echo "  StrictHostKeyChecking no" >> ${!HOME_DIR}/.ssh/config
+              echo "  UserKnownHostsFile /dev/null" >> ${!HOME_DIR}/.ssh/config
+              echo "  LogLevel ERROR" >> ${!HOME_DIR}/.ssh/config
+              chmod 600 ${!HOME_DIR}/.ssh/config
               chown -R ec2-user:ec2-user ${!HOME_DIR}/.ssh
+
+              # Ensure Intel MPI uses SSH bootstrap (system-wide)
+              echo 'export I_MPI_HYDRA_BOOTSTRAP=ssh' > /etc/profile.d/impi-bootstrap.sh
+              chmod 644 /etc/profile.d/impi-bootstrap.sh
 
               --==BOUNDARY==--
             - FsxId: !If
@@ -331,6 +480,11 @@ Resources:
                 ssh-keygen -t rsa -b 4096 -f ${!HOME_DIR}/.ssh/id_rsa -N ""
                 cat ${!HOME_DIR}/.ssh/id_rsa.pub >> ${!HOME_DIR}/.ssh/authorized_keys
               fi
+              echo "Host *" > ${!HOME_DIR}/.ssh/config
+              echo "  StrictHostKeyChecking no" >> ${!HOME_DIR}/.ssh/config
+              echo "  UserKnownHostsFile /dev/null" >> ${!HOME_DIR}/.ssh/config
+              echo "  LogLevel ERROR" >> ${!HOME_DIR}/.ssh/config
+              chmod 600 ${!HOME_DIR}/.ssh/config
               chown -R ec2-user:ec2-user ${!HOME_DIR}/.ssh
 
               # Set Intel MPI to use SSH for process launching
@@ -378,8 +532,8 @@ Resources:
         MaxInstanceCount: 3
       IamInstanceProfileArn: !GetAtt PCSInstanceProfile.Arn
       CustomLaunchTemplate:
-        TemplateId: !Ref PCSComputeLaunchTemplate
-        Version: !GetAtt PCSComputeLaunchTemplate.LatestVersionNumber
+        TemplateId: !Ref PCSComputeLaunchTemplateHpc8a
+        Version: !GetAtt PCSComputeLaunchTemplateHpc8a.LatestVersionNumber
       SubnetIds:
         - !If
           - CreateVpc
@@ -400,8 +554,8 @@ Resources:
         MaxInstanceCount: 3
       IamInstanceProfileArn: !GetAtt PCSInstanceProfile.Arn
       CustomLaunchTemplate:
-        TemplateId: !Ref PCSComputeLaunchTemplate
-        Version: !GetAtt PCSComputeLaunchTemplate.LatestVersionNumber
+        TemplateId: !Ref PCSComputeLaunchTemplateHpc8a
+        Version: !GetAtt PCSComputeLaunchTemplateHpc8a.LatestVersionNumber
       SubnetIds:
         - !If
           - CreateVpc
@@ -421,8 +575,8 @@ Resources:
         MaxInstanceCount: 3
       IamInstanceProfileArn: !GetAtt PCSInstanceProfile.Arn
       CustomLaunchTemplate:
-        TemplateId: !Ref PCSComputeLaunchTemplate
-        Version: !GetAtt PCSComputeLaunchTemplate.LatestVersionNumber
+        TemplateId: !Ref PCSComputeLaunchTemplateHpc8a
+        Version: !GetAtt PCSComputeLaunchTemplateHpc8a.LatestVersionNumber
       SubnetIds:
         - !If
           - CreateVpc
@@ -442,8 +596,8 @@ Resources:
         MaxInstanceCount: 3
       IamInstanceProfileArn: !GetAtt PCSInstanceProfile.Arn
       CustomLaunchTemplate:
-        TemplateId: !Ref PCSComputeLaunchTemplate
-        Version: !GetAtt PCSComputeLaunchTemplate.LatestVersionNumber
+        TemplateId: !Ref PCSComputeLaunchTemplateHpc8a
+        Version: !GetAtt PCSComputeLaunchTemplateHpc8a.LatestVersionNumber
       SubnetIds:
         - !If
           - CreateVpc
@@ -463,8 +617,8 @@ Resources:
         MaxInstanceCount: 3
       IamInstanceProfileArn: !GetAtt PCSInstanceProfile.Arn
       CustomLaunchTemplate:
-        TemplateId: !Ref PCSComputeLaunchTemplate
-        Version: !GetAtt PCSComputeLaunchTemplate.LatestVersionNumber
+        TemplateId: !Ref PCSComputeLaunchTemplateHpc8a
+        Version: !GetAtt PCSComputeLaunchTemplateHpc8a.LatestVersionNumber
       SubnetIds:
         - !If
           - CreateVpc
@@ -485,8 +639,8 @@ Resources:
         MaxInstanceCount: 3
       IamInstanceProfileArn: !GetAtt PCSInstanceProfile.Arn
       CustomLaunchTemplate:
-        TemplateId: !Ref PCSComputeLaunchTemplate
-        Version: !GetAtt PCSComputeLaunchTemplate.LatestVersionNumber
+        TemplateId: !Ref PCSComputeLaunchTemplateHpc8a
+        Version: !GetAtt PCSComputeLaunchTemplateHpc8a.LatestVersionNumber
       SubnetIds:
         - !If
           - CreateVpc
