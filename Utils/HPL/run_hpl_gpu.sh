@@ -27,15 +27,9 @@ set -e
 #
 # Tuning results on p5en.48xlarge (8x H200):
 #
-#   | NB   | P×Q | TFLOPS | TFLOPS/GPU | Notes                  |
-#   |------|-----|--------|------------|------------------------|
-#   |  256 | 2×4 |  304.6 |       38.1 | Conservative baseline  |
-#   |  512 | 1×8 |  344.5 |       43.1 | Better grid            |
-#   |  768 | 1×8 |  360.1 |       45.0 |                        |
-#   | 1024 | 1×8 |  366.8 |       45.9 | CHUNK=32               |
-#   | 1024 | 1×8 |  378.3 |       47.3 | CHUNK=64, CTA=32 (*)  |
-#
-#   (*) Best: 378.3 TFLOPS = 70.5% of H200 FP64 peak (67 TFLOPS)
+#   Defaults were determined through parameter sweeps.
+#   Run your own sweeps to find optimal NB, CHUNK, and CTA
+#   values for your specific instance type.
 #############################################################
 
 ############################################################

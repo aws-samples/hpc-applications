@@ -1,8 +1,10 @@
-# HPL (High Performance Linpack) on AWS hpc8a
+# HPL (High Performance Linpack) on AWS
 
-[HPL](https://www.netlib.org/benchmark/hpl/) is the benchmark used to rank supercomputers on the [TOP500](https://www.top500.org/). This directory contains build scripts and a parametric Slurm launcher optimised for [hpc8a.96xlarge](https://aws.amazon.com/ec2/instance-types/hpc8a/) instances.
+[HPL](https://www.netlib.org/benchmark/hpl/) is the benchmark used to rank supercomputers on the [TOP500](https://www.top500.org/). This directory contains build/run scripts for both CPU-only and GPU-accelerated HPL.
 
 ## Target Hardware
+
+### CPU (hpc8a)
 
 | Component | Detail |
 |-----------|--------|
@@ -12,15 +14,27 @@
 | Memory    | 768 GB DDR5 per node |
 | Network   | EFA v2, 2 NICs per node |
 
+### GPU (P-family instances)
+
+| Instance | GPU | VRAM |
+|----------|-----|------|
+| p5.48xlarge | 8x H100 80GB | 640 GB |
+| p5en.48xlarge | 8x H200 141GB | 1128 GB |
+| p6-b200.48xlarge | 8x B200 | TBD |
+
 ## Files
 
 | File | Description |
 |------|-------------|
-| `hpl.sbatch` | Parametric Slurm launcher — single script for all configurations |
-| `build_hpl_openmpi.sh` | Build HPL linked against OpenMPI 4 |
-| `build_hpl_intelmpi.sh` | Build HPL linked against Intel MPI |
+| `hpl.sbatch` | Parametric Slurm launcher for CPU HPL — single script for all configurations |
+| `build_hpl_openmpi.sh` | Build CPU HPL linked against OpenMPI 4 |
+| `build_hpl_intelmpi.sh` | Build CPU HPL linked against Intel MPI |
+| `run_hpl_gpu.sh` | Run GPU HPL-NVIDIA via NGC container (p5/p5en/p6) |
+| `hpl_bcast_sweep.sbatch` | CPU HPL broadcast algorithm sweep |
 
-## Prerequisites
+## CPU HPL (hpc8a)
+
+### Prerequisites
 
 1. **AOCC 5.1.0** — AMD's compiler with `-march=znver5` support. Expected at `/fsx/aocc/aocc-compiler-5.1.0/`.
 2. **AOCL 5.1.0** — AMD's BLIS and libFLAME libraries. Install the RPM and copy shared libs to `/fsx`:
@@ -142,6 +156,79 @@ echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled
 echo always | sudo tee /sys/kernel/mm/transparent_hugepage/defrag
 ```
 
+## GPU HPL (NVIDIA)
+
+GPU-accelerated HPL uses NVIDIA's pre-built binary distributed via the [NGC hpc-benchmarks container](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/hpc-benchmarks). The upstream netlib HPL 2.3 has no GPU support — NVIDIA's closed-source fork offloads DGEMM to GPUs via cuBLAS while using CPUs for panel factorisation.
+
+### Prerequisites
+
+- Docker with `nvidia-container-toolkit`
+- NVIDIA GPU drivers (pre-installed on the [Deep Learning AMI](https://aws.amazon.com/machine-learning/amis/))
+- No compilation needed — the binary is inside the container
+
+### Run
+
+```bash
+# Default: auto-detect GPUs, 90% VRAM, NB=1024
+bash run_hpl_gpu.sh
+
+# Override problem size
+HPL_N=400000 bash run_hpl_gpu.sh
+
+# Different container version
+HPL_NGC_TAG=24.09 bash run_hpl_gpu.sh
+```
+
+### GPU HPL Parameters
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HPL_NGC_TAG` | `25.02` | NGC container version |
+| `HPL_NB` | `1024` | Block size |
+| `HPL_MEM_FRACTION` | `0.90` | Fraction of GPU VRAM for the matrix |
+| `HPL_N` | (auto) | Problem size — auto-calculated from GPU memory if not set |
+| `HPL_P` | `1` | Process grid rows |
+| `HPL_Q` | (auto) | Process grid columns — defaults to number of GPUs |
+| `HPL_WORK_DIR` | `/tmp/hpl-gpu-run` | Working directory for HPL.dat and logs |
+
+### Tuning notes
+
+Performance depends heavily on NB, CHUNK_SIZE_NBS, and CTA_PER_FCT. Run parameter sweeps on your target instance type to find the optimal configuration. The defaults in the script were determined through empirical testing on p5 and p5en instances.
+
+### Key environment variables (set inside the script)
+
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `HPL_USE_NVSHMEM` | `1` | GPU-initiated comms over NVSwitch |
+| `HPL_P2P_AS_BCAST` | `1` | NCCL send/recv for broadcast |
+| `HPL_NVSHMEM_SWAP` | `1` | Row swaps via NVSHMEM over NVSwitch |
+| `HPL_FCT_COMM_POLICY` | `0` | Panel factorisation comms via NVSHMEM |
+| `HPL_CHUNK_SIZE_NBS` | `64` | Larger compute chunks for better GPU utilisation |
+| `HPL_CTA_PER_FCT` | `32` | Thread blocks for factorisation |
+| `HPL_ALLOC_HUGEPAGES` | `1` | 2MB hugepages for host allocations |
+
+### Why P=1 Q=N?
+
+On single-node NVSwitch topologies, `P=1 Q=NUM_GPUS` outperforms `P=2 Q=NUM_GPUS/2` because it minimises row-swap communication. All GPUs are fully connected via NVSwitch (NV18), so the 1D decomposition avoids the extra communication overhead of a 2D grid.
+
+### GPU clock optimisation
+
+For best results, set GPU clocks to maximum before running (per [AWS docs](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/optimize_gpu.html)):
+
+```bash
+sudo nvidia-persistenced
+# p5 (H100):
+sudo nvidia-smi -ac 2619,1980
+# p5en (H200):
+sudo nvidia-smi -ac 3201,1980
+# p6-b200 (B200):
+sudo nvidia-smi -ac 3996,1965
+```
+
+### HPL-MxP (mixed-precision)
+
+HPL-MxP uses the same NGC container (`hpl-mxp.sh`). It uses mixed-precision arithmetic (FP8/FP16 for LU factorisation, FP64 for iterative refinement). Use `--sloppy-type 1` (FP8) for best performance on H100/H200.
+
 ## References
 
 - [HPL Official Site](https://www.netlib.org/benchmark/hpl/)
@@ -151,3 +238,6 @@ echo always | sudo tee /sys/kernel/mm/transparent_hugepage/defrag
 - [AMD AOCL](https://developer.amd.com/amd-aocl/)
 - [AWS EFA Documentation](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa.html)
 - [hpc8a Instance Type](https://aws.amazon.com/ec2/instance-types/hpc8a/)
+- [NVIDIA HPC Benchmarks (NGC)](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/hpc-benchmarks)
+- [NVIDIA HPL Benchmark Docs](https://docs.nvidia.com/nvidia-hpc-benchmarks/HPL_benchmark.html)
+- [AWS GPU Optimisation](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/optimize_gpu.html)
