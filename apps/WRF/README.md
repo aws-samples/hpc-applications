@@ -103,9 +103,17 @@ for N in 1 2 4 8; do sbatch --nodes=$N wrf-benchmark-conus2.5km-intel.sbatch; do
 
 ## Performance
 
-This chart shows the relative performance of WRF running the CONUS 2.5km benchmark (1501×1201 grid) on AWS EC2 [hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/) vs [hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) instances, using Intel MPI with EFA and MULTIRAIL enabled. Performance is normalized to hpc7a (higher is better).
+This chart shows the scaling performance of WRF running the CONUS 2.5km benchmark (1501×1201 grid, 15s timestep, 6-hour simulation) on AWS EC2 [hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/) vs [hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) instances.
+
+All runs use Intel MPI 2021.17 with EFA and MULTIRAIL enabled, 192 cores per node (full node utilization). Performance is expressed as speedup normalized to a single hpc7a.96xlarge node — higher is better.
 
 ![WRF CONUS 2.5km hpc8a vs hpc7a](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/WRF/WRF-CONUS2.5km-Hpc8aVsHpc7a.png?raw=true)
+
+Key takeaways:
+- A single hpc8a node delivers **1.38x** the performance of a single hpc7a node
+- At 8 nodes, hpc8a reaches **4.59x** vs **3.51x** for hpc7a (relative to the 1N hpc7a baseline)
+- hpc8a maintains a consistent ~30–38% advantage over hpc7a at every node count
+- Both instance types show good scaling up to 4 nodes; efficiency tapers at 8 nodes as the CONUS 2.5km workload begins to saturate at 1536 cores
 
 ## Key Metrics
 
