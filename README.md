@@ -11,8 +11,7 @@ This repo is maintained by AWS HPC Solution Architects, who will take care of up
 5. [STAR-CCM+](https://github.com/aws-samples/hpc-applications/tree/main/apps/StarCCM)
 6. [ANSYS CFX](https://github.com/aws-samples/hpc-applications/tree/main/apps/CFX)
 7. [ANSYS Mechanical](https://github.com/aws-samples/hpc-applications/tree/main/apps/AnsysMechanical)
-8. [WRF (Weather Research and Forecasting)](https://github.com/aws-samples/hpc-applications/tree/main/apps/WRF) - Build scripts (Spack and Intel MPI), CONUS 12km/2.5km benchmarks, hpc8a vs hpc7a scaling comparison
-9. [OpenFOAM](https://github.com/aws-samples/hpc-applications/tree/main/apps/OpenFoam) - Build scripts and benchmarks for OpenFOAM v2512 with OpenMPI and Intel MPI
+8. [WRF (Weather Research and Forecasting)](https://github.com/aws-samples/hpc-applications/tree/main/apps/WRF)
 
 ## HPC synthetic benchmarks:
 1. [STREAM](https://github.com/aws-samples/hpc-applications/tree/main/apps/Stream) - Memory bandwidth benchmark
