@@ -101,6 +101,12 @@ for N in 1 2 4 8; do sbatch --nodes=$N wrf-benchmark-conus2.5km-intel.sbatch; do
 | `BASE_DIR` | `/fsx/wrf` | Root for run output directories |
 | `PREFIX` | `/fsx/wrf/deps` | Dependency install prefix (Intel build only) |
 
+## Performance
+
+This chart shows the relative performance of WRF running the CONUS 2.5km benchmark (1501×1201 grid) on AWS EC2 [hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/) vs [hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) instances, using Intel MPI with EFA and MULTIRAIL enabled. Performance is normalized to hpc7a (higher is better).
+
+![WRF CONUS 2.5km hpc8a vs hpc7a](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/WRF/WRF-CONUS2.5km-Hpc8aVsHpc7a.png?raw=true)
+
 ## Key Metrics
 
 - **Average time per timestep** — extracted from `rsl.error.0000`
