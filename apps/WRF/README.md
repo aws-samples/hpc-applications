@@ -6,6 +6,8 @@ This directory contains scripts for building and benchmarking [WRF](https://gith
 
 Two build approaches are provided. Both target WRF 4.6.1 by default.
 
+> **Recommendation:** The Intel MPI build (Option 2) delivers better runtime performance than the Spack/OpenMPI build, particularly at multi-node scale where Intel MPI's EFA integration and MULTIRAIL support provide up to 10% faster time-to-results. Use Option 1 for quick setup and testing; use Option 2 for production benchmarks and performance-sensitive workloads.
+
 ### Option 1 — Spack (GCC + OpenMPI)
 
 The simplest path. Spack handles all dependencies automatically:
