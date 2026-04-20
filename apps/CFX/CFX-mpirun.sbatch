@@ -2,7 +2,8 @@
 #SBATCH --exclusive
 #SBATCH --nodes=4
 #SBATCH --ntasks=192
-#SBATCH --constraint=hpc7a.24xlarge
+#SBATCH --ntasks-per-node=48
+#SBATCH --constraint=hpc7a.96xlarge
 #SBATCH --partition=hpc7a
 #SBATCH --chdir=/fsx/slurm-out/cfx
 
@@ -15,6 +16,8 @@ export I_MPI_ADJUST_REDUCE=2
 export I_MPI_ADJUST_ALLREDUCE=2
 export I_MPI_ADJUST_BCAST=1
 ######################## EFA settings ######################## 
+
+export I_MPI_PIN_PROCESSOR_LIST="0,4,8,12,16,20,24,28,32,36,40,44,48,52,56,60,64,68,72,76,80,84,88,92,96,100,104,108,112,116,120,124,128,132,136,140,144,148,152,156,160,164,168,172,176,180,184,188"
 
 cfxversion=${cfxversion:-"v242"}
 def_file=${def_file:-"/fsx/CFX/Dataset/perf_Airfoil_100M_R16.def"}
