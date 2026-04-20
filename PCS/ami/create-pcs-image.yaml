@@ -1,0 +1,480 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Build a PCS-compatible AMI with Intel MPI using EC2 Image Builder
+
+Mappings:
+  DistroConfigs:
+    amzn-2:
+      name: Amazon Linux 2
+      deviceName: /dev/xvda
+      size: 100
+      x86: ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+      arm64: ssm:/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-arm64-gp2
+    amzn-2023:
+      name: Amazon Linux 2023
+      deviceName: /dev/xvda
+      size: 100
+      x86: ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+      arm64: ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
+    ubuntu-22-04:
+      name: Ubuntu 22.04
+      deviceName: /dev/sda1
+      size: 100
+      x86: ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id
+      arm64: ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/arm64/hvm/ebs-gp2/ami-id
+  InstanceConfigs:
+    x86:
+      default:
+        - c6i.8xlarge
+        - m6i.8xlarge
+    arm64:
+      default:
+        - c7g.8xlarge
+        - m7g.8xlarge
+
+Parameters:
+  Distro:
+    Type: String
+    AllowedValues:
+      - amzn-2
+      - amzn-2023
+      - ubuntu-22-04
+    Default: amzn-2023
+  Architecture:
+    Type: String
+    AllowedValues:
+      - x86
+      - arm64
+    Default: x86
+  SemanticVersion:
+    Type: String
+    Default: '0.0.1'
+
+Conditions:
+  DistroImageStartsWithSsm: !Equals
+    - !Select
+      - 0
+      - !Split
+        - ":"
+        - !FindInMap [DistroConfigs, !Ref Distro, !Ref Architecture]
+    - "ssm"
+
+Resources:
+
+  ImageBuilderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/EC2InstanceProfileForImageBuilder
+      Path: /
+
+  ImageBuilderInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref ImageBuilderRole
+
+  # Update OS packages
+  UpdateOsComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Sub 'UpdateOs-${AWS::StackName}'
+      Description: Update OS packages
+      Version: '0.0.1'
+      Platform: Linux
+      Data: |
+        name: 'Update OS'
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: UpdateOs
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - set -e
+                    - . /etc/os-release
+                    - |
+                      if [ "$ID" = "amzn" ]; then
+                        dnf update -y || yum update -y
+                        dnf install -y mesa-libGL mesa-libEGL libglvnd-opengl libglvnd-glx libxcrypt-compat \
+                          libXcomposite libXcursor libXdamage libXext libXfixes libXi libXrandr \
+                          libXrender libXtst libXScrnSaver alsa-lib atk at-spi2-atk gtk3 nss \
+                          cups-libs libdrm libnsl 2>/dev/null || \
+                        yum install -y mesa-libGL mesa-libEGL mesa-libOpenGL
+                        dnf clean all 2>/dev/null || yum clean all
+                      elif [ "$ID" = "ubuntu" ]; then
+                        export DEBIAN_FRONTEND=noninteractive
+                        apt-get update && apt-get upgrade -y && apt-get autoremove -y
+                      fi
+
+  # Install SSM Agent
+  SsmAgentComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Sub 'SsmAgent-${AWS::StackName}'
+      Description: Install and enable SSM Agent
+      Version: '0.0.1'
+      Platform: Linux
+      Data: |
+        name: 'SSM Agent Installer'
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: InstallSsmAgent
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - set -e
+                    - . /etc/os-release
+                    - |
+                      if [ "$ID" = "amzn" ]; then
+                        dnf install -y amazon-ssm-agent 2>/dev/null || yum install -y amazon-ssm-agent
+                      elif [ "$ID" = "ubuntu" ]; then
+                        snap install amazon-ssm-agent --classic 2>/dev/null || true
+                      fi
+                    - systemctl enable amazon-ssm-agent
+
+  # Install CloudWatch Agent
+  CloudWatchAgentComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Sub 'CloudWatchAgent-${AWS::StackName}'
+      Description: Install CloudWatch Agent
+      Version: '0.0.1'
+      Platform: Linux
+      Data: |
+        name: 'CloudWatch Agent Installer'
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: InstallCloudWatchAgent
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - set -e
+                    - . /etc/os-release
+                    - |
+                      if [ "$ID" = "amzn" ]; then
+                        dnf install -y amazon-cloudwatch-agent 2>/dev/null || yum install -y amazon-cloudwatch-agent
+                      elif [ "$ID" = "ubuntu" ]; then
+                        wget -q https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
+                        dpkg -i amazon-cloudwatch-agent.deb
+                        rm -f amazon-cloudwatch-agent.deb
+                      fi
+
+  # Install EFA
+  EfaInstallerComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Sub 'EfaInstaller-${AWS::StackName}'
+      Description: Install EFA driver and libraries
+      Version: '0.0.1'
+      Platform: Linux
+      Data: |
+        name: 'EFA Installer'
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: InstallEfa
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - set -e
+                    - cd /tmp
+                    - curl -fsSL https://efa-installer.amazonaws.com/aws-efa-installer-latest.tar.gz -o aws-efa-installer-latest.tar.gz
+                    - tar zxf aws-efa-installer-latest.tar.gz
+                    - cd aws-efa-installer
+                    - ./efa_installer.sh -y
+                    - cd /tmp && rm -rf aws-efa-installer*
+                    - |
+                      PTRACE_FILE="/etc/sysctl.d/10-ptrace.conf"
+                      if grep -q "^kernel.yama.ptrace_scope" "$PTRACE_FILE" 2>/dev/null; then
+                        sed -i "/^kernel.yama.ptrace_scope/c\kernel.yama.ptrace_scope = 0" "$PTRACE_FILE"
+                      else
+                        echo "kernel.yama.ptrace_scope = 0" >> "$PTRACE_FILE"
+                      fi
+
+  # Install Lustre client
+  LustreInstallerComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Sub 'LustreInstaller-${AWS::StackName}'
+      Description: Install Lustre client
+      Version: '0.0.1'
+      Platform: Linux
+      Data: |
+        name: 'Lustre Client Installer'
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: InstallLustre
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - set -e
+                    - . /etc/os-release
+                    - |
+                      if [ "$ID" = "amzn" ] && [ "$VERSION_ID" = "2" ]; then
+                        amazon-linux-extras install -y lustre
+                      elif [ "$ID" = "amzn" ] && [ "$VERSION_ID" = "2023" ]; then
+                        dnf install -y lustre-client
+                      elif [ "$ID" = "ubuntu" ]; then
+                        wget -q https://fsx-lustre-client-repo-public-keys.s3.amazonaws.com/fsx-ubuntu-public-key.asc -O /tmp/fsx.asc
+                        gpg --dearmor -o /usr/share/keyrings/fsx.gpg /tmp/fsx.asc
+                        echo "deb [signed-by=/usr/share/keyrings/fsx.gpg] https://fsx-lustre-client-repo.s3.amazonaws.com/ubuntu jammy main" > /etc/apt/sources.list.d/fsxlustreclientrepo.list
+                        apt-get update
+                        apt-get install -y lustre-client-modules-$(uname -r) lustre-client-modules-aws
+                        rm -f /tmp/fsx.asc
+                      fi
+
+  # Install EFS utils
+  EfsUtilsComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Sub 'EfsUtils-${AWS::StackName}'
+      Description: Install EFS utilities
+      Version: '0.0.1'
+      Platform: Linux
+      Data: |
+        name: 'EFS Utils Installer'
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: InstallEfsUtils
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - set -e
+                    - . /etc/os-release
+                    - |
+                      if [ "$ID" = "amzn" ]; then
+                        dnf install -y amazon-efs-utils 2>/dev/null || yum install -y amazon-efs-utils
+                      elif [ "$ID" = "ubuntu" ]; then
+                        apt-get update
+                        apt-get install -y git binutils rustc cargo pkg-config libssl-dev
+                        git clone https://github.com/aws/efs-utils /tmp/efs-utils
+                        cd /tmp/efs-utils && ./build-deb.sh
+                        apt-get install -y /tmp/efs-utils/build/amazon-efs-utils*deb
+                        rm -rf /tmp/efs-utils
+                      fi
+
+  # Install PCS Agent and Slurm
+  PcsAgentSlurmComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Sub 'PcsAgentSlurm-${AWS::StackName}'
+      Description: Install PCS Agent and Slurm
+      Version: '0.0.1'
+      Platform: Linux
+      Data: !Sub |
+        name: 'PCS Agent and Slurm Installer'
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: InstallPcsAgent
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - set -e
+                    - cd /tmp
+                    - curl -fsSL "https://aws-pcs-repo-${AWS::Region}.s3.${AWS::Region}.amazonaws.com/aws-pcs-agent/aws-pcs-agent-v1-latest.tar.gz" -o aws-pcs-agent.tar.gz
+                    - tar zxf aws-pcs-agent.tar.gz
+                    - cd aws-pcs-agent
+                    - ./installer.sh -y
+                    - cd /tmp && rm -rf aws-pcs-agent*
+              - name: InstallPcsSlurm
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - set -e
+                    - cd /tmp
+                    - curl -fsSL "https://aws-pcs-repo-${AWS::Region}.s3.${AWS::Region}.amazonaws.com/aws-pcs-slurm/aws-pcs-slurm-25.05-installer-latest.tar.gz" -o aws-pcs-slurm.tar.gz
+                    - tar zxf aws-pcs-slurm.tar.gz
+                    - cd aws-pcs-slurm-25.05-installer
+                    - ./installer.sh -y
+                    - cd /tmp && rm -rf aws-pcs-slurm*
+              - name: ConfigureSlurmPaths
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - set -e
+                    - echo 'PATH=$PATH:/opt/aws/pcs/scheduler/slurm-25.05/bin' > /etc/profile.d/slurm.sh
+                    - echo 'MANPATH=$MANPATH:/opt/aws/pcs/scheduler/slurm-25.05/share/man' >> /etc/profile.d/slurm.sh
+                    - echo 'export PATH MANPATH' >> /etc/profile.d/slurm.sh
+                    - echo '/opt/aws/pcs/scheduler/slurm-25.05/lib' > /etc/ld.so.conf.d/slurm.conf
+                    - chmod 0644 /etc/ld.so.conf.d/slurm.conf
+                    - ldconfig
+
+  # Install Intel MPI
+  IntelMpiInstaller:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Sub 'IntelMpiInstaller-${AWS::StackName}'
+      Description: Install Intel MPI from oneAPI repository
+      Version: '0.0.1'
+      Platform: Linux
+      Data: |
+        name: 'Intel MPI Installer'
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: InstallIntelMpi
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - set -e
+                    - . /etc/os-release
+                    - echo "[oneAPI]" > /tmp/oneAPI.repo
+                    - echo "name=Intel oneAPI repository" >> /tmp/oneAPI.repo
+                    - echo "baseurl=https://yum.repos.intel.com/oneapi" >> /tmp/oneAPI.repo
+                    - echo "enabled=1" >> /tmp/oneAPI.repo
+                    - echo "gpgcheck=1" >> /tmp/oneAPI.repo
+                    - echo "repo_gpgcheck=1" >> /tmp/oneAPI.repo
+                    - echo "gpgkey=https://yum.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB" >> /tmp/oneAPI.repo
+                    - |
+                      if [ "$ID" = "amzn" ] && [ "$VERSION_ID" = "2" ]; then
+                        cp /tmp/oneAPI.repo /etc/yum.repos.d/oneAPI.repo
+                        yum install -y intel-oneapi-mpi intel-oneapi-mpi-devel
+                      elif [ "$ID" = "amzn" ] && [ "$VERSION_ID" = "2023" ]; then
+                        cp /tmp/oneAPI.repo /etc/yum.repos.d/oneAPI.repo
+                        dnf install -y intel-oneapi-mpi intel-oneapi-mpi-devel
+                      elif [ "$ID" = "ubuntu" ]; then
+                        wget -qO - https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor -o /usr/share/keyrings/oneapi-archive-keyring.gpg
+                        echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" > /etc/apt/sources.list.d/oneAPI.list
+                        apt-get update
+                        DEBIAN_FRONTEND=noninteractive apt-get install -y intel-oneapi-mpi intel-oneapi-mpi-devel
+                      fi
+                    - rm -f /tmp/oneAPI.repo
+              - name: CreateModulefile
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - set -e
+                    - |
+                      if [ -d /opt/intel/oneapi/mpi ]; then
+                        INTELMPI_VERSION=$(ls /opt/intel/oneapi/mpi/ | grep -E '^[0-9]' | sort -V | tail -1)
+                        MODULE_DIR="/usr/share/Modules/modulefiles/intelmpi"
+                        mkdir -p "${MODULE_DIR}"
+                        echo "#%Module1.0" > "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "proc ModulesHelp { } { puts stderr \"Intel MPI ${INTELMPI_VERSION} with EFA\" }" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "module-whatis \"Intel MPI ${INTELMPI_VERSION} with EFA\"" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "set topdir /opt/intel/oneapi/mpi/${INTELMPI_VERSION}" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "prepend-path PATH \$topdir/bin" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "prepend-path LD_LIBRARY_PATH \$topdir/lib" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "prepend-path LD_LIBRARY_PATH /opt/amazon/efa/lib64" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "prepend-path MANPATH \$topdir/man" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "setenv I_MPI_ROOT \$topdir" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "setenv INTELMPI_ROOT \$topdir" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "setenv I_MPI_OFI_LIBRARY_INTERNAL 0" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "setenv I_MPI_OFI_PROVIDER efa" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "setenv FI_EFA_USE_DEVICE_RDMA 1" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "setenv I_MPI_FABRICS shm:ofi" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "setenv I_MPI_HYDRA_BOOTSTRAP ssh" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                      fi
+              - name: ConfigureIntelMpiPaths
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - set -e
+                    - |
+                      if [ -d /opt/intel/oneapi/mpi ]; then
+                        INTELMPI_VERSION=$(ls /opt/intel/oneapi/mpi/ | grep -E '^[0-9]' | sort -V | tail -1)
+                        echo "export INTELMPI_ROOT=/opt/intel/oneapi/mpi/${INTELMPI_VERSION}" > /etc/profile.d/zzz-intelmpi.sh
+                        echo "export PATH=/opt/intel/oneapi/mpi/${INTELMPI_VERSION}/bin:\$PATH" >> /etc/profile.d/zzz-intelmpi.sh
+                        echo "export LD_LIBRARY_PATH=/opt/intel/oneapi/mpi/${INTELMPI_VERSION}/lib:/opt/amazon/efa/lib64:\$LD_LIBRARY_PATH" >> /etc/profile.d/zzz-intelmpi.sh
+                        echo "export I_MPI_OFI_LIBRARY_INTERNAL=0" >> /etc/profile.d/zzz-intelmpi.sh
+                        echo "export I_MPI_OFI_PROVIDER=efa" >> /etc/profile.d/zzz-intelmpi.sh
+                        echo "export FI_EFA_USE_DEVICE_RDMA=1" >> /etc/profile.d/zzz-intelmpi.sh
+                        echo "export I_MPI_FABRICS=shm:ofi" >> /etc/profile.d/zzz-intelmpi.sh
+                        echo "export I_MPI_HYDRA_BOOTSTRAP=ssh" >> /etc/profile.d/zzz-intelmpi.sh
+                        chmod 644 /etc/profile.d/zzz-intelmpi.sh
+                        echo "/opt/intel/oneapi/mpi/${INTELMPI_VERSION}/lib" > /etc/ld.so.conf.d/intelmpi.conf
+                        chmod 644 /etc/ld.so.conf.d/intelmpi.conf
+                        ldconfig
+                      fi
+
+  # Image Recipe
+  PCSImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Components:
+        - ComponentArn: !Ref UpdateOsComponent
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/reboot-linux/x.x.x'
+        - ComponentArn: !Ref CloudWatchAgentComponent
+        - ComponentArn: !Ref SsmAgentComponent
+        - ComponentArn: !Ref EfaInstallerComponent
+        - ComponentArn: !Ref LustreInstallerComponent
+        - ComponentArn: !Ref EfsUtilsComponent
+        - ComponentArn: !Ref PcsAgentSlurmComponent
+        - ComponentArn: !Ref IntelMpiInstaller
+        - ComponentArn: !Sub 'arn:${AWS::Partition}:imagebuilder:${AWS::Region}:aws:component/reboot-test-linux/x.x.x'
+      Description: PCS AMI with Intel MPI
+      Name: !Sub 'pcs-ami-intelmpi-${Distro}-${Architecture}-${AWS::StackName}'
+      ParentImage: !If
+        - DistroImageStartsWithSsm
+        - !Sub
+          - '{{resolve:${AMILookup}}}'
+          - AMILookup: !FindInMap [DistroConfigs, !Ref Distro, !Ref Architecture]
+        - !FindInMap [DistroConfigs, !Ref Distro, !Ref Architecture]
+      Version: !Ref SemanticVersion
+      AdditionalInstanceConfiguration:
+        SystemsManagerAgent:
+          UninstallAfterBuild: false
+      BlockDeviceMappings:
+        - DeviceName: !FindInMap [DistroConfigs, !Ref Distro, deviceName]
+          Ebs:
+            DeleteOnTermination: true
+            VolumeSize: !FindInMap [DistroConfigs, !Ref Distro, size]
+
+  PCSInfrastructureConfiguration:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Description: !Sub '${Architecture} infrastructure for PCS AMI build'
+      InstanceProfileName: !Ref ImageBuilderInstanceProfile
+      InstanceTypes: !FindInMap [InstanceConfigs, !Ref Architecture, 'default']
+      InstanceMetadataOptions:
+        HttpPutResponseHopLimit: 1
+        HttpTokens: required
+      Name: !GetAtt PCSImageRecipe.Name
+
+  PCSDistributionConfiguration:
+    Type: AWS::ImageBuilder::DistributionConfiguration
+    Properties:
+      Name: !GetAtt PCSImageRecipe.Name
+      Description: PCS image distributor
+      Distributions:
+        - Region: !Ref "AWS::Region"
+          AmiDistributionConfiguration:
+            Name: !Sub 'pcs_ami-intelmpi-${Distro}-${Architecture} {{ imagebuilder:buildDate }}'
+            Description: PCS-compatible AMI with Intel MPI
+
+  PCSImage:
+    Type: AWS::ImageBuilder::Image
+    Properties:
+      DistributionConfigurationArn: !GetAtt PCSDistributionConfiguration.Arn
+      ImageRecipeArn: !GetAtt PCSImageRecipe.Arn
+      InfrastructureConfigurationArn: !GetAtt PCSInfrastructureConfiguration.Arn
+
+Outputs:
+  ImageArn:
+    Description: The ARN of the built image
+    Value: !Ref PCSImage
+  AmiId:
+    Description: The AMI ID of the built image
+    Value: !GetAtt PCSImage.ImageId

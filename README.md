@@ -11,6 +11,18 @@ This repo is maintained by AWS HPC Solution Architects, who will take care of up
 5. [STAR-CCM+](https://github.com/aws-samples/hpc-applications/tree/main/apps/StarCCM)
 6. [ANSYS CFX](https://github.com/aws-samples/hpc-applications/tree/main/apps/CFX)
 7. [ANSYS Mechanical](https://github.com/aws-samples/hpc-applications/tree/main/apps/AnsysMechanical)
+8. [WRF (Weather Research and Forecasting)](https://github.com/aws-samples/hpc-applications/tree/main/apps/WRF)
+9. [OpenFOAM](https://github.com/aws-samples/hpc-applications/tree/main/apps/OpenFoam)
+
+## HPC synthetic benchmarks:
+1. [STREAM](https://github.com/aws-samples/hpc-applications/tree/main/apps/Stream) - Memory bandwidth benchmark
+2. [OSU Micro-Benchmarks](https://github.com/aws-samples/hpc-applications/tree/main/Utils/OSU-Benchmarks) - MPI latency, bandwidth, and collective performance benchmarks
+3. [HPL (High Performance Linpack)](https://github.com/aws-samples/hpc-applications/tree/main/Utils/HPL) - Floating-point compute benchmark (TOP500), optimised for hpc8a with AOCC and AOCL BLIS
+4. [GPU Microbenchmarks](https://github.com/aws-samples/hpc-applications/tree/main/Utils/GPU-Benchmarks) - NCCL, NVSHMEM, and OSU MPI benchmarks for GPU clusters (p5/p5en) using the NVIDIA HPC Benchmarks container over EFA
+
+## HPC tuning and configuration guides:
+1. [Flexible Cores Configuration](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores) - Examples for configuring flexible core counts on Hpc7a and Hpc8a instances using Intel MPI and OpenMPI, including explicit core pinning strategies
+2. [Test EFA](https://github.com/aws-samples/hpc-applications/tree/main/Utils/test-efa) - Scripts and instructions to verify that Elastic Fabric Adapter (EFA) is functioning correctly on your cluster
 
 ### Request a HPC application best practice
 
@@ -31,7 +43,9 @@ Then, (if needed) customize the example launch script for the application you wa
 
 ### Build a new HPC Cluster (1-Click deployment)
 
-You can follow the instructions [here](ParallelCluster/README.md) to build a new cluster with just 1-Click. 
+You can build a new HPC cluster with just 1-Click using either:
+ * [AWS ParallelCluster](ParallelCluster/README.md) - Open source cluster management tool
+ * [AWS Parallel Computing Service (PCS)](PCS/README.md) - Managed HPC cluster service
 
 
 ## HPC application Benchmarks
@@ -39,8 +53,12 @@ In addition to application best practices, this repo will include some HPC appli
 
 ## AWS HPC products and services being used
  * [AWS ParallelCluster](https://aws.amazon.com/hpc/parallelcluster/) and its [Documentation](https://docs.aws.amazon.com/parallelcluster/latest/ug/what-is-aws-parallelcluster.html)
+ * [AWS Parallel Computing Service (PCS)](https://aws.amazon.com/pcs/) and its [Documentation](https://docs.aws.amazon.com/pcs/latest/userguide/what-is.html)
  * [Elastic Fabric Adapter](https://aws.amazon.com/hpc/efa/) (EFA) and its [Documentation](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa.html)
  * [Amazon FSx for Lustre](https://aws.amazon.com/fsx/lustre/) and its [Documentation](https://docs.aws.amazon.com/fsx/latest/LustreGuide/what-is.html)
+ * [Amazon EFS](https://aws.amazon.com/efs/) and its [Documentation](https://docs.aws.amazon.com/efs/latest/ug/whatisefs.html)
+ * [EC2 Image Builder](https://aws.amazon.com/image-builder/) and its [Documentation](https://docs.aws.amazon.com/imagebuilder/latest/userguide/what-is-image-builder.html)
+ * AWS EC2 [Hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/) Instances
  * AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) Instances
  * AWS EC2 [Hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) Instances
  * AWS EC2 [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6i/) Instances

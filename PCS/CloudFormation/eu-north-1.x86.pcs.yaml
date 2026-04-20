@@ -1,0 +1,738 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: HPC-Application-Best-Practice (AWS PCS)
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: ''
+        Parameters:
+          - PrivateSubnet
+          - FSx
+          - ClusterSecurityGroup
+          - CustomAmi
+    ParameterLabels:
+      PrivateSubnet:
+        default: 'Private Subnet:'
+      FSx:
+        default: 'FSx:'
+      ClusterSecurityGroup:
+        default: 'Security Group:'
+Parameters:
+  PrivateSubnet:
+    Description: Please, enter the ID of the Private Subnet you wish to use (if you
+      want to re-use an existing one), or just leave "AUTO".
+    Type: String
+    AllowedPattern: ^(AUTO|subnet-[0-9a-z]+)$
+    Default: AUTO
+  ClusterSecurityGroup:
+    Description: Please, enter the ID of the Security Group you wish to use (if you
+      want to re-use an existing one), or just leave "AUTO".
+    Type: String
+    AllowedPattern: ^(AUTO|sg-[0-9a-z]+)$
+    Default: AUTO
+  VpcId:
+    Description: VPC ID (required when reusing existing subnet, leave "AUTO" otherwise)
+    Type: String
+    AllowedPattern: ^(AUTO|vpc-[0-9a-z]+)$
+    Default: AUTO
+  FSx:
+    Description: Please, enter your FSx ID, or just leave "AUTO" if you want to
+      re-use an existing one.
+    Type: String
+    AllowedPattern: ^(AUTO|fs-[0-9a-z]+)$
+    Default: AUTO
+  SlurmVersion:
+    Description: Version of Slurm to use
+    Type: String
+    Default: '25.05'
+    AllowedValues:
+      - '24.11'
+      - '25.05'
+  CustomAmi:
+    Description: PCS AMI ID for compute and login nodes, or "AUTO" to build one with Image Builder
+    Type: String
+    AllowedPattern: ^(AUTO|ami-[0-9a-f]+)$
+    Default: AUTO
+Conditions:
+  CreateVpc: !Equals
+    - !Ref PrivateSubnet
+    - AUTO
+  CreateStorage: !Equals
+    - !Ref FSx
+    - AUTO
+  BuildAmi: !Equals
+    - !Ref CustomAmi
+    - AUTO
+Resources:
+  HPCNetworkStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateVpc
+    Properties:
+      TemplateURL: https://hpc-applications-best-practice.s3.eu-west-1.amazonaws.com/HPC-Networking.yaml
+  HPCStorageStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: CreateStorage
+    Properties:
+      TemplateURL: https://hpc-applications-best-practice.s3.eu-west-1.amazonaws.com/HPC-Storage.yaml
+      Parameters:
+        PrivateSubnet: !If
+          - CreateVpc
+          - !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA
+          - !Ref PrivateSubnet
+        SecurityGroup: !If
+          - CreateVpc
+          - !GetAtt HPCNetworkStack.Outputs.localSG
+          - !Ref ClusterSecurityGroup
+
+  # Build a PCS-compatible AMI with Intel MPI if no AMI is provided
+  HPCAmiStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: BuildAmi
+    Properties:
+      TemplateURL: https://hpc-applications-best-practice.s3.eu-west-1.amazonaws.com/create-pcs-image.yaml
+      Capabilities:
+        - CAPABILITY_NAMED_IAM
+        - CAPABILITY_AUTO_EXPAND
+
+  # EFA Security Group - always created, self-referencing for EFA traffic
+  EfaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow all traffic between EFA-enabled instances
+      VpcId: !If
+        - CreateVpc
+        - !GetAtt HPCNetworkStack.Outputs.VPC
+        - !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-EFA-SG'
+
+  EfaSGIngressSelf:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EfaSecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref EfaSecurityGroup
+
+  EfaSGEgressSelf:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref EfaSecurityGroup
+      IpProtocol: -1
+      DestinationSecurityGroupId: !Ref EfaSecurityGroup
+
+  # IAM Role and Instance Profile for PCS compute nodes
+  PCSComputeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'AWSPCS-${AWS::StackName}-${AWS::Region}'
+      Path: /aws-pcs/
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/SecretsManagerReadWrite
+      Policies:
+        - PolicyName: PCSComputeNodePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - pcs:RegisterComputeNodeGroupInstance
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - fsx:DescribeFileSystems
+                Resource: '*'
+
+  PCSInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /aws-pcs/
+      Roles:
+        - !Ref PCSComputeRole
+
+  # PCS Cluster
+  PCSCluster:
+    Type: AWS::PCS::Cluster
+    Properties:
+      Name: !Sub 'pcs-${AWS::StackName}'
+      Size: SMALL
+      Scheduler:
+        Type: SLURM
+        Version: !Ref SlurmVersion
+      Networking:
+        SubnetIds:
+          - !If
+            - CreateVpc
+            - !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA
+            - !Ref PrivateSubnet
+        SecurityGroupIds:
+          - !If
+            - CreateVpc
+            - !GetAtt HPCNetworkStack.Outputs.localSG
+            - !Ref ClusterSecurityGroup
+
+  # EFS for shared /home directory
+  SharedHomeFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: elastic
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub 'pcs-home-${AWS::StackName}'
+
+  SharedHomeMountTarget:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref SharedHomeFileSystem
+      SubnetId: !If
+        - CreateVpc
+        - !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA
+        - !Ref PrivateSubnet
+      SecurityGroups:
+        - !If
+          - CreateVpc
+          - !GetAtt HPCNetworkStack.Outputs.localSG
+          - !Ref ClusterSecurityGroup
+
+  # Launch Template for hpc8a compute nodes (dual EFA)
+  PCSComputeLaunchTemplateHpc8a:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub 'pcs-compute-hpc8a-${AWS::StackName}'
+      LaunchTemplateData:
+        ImageId: !If
+          - BuildAmi
+          - !GetAtt HPCAmiStack.Outputs.AmiId
+          - !Ref CustomAmi
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 100
+              VolumeType: gp3
+              Encrypted: true
+              DeleteOnTermination: true
+        MetadataOptions:
+          HttpTokens: required
+          HttpEndpoint: enabled
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            NetworkCardIndex: 0
+            InterfaceType: efa
+            Groups:
+              - !If
+                - CreateVpc
+                - !GetAtt HPCNetworkStack.Outputs.localSG
+                - !Ref ClusterSecurityGroup
+              - !Ref EfaSecurityGroup
+          - DeviceIndex: 1
+            NetworkCardIndex: 1
+            InterfaceType: efa
+            Groups:
+              - !If
+                - CreateVpc
+                - !GetAtt HPCNetworkStack.Outputs.localSG
+                - !Ref ClusterSecurityGroup
+              - !Ref EfaSecurityGroup
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub 'pcs-compute-hpc8a-${AWS::StackName}'
+        UserData:
+          Fn::Base64: !Sub
+            - |
+              MIME-Version: 1.0
+              Content-Type: multipart/mixed; boundary="==BOUNDARY=="
+
+              --==BOUNDARY==
+              Content-Type: text/cloud-config; charset="us-ascii"
+
+              packages:
+                - amazon-efs-utils
+
+              runcmd:
+                - mkdir -p /tmp/home
+                - rsync -a /home/ /tmp/home
+                - echo "${EfsId}:/ /home efs tls,_netdev" >> /etc/fstab
+                - mount -a -t efs defaults
+                - rsync -a --ignore-existing /tmp/home/ /home
+                - rm -rf /tmp/home/
+
+              --==BOUNDARY==
+              Content-Type: text/x-shellscript; charset="us-ascii"
+
+              #!/bin/bash
+              set -e
+              # Mount FSx Lustre
+              FSX_ID="${FsxId}"
+              REGION="${AWS::Region}"
+              MOUNT_POINT="/fsx"
+              mkdir -p ${!MOUNT_POINT}
+              MOUNT_NAME=$(aws fsx describe-file-systems --file-system-ids ${!FSX_ID} --region ${!REGION} --query 'FileSystems[0].LustreConfiguration.MountName' --output text)
+              mount -t lustre ${!FSX_ID}.fsx.${!REGION}.amazonaws.com@tcp:/${!MOUNT_NAME} ${!MOUNT_POINT}
+              echo "${!FSX_ID}.fsx.${!REGION}.amazonaws.com@tcp:/${!MOUNT_NAME} ${!MOUNT_POINT} lustre defaults,noatime,flock,_netdev 0 0" >> /etc/fstab
+
+              # Setup passwordless SSH for ec2-user
+              HOME_DIR="/home/ec2-user"
+              mkdir -p ${!HOME_DIR}/.ssh && chmod 700 ${!HOME_DIR}/.ssh
+              touch ${!HOME_DIR}/.ssh/authorized_keys && chmod 600 ${!HOME_DIR}/.ssh/authorized_keys
+              if [ ! -f "${!HOME_DIR}/.ssh/id_rsa" ]; then
+                ssh-keygen -t rsa -b 4096 -f ${!HOME_DIR}/.ssh/id_rsa -N ""
+                cat ${!HOME_DIR}/.ssh/id_rsa.pub >> ${!HOME_DIR}/.ssh/authorized_keys
+              fi
+              echo "Host *" > ${!HOME_DIR}/.ssh/config
+              echo "  StrictHostKeyChecking no" >> ${!HOME_DIR}/.ssh/config
+              echo "  UserKnownHostsFile /dev/null" >> ${!HOME_DIR}/.ssh/config
+              echo "  LogLevel ERROR" >> ${!HOME_DIR}/.ssh/config
+              chmod 600 ${!HOME_DIR}/.ssh/config
+              chown -R ec2-user:ec2-user ${!HOME_DIR}/.ssh
+
+              # Ensure Intel MPI uses SSH bootstrap (system-wide)
+              echo 'export I_MPI_HYDRA_BOOTSTRAP=ssh' > /etc/profile.d/impi-bootstrap.sh
+              chmod 644 /etc/profile.d/impi-bootstrap.sh
+
+              --==BOUNDARY==--
+            - FsxId: !If
+                - CreateStorage
+                - !GetAtt HPCStorageStack.Outputs.FileSystemId
+                - !Ref FSx
+              EfsId: !Ref SharedHomeFileSystem
+
+  # Launch Template for other compute nodes (single EFA)
+  PCSComputeLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub 'pcs-compute-${AWS::StackName}'
+      LaunchTemplateData:
+        ImageId: !If
+          - BuildAmi
+          - !GetAtt HPCAmiStack.Outputs.AmiId
+          - !Ref CustomAmi
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 100
+              VolumeType: gp3
+              Encrypted: true
+              DeleteOnTermination: true
+        MetadataOptions:
+          HttpTokens: required
+          HttpEndpoint: enabled
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            InterfaceType: efa
+            Groups:
+              - !If
+                - CreateVpc
+                - !GetAtt HPCNetworkStack.Outputs.localSG
+                - !Ref ClusterSecurityGroup
+              - !Ref EfaSecurityGroup
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub 'pcs-compute-${AWS::StackName}'
+        UserData:
+          Fn::Base64: !Sub
+            - |
+              MIME-Version: 1.0
+              Content-Type: multipart/mixed; boundary="==BOUNDARY=="
+
+              --==BOUNDARY==
+              Content-Type: text/cloud-config; charset="us-ascii"
+
+              packages:
+                - amazon-efs-utils
+
+              runcmd:
+                - mkdir -p /tmp/home
+                - rsync -a /home/ /tmp/home
+                - echo "${EfsId}:/ /home efs tls,_netdev" >> /etc/fstab
+                - mount -a -t efs defaults
+                - rsync -a --ignore-existing /tmp/home/ /home
+                - rm -rf /tmp/home/
+
+              --==BOUNDARY==
+              Content-Type: text/x-shellscript; charset="us-ascii"
+
+              #!/bin/bash
+              set -e
+              # Mount FSx Lustre
+              FSX_ID="${FsxId}"
+              REGION="${AWS::Region}"
+              MOUNT_POINT="/fsx"
+              mkdir -p ${!MOUNT_POINT}
+              MOUNT_NAME=$(aws fsx describe-file-systems --file-system-ids ${!FSX_ID} --region ${!REGION} --query 'FileSystems[0].LustreConfiguration.MountName' --output text)
+              mount -t lustre ${!FSX_ID}.fsx.${!REGION}.amazonaws.com@tcp:/${!MOUNT_NAME} ${!MOUNT_POINT}
+              echo "${!FSX_ID}.fsx.${!REGION}.amazonaws.com@tcp:/${!MOUNT_NAME} ${!MOUNT_POINT} lustre defaults,noatime,flock,_netdev 0 0" >> /etc/fstab
+
+              # Setup passwordless SSH for ec2-user
+              HOME_DIR="/home/ec2-user"
+              mkdir -p ${!HOME_DIR}/.ssh && chmod 700 ${!HOME_DIR}/.ssh
+              touch ${!HOME_DIR}/.ssh/authorized_keys && chmod 600 ${!HOME_DIR}/.ssh/authorized_keys
+              if [ ! -f "${!HOME_DIR}/.ssh/id_rsa" ]; then
+                ssh-keygen -t rsa -b 4096 -f ${!HOME_DIR}/.ssh/id_rsa -N ""
+                cat ${!HOME_DIR}/.ssh/id_rsa.pub >> ${!HOME_DIR}/.ssh/authorized_keys
+              fi
+              echo "Host *" > ${!HOME_DIR}/.ssh/config
+              echo "  StrictHostKeyChecking no" >> ${!HOME_DIR}/.ssh/config
+              echo "  UserKnownHostsFile /dev/null" >> ${!HOME_DIR}/.ssh/config
+              echo "  LogLevel ERROR" >> ${!HOME_DIR}/.ssh/config
+              chmod 600 ${!HOME_DIR}/.ssh/config
+              chown -R ec2-user:ec2-user ${!HOME_DIR}/.ssh
+
+              # Ensure Intel MPI uses SSH bootstrap (system-wide)
+              echo 'export I_MPI_HYDRA_BOOTSTRAP=ssh' > /etc/profile.d/impi-bootstrap.sh
+              chmod 644 /etc/profile.d/impi-bootstrap.sh
+
+              --==BOUNDARY==--
+            - FsxId: !If
+                - CreateStorage
+                - !GetAtt HPCStorageStack.Outputs.FileSystemId
+                - !Ref FSx
+              EfsId: !Ref SharedHomeFileSystem
+
+  # Launch Template for login node
+  PCSLoginLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub 'pcs-login-${AWS::StackName}'
+      LaunchTemplateData:
+        ImageId: !If
+          - BuildAmi
+          - !GetAtt HPCAmiStack.Outputs.AmiId
+          - !Ref CustomAmi
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 100
+              VolumeType: gp3
+              Encrypted: true
+              DeleteOnTermination: true
+        MetadataOptions:
+          HttpTokens: required
+          HttpEndpoint: enabled
+        SecurityGroupIds:
+          - !If
+            - CreateVpc
+            - !GetAtt HPCNetworkStack.Outputs.localSG
+            - !Ref ClusterSecurityGroup
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub 'pcs-login-${AWS::StackName}'
+        UserData:
+          Fn::Base64: !Sub
+            - |
+              MIME-Version: 1.0
+              Content-Type: multipart/mixed; boundary="==BOUNDARY=="
+
+              --==BOUNDARY==
+              Content-Type: text/cloud-config; charset="us-ascii"
+
+              packages:
+                - amazon-efs-utils
+
+              runcmd:
+                - mkdir -p /tmp/home
+                - rsync -a /home/ /tmp/home
+                - echo "${EfsId}:/ /home efs tls,_netdev" >> /etc/fstab
+                - mount -a -t efs defaults
+                - rsync -a --ignore-existing /tmp/home/ /home
+                - rm -rf /tmp/home/
+
+              --==BOUNDARY==
+              Content-Type: text/x-shellscript; charset="us-ascii"
+
+              #!/bin/bash
+              set -e
+              # Mount FSx Lustre
+              FSX_ID="${FsxId}"
+              REGION="${AWS::Region}"
+              MOUNT_POINT="/fsx"
+              mkdir -p ${!MOUNT_POINT}
+              MOUNT_NAME=$(aws fsx describe-file-systems --file-system-ids ${!FSX_ID} --region ${!REGION} --query 'FileSystems[0].LustreConfiguration.MountName' --output text)
+              mount -t lustre ${!FSX_ID}.fsx.${!REGION}.amazonaws.com@tcp:/${!MOUNT_NAME} ${!MOUNT_POINT}
+              echo "${!FSX_ID}.fsx.${!REGION}.amazonaws.com@tcp:/${!MOUNT_NAME} ${!MOUNT_POINT} lustre defaults,noatime,flock,_netdev 0 0" >> /etc/fstab
+
+              # Setup passwordless SSH for ec2-user
+              HOME_DIR="/home/ec2-user"
+              mkdir -p ${!HOME_DIR}/.ssh && chmod 700 ${!HOME_DIR}/.ssh
+              touch ${!HOME_DIR}/.ssh/authorized_keys && chmod 600 ${!HOME_DIR}/.ssh/authorized_keys
+              if [ ! -f "${!HOME_DIR}/.ssh/id_rsa" ]; then
+                ssh-keygen -t rsa -b 4096 -f ${!HOME_DIR}/.ssh/id_rsa -N ""
+                cat ${!HOME_DIR}/.ssh/id_rsa.pub >> ${!HOME_DIR}/.ssh/authorized_keys
+              fi
+              echo "Host *" > ${!HOME_DIR}/.ssh/config
+              echo "  StrictHostKeyChecking no" >> ${!HOME_DIR}/.ssh/config
+              echo "  UserKnownHostsFile /dev/null" >> ${!HOME_DIR}/.ssh/config
+              echo "  LogLevel ERROR" >> ${!HOME_DIR}/.ssh/config
+              chmod 600 ${!HOME_DIR}/.ssh/config
+              chown -R ec2-user:ec2-user ${!HOME_DIR}/.ssh
+
+              # Set Intel MPI to use SSH for process launching
+              echo "export I_MPI_HYDRA_BOOTSTRAP=slurm" >> /home/ec2-user/.bash_profile
+
+              --==BOUNDARY==--
+            - FsxId: !If
+                - CreateStorage
+                - !GetAtt HPCStorageStack.Outputs.FileSystemId
+                - !Ref FSx
+              EfsId: !Ref SharedHomeFileSystem
+
+  # Login Node Group
+  NodeGroupLogin:
+    Type: AWS::PCS::ComputeNodeGroup
+    Properties:
+      ClusterId: !GetAtt PCSCluster.Id
+      Name: login
+      PurchaseOption: ONDEMAND
+      ScalingConfiguration:
+        MinInstanceCount: 1
+        MaxInstanceCount: 1
+      IamInstanceProfileArn: !GetAtt PCSInstanceProfile.Arn
+      CustomLaunchTemplate:
+        TemplateId: !Ref PCSLoginLaunchTemplate
+        Version: !GetAtt PCSLoginLaunchTemplate.LatestVersionNumber
+      SubnetIds:
+        - !If
+          - CreateVpc
+          - !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA
+          - !Ref PrivateSubnet
+      InstanceConfigs:
+        - InstanceType: c7a.2xlarge
+
+  # Compute Node Groups
+  # hpc8a queue
+  NodeGroupHpc8a:
+    Type: AWS::PCS::ComputeNodeGroup
+    Properties:
+      ClusterId: !GetAtt PCSCluster.Id
+      Name: hpc8a
+      PurchaseOption: ONDEMAND
+      ScalingConfiguration:
+        MinInstanceCount: 0
+        MaxInstanceCount: 3
+      IamInstanceProfileArn: !GetAtt PCSInstanceProfile.Arn
+      CustomLaunchTemplate:
+        TemplateId: !Ref PCSComputeLaunchTemplateHpc8a
+        Version: !GetAtt PCSComputeLaunchTemplateHpc8a.LatestVersionNumber
+      SubnetIds:
+        - !If
+          - CreateVpc
+          - !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA
+          - !Ref PrivateSubnet
+      InstanceConfigs:
+        - InstanceType: hpc8a.96xlarge
+
+  # hpc7a queue - multiple instance sizes
+  NodeGroupHpc7a96xl:
+    Type: AWS::PCS::ComputeNodeGroup
+    Properties:
+      ClusterId: !GetAtt PCSCluster.Id
+      Name: hpc7a-96xl
+      PurchaseOption: ONDEMAND
+      ScalingConfiguration:
+        MinInstanceCount: 0
+        MaxInstanceCount: 3
+      IamInstanceProfileArn: !GetAtt PCSInstanceProfile.Arn
+      CustomLaunchTemplate:
+        TemplateId: !Ref PCSComputeLaunchTemplateHpc8a
+        Version: !GetAtt PCSComputeLaunchTemplateHpc8a.LatestVersionNumber
+      SubnetIds:
+        - !If
+          - CreateVpc
+          - !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA
+          - !Ref PrivateSubnet
+      InstanceConfigs:
+        - InstanceType: hpc7a.96xlarge
+
+  NodeGroupHpc7a48xl:
+    Type: AWS::PCS::ComputeNodeGroup
+    Properties:
+      ClusterId: !GetAtt PCSCluster.Id
+      Name: hpc7a-48xl
+      PurchaseOption: ONDEMAND
+      ScalingConfiguration:
+        MinInstanceCount: 0
+        MaxInstanceCount: 3
+      IamInstanceProfileArn: !GetAtt PCSInstanceProfile.Arn
+      CustomLaunchTemplate:
+        TemplateId: !Ref PCSComputeLaunchTemplateHpc8a
+        Version: !GetAtt PCSComputeLaunchTemplateHpc8a.LatestVersionNumber
+      SubnetIds:
+        - !If
+          - CreateVpc
+          - !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA
+          - !Ref PrivateSubnet
+      InstanceConfigs:
+        - InstanceType: hpc7a.48xlarge
+
+  NodeGroupHpc7a24xl:
+    Type: AWS::PCS::ComputeNodeGroup
+    Properties:
+      ClusterId: !GetAtt PCSCluster.Id
+      Name: hpc7a-24xl
+      PurchaseOption: ONDEMAND
+      ScalingConfiguration:
+        MinInstanceCount: 0
+        MaxInstanceCount: 3
+      IamInstanceProfileArn: !GetAtt PCSInstanceProfile.Arn
+      CustomLaunchTemplate:
+        TemplateId: !Ref PCSComputeLaunchTemplateHpc8a
+        Version: !GetAtt PCSComputeLaunchTemplateHpc8a.LatestVersionNumber
+      SubnetIds:
+        - !If
+          - CreateVpc
+          - !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA
+          - !Ref PrivateSubnet
+      InstanceConfigs:
+        - InstanceType: hpc7a.24xlarge
+
+  NodeGroupHpc7a12xl:
+    Type: AWS::PCS::ComputeNodeGroup
+    Properties:
+      ClusterId: !GetAtt PCSCluster.Id
+      Name: hpc7a-12xl
+      PurchaseOption: ONDEMAND
+      ScalingConfiguration:
+        MinInstanceCount: 0
+        MaxInstanceCount: 3
+      IamInstanceProfileArn: !GetAtt PCSInstanceProfile.Arn
+      CustomLaunchTemplate:
+        TemplateId: !Ref PCSComputeLaunchTemplateHpc8a
+        Version: !GetAtt PCSComputeLaunchTemplateHpc8a.LatestVersionNumber
+      SubnetIds:
+        - !If
+          - CreateVpc
+          - !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA
+          - !Ref PrivateSubnet
+      InstanceConfigs:
+        - InstanceType: hpc7a.12xlarge
+
+  # hpc6id queue
+  NodeGroupHpc6id:
+    Type: AWS::PCS::ComputeNodeGroup
+    Properties:
+      ClusterId: !GetAtt PCSCluster.Id
+      Name: hpc6id
+      PurchaseOption: ONDEMAND
+      ScalingConfiguration:
+        MinInstanceCount: 0
+        MaxInstanceCount: 3
+      IamInstanceProfileArn: !GetAtt PCSInstanceProfile.Arn
+      CustomLaunchTemplate:
+        TemplateId: !Ref PCSComputeLaunchTemplateHpc8a
+        Version: !GetAtt PCSComputeLaunchTemplateHpc8a.LatestVersionNumber
+      SubnetIds:
+        - !If
+          - CreateVpc
+          - !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA
+          - !Ref PrivateSubnet
+      InstanceConfigs:
+        - InstanceType: hpc6id.32xlarge
+
+  # hpc6a queue
+  NodeGroupHpc6a:
+    Type: AWS::PCS::ComputeNodeGroup
+    Properties:
+      ClusterId: !GetAtt PCSCluster.Id
+      Name: hpc6a
+      PurchaseOption: ONDEMAND
+      ScalingConfiguration:
+        MinInstanceCount: 0
+        MaxInstanceCount: 3
+      IamInstanceProfileArn: !GetAtt PCSInstanceProfile.Arn
+      CustomLaunchTemplate:
+        TemplateId: !Ref PCSComputeLaunchTemplate
+        Version: !GetAtt PCSComputeLaunchTemplate.LatestVersionNumber
+      SubnetIds:
+        - !If
+          - CreateVpc
+          - !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA
+          - !Ref PrivateSubnet
+      InstanceConfigs:
+        - InstanceType: hpc6a.48xlarge
+
+  # Queues (map to ParallelCluster SlurmQueues)
+  QueueHpc8a:
+    Type: AWS::PCS::Queue
+    Properties:
+      ClusterId: !GetAtt PCSCluster.Id
+      Name: hpc8a
+      ComputeNodeGroupConfigurations:
+        - ComputeNodeGroupId: !GetAtt NodeGroupHpc8a.Id
+
+  QueueHpc7a:
+    Type: AWS::PCS::Queue
+    Properties:
+      ClusterId: !GetAtt PCSCluster.Id
+      Name: hpc7a
+      ComputeNodeGroupConfigurations:
+        - ComputeNodeGroupId: !GetAtt NodeGroupHpc7a96xl.Id
+        - ComputeNodeGroupId: !GetAtt NodeGroupHpc7a48xl.Id
+        - ComputeNodeGroupId: !GetAtt NodeGroupHpc7a24xl.Id
+        - ComputeNodeGroupId: !GetAtt NodeGroupHpc7a12xl.Id
+
+  QueueHpc6id:
+    Type: AWS::PCS::Queue
+    Properties:
+      ClusterId: !GetAtt PCSCluster.Id
+      Name: hpc6id
+      ComputeNodeGroupConfigurations:
+        - ComputeNodeGroupId: !GetAtt NodeGroupHpc6id.Id
+
+  QueueHpc6a:
+    Type: AWS::PCS::Queue
+    Properties:
+      ClusterId: !GetAtt PCSCluster.Id
+      Name: hpc6a
+      ComputeNodeGroupConfigurations:
+        - ComputeNodeGroupId: !GetAtt NodeGroupHpc6a.Id
+
+Outputs:
+  ClusterId:
+    Description: The ID of the PCS cluster
+    Value: !GetAtt PCSCluster.Id
+  AmiId:
+    Description: The AMI ID used for compute and login nodes
+    Value: !If
+      - BuildAmi
+      - !GetAtt HPCAmiStack.Outputs.AmiId
+      - !Ref CustomAmi
+  FileSystemId:
+    Value: !If
+      - CreateStorage
+      - !GetAtt HPCStorageStack.Outputs.FileSystemId
+      - !Ref FSx
+  PcsConsoleUrl:
+    Description: URL to access the cluster in the PCS console
+    Value: !Sub
+      - https://${ConsoleDomain}/pcs/home?region=${AWS::Region}#/clusters/${ClusterId}
+      - ConsoleDomain: !Sub ${AWS::Region}.console.aws.amazon.com
+        ClusterId: !GetAtt PCSCluster.Id
+  LoginNodeSsmCommand:
+    Description: Run this command to connect to the login node via SSM
+    Value: !Sub >-
+      aws ec2 describe-instances
+      --region ${AWS::Region}
+      --filters "Name=tag:Name,Values=pcs-login-${AWS::StackName}" "Name=instance-state-name,Values=running"
+      --query "Reservations[0].Instances[0].InstanceId" --output text
+      | xargs -I {} aws ssm start-session --region ${AWS::Region} --target {}

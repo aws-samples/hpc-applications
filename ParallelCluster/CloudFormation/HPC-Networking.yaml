@@ -249,7 +249,31 @@ Resources:
           CidrIp: !Ref CidrBlockVPC
         SecurityGroupEgress:
         - IpProtocol: -1
-          CidrIp: !Ref CidrBlockVPC
+          CidrIp: 0.0.0.0/0
+
+  efaSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+        GroupDescription: Allow all traffic between EFA-enabled instances
+        VpcId:
+          Ref: VPC
+        Tags:
+          - Key: Name
+            Value: !Sub '${AWS::StackName}-EFA-SG'
+
+  efaSGIngressSelf:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref efaSG
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref efaSG
+
+  efaSGEgressSelf:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref efaSG
+      IpProtocol: -1
+      DestinationSecurityGroupId: !Ref efaSG
 
 Outputs:
   VPC:
@@ -282,3 +306,8 @@ Outputs:
     Value: !Ref localSG
     Export:
       Name: !Sub "${AWS::StackName}-localSG"
+  efaSG:
+    Description: The ID of the EFA security group
+    Value: !Ref efaSG
+    Export:
+      Name: !Sub "${AWS::StackName}-efaSG"

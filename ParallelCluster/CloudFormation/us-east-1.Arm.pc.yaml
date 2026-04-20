@@ -69,7 +69,7 @@ Resources:
         AdditionalIamPolicies: !Ref PClusterPolicy
       TemplateURL: !Sub
         - https://${AWS::Region}-aws-parallelcluster.s3.${AWS::Region}.${AWS::URLSuffix}/parallelcluster/${Version}/templates/custom_resource/cluster.yaml
-        - { Version: 3.9.1, Region: !Ref AWS::Region }
+        - { Version: 3.15.0, Region: !Ref AWS::Region }
   PclusterCluster:
     Type: Custom::PclusterCluster
     Properties:
@@ -78,17 +78,16 @@ Resources:
       ClusterConfiguration:
         Imds:
           ImdsSupport: v2.0
-        Region: eu-north-1
+        Region: us-east-1
         Image:
           Os: alinux2
         HeadNode:
-          InstanceType: m6i.2xlarge
+          InstanceType: m7g.4xlarge
           Networking:
             SubnetId: !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnet]
             AdditionalSecurityGroups:
               - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
-          DisableSimultaneousMultithreading: false
-          SharedStorageType: Efs
+          #SharedStorageType: Efs
           LocalStorage:
             RootVolume:
               Size: 100
@@ -114,7 +113,7 @@ Resources:
             QueueUpdateStrategy: TERMINATE
             EnableMemoryBasedScheduling: true
           SlurmQueues:
-            - Name: hpc7a
+            - Name: hpc7g
               CapacityType: ONDEMAND
               Networking:
                 SubnetIds: 
@@ -124,104 +123,20 @@ Resources:
                 PlacementGroup:
                   Enabled: true
               ComputeResources:
-                - Name: hpc7a-96xlarge
-                  InstanceType: hpc7a.96xlarge
+                - Name: hpc7g-16xlarge
+                  InstanceType: hpc7g.16xlarge
                   MinCount: 0
                   MaxCount: 200
                   Efa:
                     Enabled: true
-                - Name: hpc7a-48xlarge
-                  InstanceType: hpc7a.48xlarge
+                - Name: hpc7g-8xlarge
+                  InstanceType: hpc7g.8xlarge
                   MinCount: 0
                   MaxCount: 200
                   Efa:
                     Enabled: true
-                - Name: hpc7a-24xlarge
-                  InstanceType: hpc7a.24xlarge
-                  MinCount: 0
-                  MaxCount: 200
-                  Efa:
-                    Enabled: true
-                - Name: hpc7a-12xlarge
-                  InstanceType: hpc7a.12xlarge
-                  MinCount: 0
-                  MaxCount: 200
-                  Efa:
-                    Enabled: true
-              Iam:
-                AdditionalIamPolicies:
-                  - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-                  - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
-                S3Access:
-                  - BucketName: '*'
-                    EnableWriteAccess: true
-              CustomActions:
-                OnNodeConfigured:
-                  Script: s3://hpc-applications-best-practice/post-install.compute.sh
-            - Name: hpc6id
-              CapacityType: ONDEMAND
-              Networking:
-                SubnetIds: 
-                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnet]
-                AdditionalSecurityGroups:
-                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
-                PlacementGroup:
-                  Enabled: true
-              ComputeResources:
-                - Name: hpc6id-32xlarge
-                  InstanceType: hpc6id.32xlarge
-                  MinCount: 0
-                  MaxCount: 200
-                  Efa:
-                    Enabled: true
-              Iam:
-                AdditionalIamPolicies:
-                  - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-                  - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
-                S3Access:
-                  - BucketName: '*'
-                    EnableWriteAccess: true
-              CustomActions:
-                OnNodeConfigured:
-                  Script: s3://hpc-applications-best-practice/post-install.compute.sh
-            - Name: hpc6a
-              CapacityType: ONDEMAND
-              Networking:
-                SubnetIds: 
-                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnet]
-                AdditionalSecurityGroups:
-                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
-                PlacementGroup:
-                  Enabled: true
-              ComputeResources:
-                - Name: hpc6a-48xlarge
-                  InstanceType: hpc6a.48xlarge
-                  MinCount: 0
-                  MaxCount: 200
-                  Efa:
-                    Enabled: true
-              Iam:
-                AdditionalIamPolicies:
-                  - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-                  - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
-                S3Access:
-                  - BucketName: '*'
-                    EnableWriteAccess: true
-              CustomActions:
-                OnNodeConfigured:
-                  Script: s3://hpc-applications-best-practice/post-install.compute.sh
-            - Name: c5n
-              CapacityType: ONDEMAND
-              Networking:
-                SubnetIds: 
-                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnet]
-                AdditionalSecurityGroups:
-                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
-                PlacementGroup:
-                  Enabled: true
-              ComputeResources:
-                - Name: c5n-18xlarge
-                  InstanceType: c5n.18xlarge
+                - Name: hpc7g-4xlarge
+                  InstanceType: hpc7g.4xlarge
                   MinCount: 0
                   MaxCount: 200
                   Efa:

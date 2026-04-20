@@ -48,7 +48,7 @@ Resources:
     Properties:
       TemplateURL: https://hpc-applications-best-practice.s3.eu-west-1.amazonaws.com/HPC-Storage.yaml
       Parameters:
-        PrivateSubnet: !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnet]
+        PrivateSubnet: !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetB, !Ref PrivateSubnet]
         SecurityGroup: !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
   PClusterPolicy:
     Type: AWS::IAM::ManagedPolicy
@@ -69,7 +69,7 @@ Resources:
         AdditionalIamPolicies: !Ref PClusterPolicy
       TemplateURL: !Sub
         - https://${AWS::Region}-aws-parallelcluster.s3.${AWS::Region}.${AWS::URLSuffix}/parallelcluster/${Version}/templates/custom_resource/cluster.yaml
-        - { Version: 3.9.1, Region: !Ref AWS::Region }
+        - { Version: 3.15.0, Region: !Ref AWS::Region }
   PclusterCluster:
     Type: Custom::PclusterCluster
     Properties:
@@ -78,13 +78,13 @@ Resources:
       ClusterConfiguration:
         Imds:
           ImdsSupport: v2.0
-        Region: us-east-2
+        Region: eu-north-1
         Image:
           Os: alinux2
         HeadNode:
           InstanceType: m6i.2xlarge
           Networking:
-            SubnetId: !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnet]
+            SubnetId: !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetB, !Ref PrivateSubnet]
             AdditionalSecurityGroups:
               - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
           DisableSimultaneousMultithreading: false
@@ -97,7 +97,7 @@ Resources:
               DeleteOnTermination: true
           CustomActions:
             OnNodeConfigured:
-              Script: s3://hpc-applications-best-practice/post-install.headnode.sh
+              Script: s3://hpc-benchmarks-software/post-install.headnode.sh
           Iam:
             AdditionalIamPolicies:
               - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
@@ -114,40 +114,35 @@ Resources:
             QueueUpdateStrategy: TERMINATE
             EnableMemoryBasedScheduling: true
           SlurmQueues:
-            - Name: hpc7a
+            - Name: g5
               CapacityType: ONDEMAND
               Networking:
                 SubnetIds: 
-                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnet]
+                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetB, !Ref PrivateSubnet]
                 AdditionalSecurityGroups:
                   - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
                 PlacementGroup:
                   Enabled: true
               ComputeResources:
-                - Name: hpc7a-96xlarge
-                  InstanceType: hpc7a.96xlarge
+                - Name: g5-48xlarge
+                  DisableSimultaneousMultithreading: true
+                  InstanceType: g5.48xlarge
                   MinCount: 0
                   MaxCount: 200
                   Efa:
                     Enabled: true
-                - Name: hpc7a-48xlarge
-                  InstanceType: hpc7a.48xlarge
+                    GdrSupport: true
+                - Name: g5-16xlarge
+                  DisableSimultaneousMultithreading: true
+                  InstanceType: g5.16xlarge
                   MinCount: 0
                   MaxCount: 200
                   Efa:
                     Enabled: true
-                - Name: hpc7a-24xlarge
-                  InstanceType: hpc7a.24xlarge
-                  MinCount: 0
-                  MaxCount: 200
-                  Efa:
-                    Enabled: true
-                - Name: hpc7a-12xlarge
-                  InstanceType: hpc7a.12xlarge
-                  MinCount: 0
-                  MaxCount: 200
-                  Efa:
-                    Enabled: true
+                    GdrSupport: true
+              HealthChecks:
+                Gpu:
+                  Enabled: false
               Iam:
                 AdditionalIamPolicies:
                   - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
@@ -158,22 +153,27 @@ Resources:
               CustomActions:
                 OnNodeConfigured:
                   Script: s3://hpc-applications-best-practice/post-install.compute.sh
-            - Name: hpc6id
+            - Name: p5
               CapacityType: ONDEMAND
               Networking:
                 SubnetIds: 
-                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnet]
+                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetB, !Ref PrivateSubnet]
                 AdditionalSecurityGroups:
                   - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
                 PlacementGroup:
                   Enabled: true
               ComputeResources:
-                - Name: hpc6id-32xlarge
-                  InstanceType: hpc6id.32xlarge
+                - Name: p5-48xlarge
+                  DisableSimultaneousMultithreading: true
+                  InstanceType: p5.48xlarge
                   MinCount: 0
                   MaxCount: 200
                   Efa:
                     Enabled: true
+                    GdrSupport: true
+              HealthChecks:
+                Gpu:
+                  Enabled: false
               Iam:
                 AdditionalIamPolicies:
                   - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
@@ -184,22 +184,27 @@ Resources:
               CustomActions:
                 OnNodeConfigured:
                   Script: s3://hpc-applications-best-practice/post-install.compute.sh
-            - Name: hpc6a
-              CapacityType: ONDEMAND
+            - Name: p5-spot
+              CapacityType: SPOT
               Networking:
                 SubnetIds: 
-                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnet]
+                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetB, !Ref PrivateSubnet]
                 AdditionalSecurityGroups:
                   - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
                 PlacementGroup:
                   Enabled: true
               ComputeResources:
-                - Name: hpc6a-48xlarge
-                  InstanceType: hpc6a.48xlarge
+                - Name: p5-48xlarge
+                  DisableSimultaneousMultithreading: true
+                  InstanceType: p5.48xlarge
                   MinCount: 0
                   MaxCount: 200
                   Efa:
                     Enabled: true
+                    GdrSupport: true
+              HealthChecks:
+                Gpu:
+                  Enabled: false
               Iam:
                 AdditionalIamPolicies:
                   - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
@@ -209,33 +214,7 @@ Resources:
                     EnableWriteAccess: true
               CustomActions:
                 OnNodeConfigured:
-                  Script: s3://hpc-applications-best-practice/post-install.compute.sh
-            - Name: c5n
-              CapacityType: ONDEMAND
-              Networking:
-                SubnetIds: 
-                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.PrivateSubnetA, !Ref PrivateSubnet]
-                AdditionalSecurityGroups:
-                  - !If [CreateVpc, !GetAtt HPCNetworkStack.Outputs.localSG, !Ref ClusterSecurityGroup]
-                PlacementGroup:
-                  Enabled: true
-              ComputeResources:
-                - Name: c5n-18xlarge
-                  InstanceType: c5n.18xlarge
-                  MinCount: 0
-                  MaxCount: 200
-                  Efa:
-                    Enabled: true
-              Iam:
-                AdditionalIamPolicies:
-                  - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-                  - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
-                S3Access:
-                  - BucketName: '*'
-                    EnableWriteAccess: true
-              CustomActions:
-                OnNodeConfigured:
-                  Script: s3://hpc-applications-best-practice/post-install.compute.sh
+                  Script: s3://hpc-applications-best-practice/post-install.compute.sh          
         SharedStorage:
           - Name: FsxLustre
             StorageType: FsxLustre

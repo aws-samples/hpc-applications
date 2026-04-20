@@ -9,10 +9,11 @@
 ######################## EFA settings ######################## 
 module load openmpi
 module load libfabric-aws
+export FI_EFA_RECVWIN_SIZE=65536
 #export FI_LOG_LEVEL=warn 
 #export OMPI_MCA_mtl_ofi_verbose=100
 export OPENMPI_ROOT="$(dirname $(dirname $(which mpirun)))"
-######################## EFA settings ######################## 
+######################## EFA settings ########################  
 
 fluentversion=${1:-"v251"}
 benchmark_uri=${2:-"s3://YOUR_BUCKET/f1_racecar_140m.tar"}
@@ -47,4 +48,4 @@ mpirun -n $SLURM_JOB_NUM_NODES --map-by ppr:1:node /bin/bash -c "echo always | s
 echo "Install missing libraries"
 mpirun -n $SLURM_JOB_NUM_NODES --map-by ppr:1:node /bin/bash -c "sudo yum -y install libXtst libXtst-devel libvorbis libvorbis-devel"
 
-"${APP_BIN_PATH}" ${benchmark_file%.*} -t${SLURM_NPROCS}  -cnf=hostfile -part=4 -nosyslog -noloadchk -ssh -p=eth.efa -mpi=openmpi
+"${APP_BIN_PATH}" ${benchmark_file%.*} -t${SLURM_NPROCS}  -cnf=hostfile -part=4 -nosyslog -noloadchk -ssh -peth.efa -mpi=openmpi
