@@ -8,7 +8,7 @@ SIMULATION CONTROL:
 #
       START METHOD: Intel MPI SRUN from SBATCH
               Option = Direct
-              Start Command = "/opt/slurm/bin/srun" --mpi=pmi2 %{executable} %{arguments}
+              Start Command = "/opt/slurm/bin/srun" --kill-on-bad-exit=1 --mpi=pmi2 %{executable} %{arguments}
               Shared Library Path = %{mportlibdir}/intel:%{impidir}/lib/release
               Executable Suffix = -mpi
               Use Host List = No
