@@ -10,6 +10,7 @@ module load intelmpi
 export I_MPI_DEBUG=5
 export I_MPI_FABRICS=shm:ofi
 export I_MPI_OFI_PROVIDER=efa
+export I_MPI_MULTIRAIL=1
 
 export I_MPI_PIN=1	#enable pinning
 export I_MPI_PIN_ORDER=spread	#spread ranks over all the CCD/NUMA nodes available
