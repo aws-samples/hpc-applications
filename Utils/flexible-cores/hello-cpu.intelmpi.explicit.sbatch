@@ -10,6 +10,7 @@ module load intelmpi
 export I_MPI_DEBUG=5
 export I_MPI_FABRICS=shm:ofi
 export I_MPI_OFI_PROVIDER=efa
+export I_MPI_MULTIRAIL=1
 
 cores_x_node=$(((SLURM_NPROCS / SLURM_JOB_NUM_NODES ) + ( SLURM_NPROCS % SLURM_JOB_NUM_NODES > 0 )))
 
