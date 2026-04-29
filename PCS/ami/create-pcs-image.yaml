@@ -386,6 +386,7 @@ Resources:
                         echo "setenv FI_EFA_USE_DEVICE_RDMA 1" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
                         echo "setenv I_MPI_FABRICS shm:ofi" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
                         echo "setenv I_MPI_HYDRA_BOOTSTRAP ssh" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
+                        echo "setenv I_MPI_MULTIRAIL 1" >> "${MODULE_DIR}/${INTELMPI_VERSION}"
                       fi
               - name: ConfigureIntelMpiPaths
                 action: ExecuteBash
