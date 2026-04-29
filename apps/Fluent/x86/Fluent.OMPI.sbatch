@@ -4,10 +4,9 @@
 #SBATCH --ntasks=384
 #SBATCH --constraint=hpc8a.96xlarge
 #SBATCH --partition=hpc8a
-#SBATCH --time=12:00:00
 
 # ---------------------------------------------------------------------------
-# Ansys Fluent benchmark launcher (x86, OpenMPI + EFA)
+# Ansys Fluent journal runner (x86, OpenMPI + EFA)
 #
 # Uses Fluent's built-in "-peth.efa" interconnect variant. On the OpenMPI
 # path, Fluent's mpirun.fl wrapper loads the libfabric-aws module and
@@ -39,14 +38,23 @@
 #     system libfabric is used rather than anything bundled with Fluent.
 #   * FI_EFA_SHM_AV_SIZE=<ncores-per-node> is required when ranks-per-node
 #     exceeds 128 (so 192 ranks/node on hpc7a / hpc8a).
+#
+# Usage:
+#   sbatch Fluent.OMPI.sbatch <version> <journal.jou> <case.cas.gz> <data.dat.gz>
+# Example:
+#   sbatch --export=ALL,OMPI_VARIANT=ompi4 Fluent.OMPI.sbatch v252 \
+#       /fsx/my-case/run.jou /fsx/my-case/model.cas.gz /fsx/my-case/model.dat.gz
 # ---------------------------------------------------------------------------
 
 fluentversion=${1:-"v252"}
-benchmark_uri=${2:-"s3://YOUR_BUCKET/f1_racecar_140m.tar"}
-benchmark_name=${BENCHMARK_NAME:-"f1_racecar_140m"}
+journal_file=${2:-"/fsx/MY_FLUENT_EXAMPLE/MY_JOURNAL_FILE.jou"}
+dataset_cas=${3:-"/fsx/MY_FLUENT_EXAMPLE/MY_CAS_FILE.cas.gz"}
+dataset_dat=${4:-"/fsx/MY_FLUENT_EXAMPLE/MY_DAT_FILE.dat.gz"}
 ompi_variant=${OMPI_VARIANT:-"ompi4"}
 basedir=${BASE_DIR:-"/fsx"}
 ansys_root=${ANSYS_ROOT:-"/fsx"}
+fluent_mode=${FLUENT_MODE:-"3ddp"}
+
 export ANSYSLMD_LICENSE_FILE=${ANSYSLMD_LICENSE_FILE:-"1055@XXX.YYY.ZZZ.XYZ"}
 
 # Load the system libfabric first so the module-loaded /opt/amazon/efa/lib64
@@ -55,19 +63,19 @@ module load libfabric-aws
 
 # Select the OpenMPI that Fluent will use.
 case "${ompi_variant}" in
-    ompi5)
-        module load openmpi5
-        export OPENMPI_ROOT=/opt/amazon/openmpi5
-        ;;
     ompi4)
         module load openmpi
         export OPENMPI_ROOT=/opt/amazon/openmpi
+        ;;
+    ompi5)
+        module load openmpi5
+        export OPENMPI_ROOT=/opt/amazon/openmpi5
         ;;
     bundled)
         unset OPENMPI_ROOT
         ;;
     *)
-        echo "Unknown OMPI_VARIANT: ${ompi_variant} (expected: ompi5 | ompi4 | bundled)" >&2
+        echo "Unknown OMPI_VARIANT: ${ompi_variant} (expected: ompi4 | ompi5 | bundled)" >&2
         exit 1
         ;;
 esac
@@ -77,11 +85,10 @@ esac
 # OpenMPI directory; use any such copy we can find. For the bundled variant
 # Fluent's mpirun.fl already handles this via sys_prepend_ld_library_path
 # so this is only needed when pointing at a system OpenMPI.
-# IMPORTANT: we must NOT prepend the whole Fluent-bundled OpenMPI lib dir to
-# LD_LIBRARY_PATH because it also contains libopen-pal.so.40 / libopen-rte.so.40
-# from OpenMPI 4.0.5 which would get picked up ahead of the system OpenMPI's
-# own libs (and break argument parsing). Instead use LD_PRELOAD for libnsl.so.2
-# only, so other Fluent-bundled OpenMPI libs don't shadow the system ones.
+# IMPORTANT: we use LD_PRELOAD rather than prepending to LD_LIBRARY_PATH
+# because the Fluent-bundled OpenMPI dir also contains libopen-pal.so.40 /
+# libopen-rte.so.40 from OpenMPI 4.0.5 which would shadow the system
+# OpenMPI's own libs and break mpirun argument parsing.
 if [ "${ompi_variant}" != "bundled" ]; then
     fluent_libnsl=$(ls "${ansys_root}/ansys_inc/${fluentversion}/fluent/fluent"*/multiport/mpi/lnamd64/openmpi/lib/libnsl.so.2 2>/dev/null | head -1)
     if [ -z "${fluent_libnsl}" ]; then
@@ -114,12 +121,11 @@ mkdir -p "${FL_TMPDIR}"
 # correctly gates this on FLUTE_UUID being non-empty.
 export FLUTE_UUID=${FLUTE_UUID:-"${SLURM_JOB_ID:-$$}"}
 
-benchmark_file=$(basename ${benchmark_uri})
-APP_BIN_PATH="${ansys_root}/ansys_inc/${fluentversion}/fluent/bin/fluentbench.pl"
+APP_BIN_PATH="${ansys_root}/ansys_inc/${fluentversion}/fluent/bin/fluent"
 export FLUENT_ARCH=lnamd64
 
 TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-workdir="$(readlink -m "${basedir}/${SLURM_JOB_NAME%.*}")/${benchmark_name}/${fluentversion}-${ompi_variant}/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)-${SLURM_NPROCS}-$(date "+%d-%m-%Y-%H-%M")"
+workdir="$(readlink -m "${basedir}/${SLURM_JOB_NAME%.*}")/$(basename "${journal_file%.*}")/Run/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)-${SLURM_NPROCS}-$(date "+%d-%m-%Y-%H-%M")"
 
 echo "Execution directory is: ${workdir}"
 mkdir -p "${workdir}" && cd "${workdir}"
@@ -128,31 +134,9 @@ echo "Building the MPI hostfile"
 scontrol show nodes $SLURM_NODELIST | grep NodeHostName= | awk '{print $2}' | sed 's/NodeHostName=//' >hostfile
 
 cp $0 .
-
-# Stage the dataset. Three supported forms for benchmark_uri:
-#   * s3://bucket/path/to/bundle.tar  - downloaded and extracted in-place
-#   * /local/path/to/bundle.tar       - extracted in-place
-#   * /local/path/to/dir              - symlink the .cas.gz / .dat.gz pair
-case "${benchmark_uri}" in
-    s3://*)
-        aws s3 cp --quiet "${benchmark_uri}" .
-        tar xf "${benchmark_file}"
-        ln -sf bench/fluent/v6/${benchmark_name}/cas_dat/* .
-        ;;
-    *.tar)
-        tar xf "${benchmark_uri}"
-        ln -sf bench/fluent/v6/${benchmark_name}/cas_dat/* .
-        ;;
-    *)
-        if [ -d "${benchmark_uri}" ]; then
-            ln -sf "${benchmark_uri}/${benchmark_name}.cas.gz" .
-            ln -sf "${benchmark_uri}/${benchmark_name}.dat.gz" .
-        else
-            echo "benchmark_uri must be an s3:// URI, a .tar file, or a directory containing ${benchmark_name}.cas.gz / .dat.gz" >&2
-            exit 1
-        fi
-        ;;
-esac
+ln -s "${journal_file}" .
+ln -s "${dataset_cas}" .
+ln -s "${dataset_dat}" .
 
 echo "Drop caches on all nodes"
 srun --ntasks=$SLURM_JOB_NUM_NODES --ntasks-per-node=1 /bin/bash -c "sync && echo 3 | sudo tee /proc/sys/vm/drop_caches"
@@ -161,8 +145,10 @@ echo "Enabling Transparent Huge Pages (THP)"
 srun --ntasks=$SLURM_JOB_NUM_NODES --ntasks-per-node=1 /bin/bash -c "echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled"
 
 echo "Fluent version: ${fluentversion} | OMPI variant: ${ompi_variant} | OPENMPI_ROOT: ${OPENMPI_ROOT:-<Fluent-bundled>}"
-# Build mpiopt value: concatenate DEBUG_MPIOPT (user-supplied) with a forced
-# " -x LD_PRELOAD " when we injected libnsl.so.2 via LD_PRELOAD for system OpenMPI.
+
+# Build mpiopt value: DEBUG_MPIOPT (user-supplied) plus a forced
+# " -x LD_PRELOAD " when we injected libnsl.so.2 via LD_PRELOAD for system
+# OpenMPI so worker ranks inherit it.
 mpiopt_value=""
 if [ -n "${DEBUG_MPIOPT}" ]; then
     mpiopt_value="${DEBUG_MPIOPT}"
@@ -170,11 +156,12 @@ fi
 if [ -n "${LD_PRELOAD}" ] && [ "${ompi_variant}" != "bundled" ]; then
     mpiopt_value="${mpiopt_value} -x LD_PRELOAD "
 fi
-# Assemble the Fluent args array so -mpiopt="value" is a single argv entry.
-fluent_args=(${benchmark_name} -t${SLURM_NPROCS} -cnf=hostfile -part=4 -peth.efa -platform=intel -nosyslog -noloadchk -ssh -mpi=openmpi -norm)
+
+# Assemble Fluent args as an array so -mpiopt="value" stays a single argv entry.
+fluent_args=(${fluent_mode} -g -t${SLURM_NPROCS} -cnf=hostfile -peth.efa -platform=intel -ssh -mpi=openmpi -i "$(basename ${journal_file})")
 if [ -n "${mpiopt_value}" ]; then
     fluent_args+=("-mpiopt=${mpiopt_value}")
 fi
 
-echo "Run Fluent Benchmark: ${APP_BIN_PATH} ${fluent_args[*]}"
+echo "Run Fluent: ${APP_BIN_PATH} ${fluent_args[*]}"
 "${APP_BIN_PATH}" "${fluent_args[@]}" | tee output.$SLURM_JOBID.out

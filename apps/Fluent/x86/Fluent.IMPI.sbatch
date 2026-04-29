@@ -10,7 +10,7 @@
 #
 # Uses the built-in "-peth.efa" interconnect variant (available from
 # v222 / 2022 R2 onwards; documented in v261 / 2026 R1). See the big
-# comment block in Fluent-Benchmark.sbatch for what -peth.efa does and
+# comment block in Fluent-Benchmark.IMPI.sbatch for what -peth.efa does and
 # why we set SCHEDULER_TIGHT_COUPLING=1.
 # ---------------------------------------------------------------------------
 
