@@ -1,2 +1,12 @@
 # macOS
 .DS_Store
+
+# Editor / IDE
+.vscode/
+.kiro/
+
+# Local overrides
+.gitignore.local
+
+# Scratch / temp build output
+build/
