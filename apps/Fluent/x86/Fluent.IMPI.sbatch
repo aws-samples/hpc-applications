@@ -6,7 +6,7 @@
 #SBATCH --partition=hpc8a
 
 # ---------------------------------------------------------------------------
-# Ansys Fluent journal runner (x86, Intel MPI + EFA)
+# Ansys Fluent journal runner (x86, IntelMPI + EFA)
 #
 # Uses the built-in "-peth.efa" interconnect variant (available from
 # v222 / 2022 R2 onwards; documented in v261 / 2026 R1). See the big
@@ -14,7 +14,7 @@
 # why we set SCHEDULER_TIGHT_COUPLING=1.
 # ---------------------------------------------------------------------------
 
-# Tell Intel MPI to use the system libfabric (loaded via libfabric-aws
+# Tell IntelMPI to use the system libfabric (loaded via libfabric-aws
 # below) instead of its own bundled one. Must be exported BEFORE
 # `module load intelmpi` so mpivars.sh sees it.
 export I_MPI_OFI_LIBRARY_INTERNAL=0
@@ -22,11 +22,11 @@ export I_MPI_OFI_LIBRARY_INTERNAL=0
 module load intelmpi
 module load libfabric-aws
 
-# 300 Gbps EFA instances (hpc7a / hpc8a) — remove on 100 Gbps instances.
+# Multi-NIC EFA instances (e.g. hpc7a / hpc8a) — omit on single-NIC instances.
 export I_MPI_MULTIRAIL=1
 # Required when ranks-per-node exceeds 128 (e.g. 192 on hpc7a / hpc8a).
 export FI_EFA_SHM_AV_SIZE=${SLURM_NTASKS_PER_NODE:-192}
-# Let Intel MPI's Slurm integration handle process launch natively on
+# Let IntelMPI's Slurm integration handle process launch natively on
 # Fluent v222 .. v242 (no-op on v251+).
 export SCHEDULER_TIGHT_COUPLING=1
 

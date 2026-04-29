@@ -96,14 +96,14 @@ fi
 
 # Required when ranks-per-node exceeds 128 (e.g. 192 on hpc7a / hpc8a).
 export FI_EFA_SHM_AV_SIZE=${SLURM_NTASKS_PER_NODE:-192}
-# Kept for parity with the Intel MPI script (no effect on OpenMPI).
+# Kept for parity with the IntelMPI script (no effect on OpenMPI).
 export SCHEDULER_TIGHT_COUPLING=1
 
 # OpenMPI 5 (PRRTE) re-reads the mpirun --hostfile on every worker node;
 # Fluent's mpirun.fl puts that file in $FL_TMPDIR/fluent-appfile.$USER.$$
 # (default /tmp). Point it at FSx so all nodes can read the same file.
 # Use a per-job subdirectory so concurrent jobs don't race on each other's
-# stale appfiles. Harmless on OpenMPI 4 / bundled / Intel MPI.
+# stale appfiles. Harmless on OpenMPI 4 / bundled / IntelMPI.
 export FL_TMPDIR="${basedir}/tmp/${SLURM_JOB_ID:-$$}"
 mkdir -p "${FL_TMPDIR}"
 

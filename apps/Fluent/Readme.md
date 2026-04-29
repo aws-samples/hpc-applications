@@ -10,17 +10,17 @@ For Fluent 2019 (v195) and older please refer to this [blog post](https://aws.am
 
 # Launch scripts
 
-Pick a script depending on whether you want to run a benchmark or a journal file, and whether you want to use Intel MPI or OpenMPI. All scripts target hpc8a by default; edit the `#SBATCH` header to run on other instances.
+Pick a script depending on whether you want to run a benchmark or a journal file, and whether you want to use IntelMPI or OpenMPI. All scripts target hpc8a by default; edit the `#SBATCH` header to run on other instances.
 
 | Script | Purpose | MPI |
 |---|---|---|
-| [`x86/Fluent-Benchmark.IMPI.sbatch`](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/x86/Fluent-Benchmark.IMPI.sbatch) | Ansys benchmark suite runner (e.g. `f1_racecar_140m`) | Intel MPI |
-| [`x86/Fluent.IMPI.sbatch`](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/x86/Fluent.IMPI.sbatch) | Run your own journal file | Intel MPI |
+| [`x86/Fluent-Benchmark.IMPI.sbatch`](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/x86/Fluent-Benchmark.IMPI.sbatch) | Ansys benchmark suite runner (e.g. `f1_racecar_140m`) | IntelMPI |
+| [`x86/Fluent.IMPI.sbatch`](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/x86/Fluent.IMPI.sbatch) | Run your own journal file | IntelMPI |
 | [`x86/Fluent-Benchmark.OMPI.sbatch`](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/x86/Fluent-Benchmark.OMPI.sbatch) | Ansys benchmark suite runner | OpenMPI |
 | [`x86/Fluent.OMPI.sbatch`](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/x86/Fluent.OMPI.sbatch) | Run your own journal file | OpenMPI |
 | [`gpu/Fluent-GPU.sbatch`](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/gpu/Fluent-GPU.sbatch) | GPU-based simulation | — |
 
-Intel MPI and OpenMPI deliver similar performance on AWS EFA for Fluent (within ~1% on the `f1_racecar_140m` benchmark on hpc8a at 2 and 10 nodes). Intel MPI is the most mature path and the default recommendation. OpenMPI is a solid alternative — useful when you prefer a non-proprietary stack or need a specific OpenMPI feature.
+IntelMPI and OpenMPI deliver similar performance on AWS EFA for Fluent (within ~1% on the `f1_racecar_140m` benchmark on hpc8a at 2 and 10 nodes). IntelMPI is the most mature path and the default recommendation. OpenMPI is a solid alternative — useful when you prefer a non-proprietary stack or need a specific OpenMPI feature.
 
 # Installation
 
@@ -49,17 +49,17 @@ For multi-node runs Fluent must live on a shared filesystem. We recommend [Amazo
 
 ### Fluent command-line flags the scripts set
 
-- **`-peth.efa`** — tells Fluent's MPI wrapper (`mpirun.fl`) to activate its built-in EFA profile. The wrapper then exports the right Intel MPI / libfabric tuning for AWS EFA without you having to set them manually. Supported from Fluent v222 (2022 R2) onwards; officially documented from v261 (2026 R1). On OpenMPI the same flag is honored from v242; v222 / v231 have a wrapper bug that forces TCP and is unusable at scale.
+- **`-peth.efa`** — tells Fluent's MPI wrapper (`mpirun.fl`) to activate its built-in EFA profile. The wrapper then exports the right IntelMPI / libfabric tuning for AWS EFA without you having to set them manually. Supported from Fluent v222 (2022 R2) onwards; officially documented from v261 (2026 R1). On OpenMPI the same flag is honored from v242; v222 / v231 have a wrapper bug that forces TCP and is unusable at scale.
 - **`-platform=intel`** — use the AVX2-optimized solver binary. On AMD EPYC (hpc7a / hpc8a) this still outperforms `-platform=amd` at small-to-medium scale (we measured +13% at 2 nodes, equal at 20 nodes on v252) and it works on every Fluent version v222..v261, so it is the safe default.
 - **`-t<N>`** — number of MPI ranks (cores).
 - **`-mpi=intel`** or **`-mpi=openmpi`** — MPI implementation.
 
 ### Env vars the scripts set
 
-- **`I_MPI_OFI_LIBRARY_INTERNAL=0`** (Intel MPI only) — export *before* `module load intelmpi` so that `mpivars.sh` picks up the system `libfabric-aws` instead of the one bundled with Intel MPI.
-- **`I_MPI_MULTIRAIL=1`** (Intel MPI only, 300 Gbps EFA only) — needed on hpc7a / hpc8a to use both EFA NICs. Omit on 100 Gbps instances.
+- **`I_MPI_OFI_LIBRARY_INTERNAL=0`** (IntelMPI only) — export *before* `module load intelmpi` so that `mpivars.sh` picks up the system `libfabric-aws` instead of the one bundled with IntelMPI.
+- **`I_MPI_MULTIRAIL=1`** (IntelMPI only, multi-NIC EFA instances only) — needed on hpc7a / hpc8a to use both EFA NICs. Omit on single-NIC instances.
 - **`FI_EFA_SHM_AV_SIZE=${SLURM_NTASKS_PER_NODE}`** — required whenever ranks-per-node exceeds 128 (e.g. 192 ranks/node on hpc7a / hpc8a).
-- **`SCHEDULER_TIGHT_COUPLING=1`** — tells Fluent v222..v242 not to inject `--rsh=ssh` under Slurm; v251+ already behaves this way. Prevents a `hydra_bstrap_proxy` crash on AL2023 when Fluent's wrapper fights Intel MPI's Slurm integration.
+- **`SCHEDULER_TIGHT_COUPLING=1`** — tells Fluent v222..v242 not to inject `--rsh=ssh` under Slurm; v251+ already behaves this way. Prevents a `hydra_bstrap_proxy` crash on AL2023 when Fluent's wrapper fights IntelMPI's Slurm integration.
 
 ### OpenMPI-specific notes
 
@@ -73,7 +73,7 @@ The OpenMPI scripts select the MPI implementation via the `OMPI_VARIANT` env var
 
 Older Fluent releases have bugs that the scripts work around automatically:
 
-- **v222 / v231**: the OpenMPI+EFA branch of `mpirun.fl` forces the TCP BTL. `-peth.efa` on these versions therefore falls back to TCP and is unusable at multi-node scale. Use Intel MPI for v222 / v231.
+- **v222 / v231**: the OpenMPI+EFA branch of `mpirun.fl` forces the TCP BTL. `-peth.efa` on these versions therefore falls back to TCP and is unusable at multi-node scale. Use IntelMPI for v222 / v231.
 - **v242 / v251**: `mpirun.fl` injects `-x FLUTE_UUID=$FLUTE_UUID` even when the variable is unset, which breaks OpenMPI argument parsing. The scripts export a non-empty `FLUTE_UUID` to side-step the bug.
 - **AL2023**: Fluent's `fluent_mpi` binary transitively needs `libnsl.so.2` which AL2023 does not ship. The scripts `LD_PRELOAD` the copy that ships inside Fluent's bundled OpenMPI directory and propagate it to worker ranks via `-x LD_PRELOAD`.
 

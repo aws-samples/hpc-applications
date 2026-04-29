@@ -7,12 +7,12 @@
 #SBATCH --time=12:00:00
 
 # ---------------------------------------------------------------------------
-# Ansys Fluent benchmark launcher (x86, Intel MPI + EFA)
+# Ansys Fluent benchmark launcher (x86, IntelMPI + EFA)
 #
 # This script uses Fluent's built-in "-peth.efa" interconnect variant to
 # enable EFA, which is available from Ansys Fluent v222 (2022 R2) onwards
 # and is officially documented starting with v261 (2026 R1). Fluent's own
-# mpirun wrapper (mpirun.fl) then injects the correct Intel MPI + libfabric
+# mpirun wrapper (mpirun.fl) then injects the correct IntelMPI + libfabric
 # tuning for AWS EFA:
 #   I_MPI_OFI_PROVIDER=efa
 #   I_MPI_FABRICS=shm:ofi
@@ -20,12 +20,13 @@
 #   FI_MR_CACHE_MONITOR=memhooks
 #
 # Three settings are still needed from the submit script:
-#   * I_MPI_OFI_LIBRARY_INTERNAL=0  (tell Intel MPI to use the system
+#   * I_MPI_OFI_LIBRARY_INTERNAL=0  (tell IntelMPI to use the system
 #                                    libfabric-aws, not its bundled one.
 #                                    Must be exported BEFORE module load
 #                                    intelmpi so mpivars.sh picks it up.)
-#   * I_MPI_MULTIRAIL=1             (300 Gbps EFA only: hpc7a / hpc8a;
-#                                    can be omitted on 100 Gbps instances)
+#   * I_MPI_MULTIRAIL=1             (multi-NIC EFA instances only, e.g.
+#                                    hpc7a / hpc8a; omit on single-NIC
+#                                    instances)
 #   * FI_EFA_SHM_AV_SIZE=<ncores>   (required when using >128 ranks per node)
 #
 # Plus SCHEDULER_TIGHT_COUPLING=1, which tells Fluent v222 .. v242's mpirun
@@ -33,7 +34,7 @@
 # default, but setting it explicitly keeps one codepath across all versions.
 # ---------------------------------------------------------------------------
 
-# Tell Intel MPI to use the system libfabric (loaded via libfabric-aws
+# Tell IntelMPI to use the system libfabric (loaded via libfabric-aws
 # below) instead of its own bundled one. This must be exported BEFORE
 # `module load intelmpi` so that mpivars.sh / the shell wrappers see it.
 export I_MPI_OFI_LIBRARY_INTERNAL=0
@@ -41,11 +42,11 @@ export I_MPI_OFI_LIBRARY_INTERNAL=0
 module load intelmpi
 module load libfabric-aws
 
-# 300 Gbps EFA instances (hpc7a / hpc8a) — remove on 100 Gbps instances.
+# Multi-NIC EFA instances (e.g. hpc7a / hpc8a) — omit on single-NIC instances.
 export I_MPI_MULTIRAIL=1
 # Required when ranks-per-node exceeds 128 (e.g. 192 on hpc7a / hpc8a).
 export FI_EFA_SHM_AV_SIZE=${SLURM_NTASKS_PER_NODE:-192}
-# Let Intel MPI's Slurm integration handle process launch natively on
+# Let IntelMPI's Slurm integration handle process launch natively on
 # older Fluent versions (no-op on v251+).
 export SCHEDULER_TIGHT_COUPLING=1
 
