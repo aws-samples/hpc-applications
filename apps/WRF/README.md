@@ -189,29 +189,29 @@ Each platform uses the CPU-tuned GCC build (`target=neoverse_v1` on Graviton3E, 
 
 ![WRF CONUS Graviton3E vs Graviton4](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/WRF/WRF-CONUS-Graviton3VsGraviton4.png?raw=true)
 
-**CONUS 12km** — total wall time (seconds):
+**CONUS 12km** — speedup vs 1 node hpc7g:
 
-| Nodes | hpc7g (64 c/n) | m8g (192 c/n) | m8g speedup |
-|------:|---------------:|--------------:|------------:|
-| 1 | 546.05 | 216.80 | **2.52×** |
-| 2 | 311.83 | 160.33 | **1.94×** |
-| 4 | 213.95 | — (decomp limit) | — |
+| Nodes | hpc7g (64 c/n) | m8g (192 c/n) |
+|------:|---------------:|--------------:|
+| 1 | 1.00× | **2.52×** |
+| 2 | 1.75× | 3.41× |
+| 4 | 2.55× | — (decomp limit) |
 
-**CONUS 2.5km** — total wall time (seconds):
+**CONUS 2.5km** — speedup vs 1 node hpc7g (estimated as 2 × 2N):
 
-| Nodes | hpc7g (64 c/n) | m8g (192 c/n) | m8g speedup |
-|------:|---------------:|--------------:|------------:|
-| 1 | *12304.80 (est. 2 × 2N)* | 4001.33 | — |
-| 2 | 6152.40 | 2439.88 | **2.52×** |
-| 4 | 3732.59 | 1642.47 | **2.27×** |
+| Nodes | hpc7g (64 c/n) | m8g (192 c/n) |
+|------:|---------------:|--------------:|
+| 1 | *1.00× (est. 2 × 2N)* | **3.08×** |
+| 2 | 2.00× | 5.04× |
+| 4 | 3.30× | **7.49×** |
 
 Key takeaways:
 
 - A single m8g node delivers **2.52× (12km)** and an estimated **3.08× (2.5km)** the performance of a single hpc7g node — consistent with the 3× core-count ratio minus the usual communication/memory-bandwidth tax
 - On CONUS 2.5km, m8g reaches **5.04× (2N)** and **7.49× (4N)** vs the hpc7g 1N baseline, while hpc7g scales from 1N → 4N at **3.30×** — both platforms scale sub-linearly (Amdahl) but G4 stays consistently ahead
 - The **CONUS 12km grid (425×300) does not decompose past ~500 ranks** — 4N m8g at 768 ranks triggers a decomposition error. For that level of parallelism, use CONUS 2.5km (1501×1201), which supports 1500+ ranks cleanly.
-- The 1N hpc7g 2.5km point is *estimated* at 2 × the 2N time; running it directly is expensive (~3.5 hours of wall time) and a single 64-core node is a pessimistic baseline for a 1.8M-cell grid
-- A single m8g node (192 cores, ~4000s on 2.5km) is roughly equivalent to 3 hpc7g nodes — useful when capacity or interconnect cost is a concern
+- The 1N hpc7g 2.5km point is *estimated* at 2 × the 2N time; running it directly on a single 64-core node is expensive and a pessimistic baseline for a 1.8M-cell grid
+- A single m8g node is roughly equivalent to **3 hpc7g nodes** for this workload — useful when capacity or interconnect cost is a concern
 
 ## Key Metrics
 
