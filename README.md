@@ -13,6 +13,7 @@ This repo is maintained by AWS HPC Solution Architects, who will take care of up
 7. [ANSYS Mechanical](https://github.com/aws-samples/hpc-applications/tree/main/apps/AnsysMechanical)
 8. [WRF (Weather Research and Forecasting)](https://github.com/aws-samples/hpc-applications/tree/main/apps/WRF)
 9. [OpenFOAM](https://github.com/aws-samples/hpc-applications/tree/main/apps/OpenFoam)
+10. [OpenRadioss](https://github.com/aws-samples/hpc-applications/tree/main/apps/OpenRadioss)
 
 ## HPC synthetic benchmarks:
 1. [STREAM](https://github.com/aws-samples/hpc-applications/tree/main/apps/Stream) - Memory bandwidth benchmark
