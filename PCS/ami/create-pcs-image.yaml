@@ -139,10 +139,11 @@ Resources:
                     - |
                       if [ "$ID" = "amzn" ]; then
                         dnf install -y amazon-ssm-agent 2>/dev/null || yum install -y amazon-ssm-agent
+                        systemctl enable amazon-ssm-agent
                       elif [ "$ID" = "ubuntu" ]; then
                         snap install amazon-ssm-agent --classic 2>/dev/null || true
+                        systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
                       fi
-                    - systemctl enable amazon-ssm-agent
 
   # Install CloudWatch Agent
   CloudWatchAgentComponent:
