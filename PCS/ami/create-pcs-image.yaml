@@ -265,10 +265,12 @@ Resources:
                       if [ "$ID" = "amzn" ]; then
                         dnf install -y amazon-efs-utils 2>/dev/null || yum install -y amazon-efs-utils
                       elif [ "$ID" = "ubuntu" ]; then
+                        export DEBIAN_FRONTEND=noninteractive
                         apt-get update
-                        apt-get install -y git binutils rustc cargo pkg-config libssl-dev
+                        apt-get install -y git binutils pkg-config libssl-dev curl golang cmake
+                        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
                         git clone https://github.com/aws/efs-utils /tmp/efs-utils
-                        cd /tmp/efs-utils && ./build-deb.sh
+                        cd /tmp/efs-utils && PATH="/root/.cargo/bin:$PATH" ./build-deb.sh
                         apt-get install -y /tmp/efs-utils/build/amazon-efs-utils*deb
                         rm -rf /tmp/efs-utils
                       fi
