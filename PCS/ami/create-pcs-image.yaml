@@ -21,6 +21,12 @@ Mappings:
       size: 100
       x86: ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id
       arm64: ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/arm64/hvm/ebs-gp2/ami-id
+    ubuntu-24-04:
+      name: Ubuntu 24.04
+      deviceName: /dev/sda1
+      size: 100
+      x86: ssm:/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+      arm64: ssm:/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id
   InstanceConfigs:
     x86:
       default:
@@ -38,6 +44,7 @@ Parameters:
       - amzn-2
       - amzn-2023
       - ubuntu-22-04
+      - ubuntu-24-04
     Default: amzn-2023
   Architecture:
     Type: String
@@ -169,7 +176,8 @@ Resources:
                       if [ "$ID" = "amzn" ]; then
                         dnf install -y amazon-cloudwatch-agent 2>/dev/null || yum install -y amazon-cloudwatch-agent
                       elif [ "$ID" = "ubuntu" ]; then
-                        wget -q https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
+                        ARCH=$(dpkg --print-architecture)
+                        wget -q https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/${ARCH}/latest/amazon-cloudwatch-agent.deb
                         dpkg -i amazon-cloudwatch-agent.deb
                         rm -f amazon-cloudwatch-agent.deb
                       fi
@@ -235,7 +243,7 @@ Resources:
                       elif [ "$ID" = "ubuntu" ]; then
                         wget -q https://fsx-lustre-client-repo-public-keys.s3.amazonaws.com/fsx-ubuntu-public-key.asc -O /tmp/fsx.asc
                         gpg --dearmor -o /usr/share/keyrings/fsx.gpg /tmp/fsx.asc
-                        echo "deb [signed-by=/usr/share/keyrings/fsx.gpg] https://fsx-lustre-client-repo.s3.amazonaws.com/ubuntu jammy main" > /etc/apt/sources.list.d/fsxlustreclientrepo.list
+                        echo "deb [signed-by=/usr/share/keyrings/fsx.gpg] https://fsx-lustre-client-repo.s3.amazonaws.com/ubuntu ${VERSION_CODENAME} main" > /etc/apt/sources.list.d/fsxlustreclientrepo.list
                         apt-get update
                         apt-get install -y lustre-client-modules-$(uname -r) lustre-client-modules-aws
                         rm -f /tmp/fsx.asc
