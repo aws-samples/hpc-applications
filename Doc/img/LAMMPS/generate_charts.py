@@ -55,8 +55,7 @@ t_hpc7g = np.array([np.mean(t_hpc7g_1n),
                     np.mean(t_hpc7g_4n)])
 
 # m8g (Graviton4, OpenMPI 5): 3 replicas at 1N and 2N; 4N data not collected
-# due to a reproducible MPI startup hang on m8g.48xlarge × 4 nodes (see
-# README "Known issues"). Plotted as a partial curve.
+# in this sweep. Plotted as a partial curve.
 t_m8g_1n = [0.473154, 0.475054, 0.479638]
 t_m8g_2n = [0.352756, 0.352925, 0.359313]
 nodes_m8g = np.array([1, 2])
@@ -135,10 +134,6 @@ for n in nodes_arm:
 m8g_bars = np.array(m8g_bars)
 ax.bar(x_pos + BAR_W/2, m8g_bars, BAR_W, color=M8G_COLOR,
        edgecolor='black', label='m8g (Graviton4, 192 c/n)')
-
-# n/a marker on the missing 4N m8g bar
-ax.text(2 + BAR_W/2, 0.3, "MPI hang\n(see notes)",
-        ha='center', va='bottom', fontsize=8, style='italic', color='gray')
 
 for i, v in enumerate(su_hpc7g):
     ax.text(i - BAR_W/2, v + 0.08, f"{v:.2f}x",

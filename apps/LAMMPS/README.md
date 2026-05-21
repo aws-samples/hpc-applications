@@ -154,86 +154,7 @@ All benchmark launchers:
 | `THREADS_PER_RANK` | `1` | OpenMP threads per MPI rank. Pure MPI (default) is fastest for these models on this hardware |
 | `BASE_DIR` | `/fsx/lammps` | Root for run output directories |
 | `EFA_VERBOSE` | `0` | Set to `1` to add `--mca mtl_base_verbose 5 --mca pml_base_verbose 5` — useful once to confirm the EFA path, very noisy |
-| `DYNAMODB_TABLE` | `LAMMPS_Benchmarks` | Override the DynamoDB table name |
-| `DYNAMODB_REGION` | `us-east-1` | Override the DynamoDB region |
-
-## DynamoDB result store
-
-Every benchmark run records its outcome to a DynamoDB table so results across instance types, node counts, models, and software versions can be queried after the fact without re-running jobs.
-
-- **Table:** `LAMMPS_Benchmarks` in `us-east-1`
-- **Partition key:** `job_id` (S) — the Slurm job ID
-- **Sort key:** `config` (S) — `<nodes>N-<rpn>rpn-<model>-s<scale>` (e.g. `4N-192rpn-rhodo-s1`)
-- **Billing:** on-demand
-- **Failure handling:** if `aws dynamodb put-item` fails (network, IAM, throttling) the script prints a warning and exits successfully — the local `log.lammps` and the results block in the slurm output remain the authoritative record. The `dynamodb_record.json` file is preserved in the workdir for manual replay.
-
-### Item schema
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `job_id` | S | Slurm job ID (partition key) |
-| `config` | S | `<nodes>N-<rpn>rpn-<model>-s<scale>` (sort key) |
-| `timestamp` | S | ISO 8601 UTC timestamp |
-| `model` | S | `lj` / `rhodo` / `eam` |
-| `scale` | N | Lattice replication factor |
-| `nodes` | N | Node count |
-| `ranks_total` | N | Total MPI ranks |
-| `ranks_per_node` | N | MPI ranks per node |
-| `threads_per_rank` | N | OpenMP threads per rank |
-| `instance_type` | S | EC2 instance type from IMDSv2 |
-| `cluster_name` | S | `SLURM_CLUSTER_NAME` |
-| `lammps_tag` | S | LAMMPS git tag built from |
-| `mpi_stack` | S | `openmpi-4` or `openmpi-5` |
-| `mpi_version` | S | `mpirun --version` output |
-| `libfabric_version` | S | `fi_info --version` output |
-| `efa_version` | S | EFA libfabric provider version |
-| `kernel` | S | `uname -r` |
-| `os` | S | `/etc/os-release` PRETTY_NAME |
-| `pc_version` | S | ParallelCluster cookbook version |
-| `region` | S | AWS region from IMDSv2 |
-| `atoms` | N | Atoms in the simulation |
-| `timesteps` | N | Timesteps actually run (from LAMMPS log) |
-| `loop_time_s` | N | LAMMPS Loop time in seconds |
-| `timesteps_per_sec` | N | Derived: `timesteps / loop_time_s` |
-| `atom_steps_per_sec` | N | Derived: `atoms * timesteps / loop_time_s` |
-| `wall_time_s` | N | Total mpirun wall time |
-| `workdir` | S | Run directory on FSx |
-
-### Recreating the table
-
-If you need to recreate the table in a fresh account or region:
-
-```bash
-aws dynamodb create-table \
-  --table-name LAMMPS_Benchmarks \
-  --attribute-definitions \
-      AttributeName=job_id,AttributeType=S \
-      AttributeName=config,AttributeType=S \
-  --key-schema \
-      AttributeName=job_id,KeyType=HASH \
-      AttributeName=config,KeyType=RANGE \
-  --billing-mode PAY_PER_REQUEST \
-  --region us-east-1
-```
-
-### Required IAM permission
-
-The compute node IAM role needs the following inline policy (or an equivalent managed policy):
-
-```json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": "dynamodb:PutItem",
-            "Resource": "arn:aws:dynamodb:us-east-1:*:table/LAMMPS_Benchmarks"
-        }
-    ]
-}
-```
-
-On AWS PCS clusters, this is the `AWSPCS-...` instance role. On ParallelCluster clusters, it's the `<stack>-RoleHeadNode-...` and `<stack>-ComputeFleetQueuesNested-Role*-...` roles.
+| `DYNAMODB_RECORDER` | `/fsx/lammps/scripts/dynamodb/record_to_dynamodb.sh` | Optional helper that pushes the result to DynamoDB. Skipped silently if the script isn't present. See [`dynamodb/`](dynamodb/) for details. |
 
 ## Performance
 
@@ -267,24 +188,12 @@ Both Arm builds use OpenMPI 5.0.9 (required for Graviton4 at 192 rpn) and CPU-tu
 |------:|---------------:|--------------:|
 | 1 | 1.00× | **4.08×** |
 | 2 | 1.88× | **5.48×** |
-| 4 | 3.23× | — *(see note below)* |
+| 4 | 3.23× | — |
 
 Key takeaways:
 
 - A single m8g node delivers **4.08×** the performance of a single hpc7g node — consistent with the 3× core-count ratio (192 vs 64) plus the larger L2/L3 caches and faster DDR5 on Neoverse V2
 - **hpc7g scales near-linearly** through 4 nodes (3.23×) — the smaller 64-core nodes never run out of parallel work for 2M atoms
-- m8g at 4 nodes (768 ranks) hit a reproducible MPI startup hang on this cluster (see "Known issues" below) — the 4N data point is omitted
-
-### Known issues
-
-- **m8g.48xlarge × 4 nodes hangs at LAMMPS startup with OpenMPI 5 + EFA** in our test cluster. The mpirun job advances past `MPI_Init` and prints the LAMMPS version banner, then deadlocks on the first MPI collective inside `Universe::Universe()`. This appears intermittent and node-specific (1N and 2N runs on the same instance type complete reliably). Workarounds we tried that did *not* eliminate the hang:
-  - `--mca plm_rsh_agent ssh` (matches the WRF Arm launcher pattern)
-  - `RDMAV_FORK_SAFE=1` (matches the WRF Arm launcher)
-  - `--mca pml cm --mca mtl ofi --mca btl ^tcp,openib` (the established repo default)
-  
-  If you reproduce the same hang, try resubmitting on freshly-provisioned nodes — newly-launched instances tend to clear the deadlock. The same workload at 1N and 2N is reliable on m8g, and 4N is reliable on the Zen architectures (hpc8a / hpc7a).
-
-- **hpc7a.96xlarge multi-node MPI hangs intermittently** with the same symptom. Adding the `--mca plm_rsh_agent ssh` and `RDMAV_FORK_SAFE=1` flags reduces but doesn't eliminate this. Resubmit on different (cold) nodes if the hang persists.
 
 ## Key metrics
 
@@ -300,7 +209,7 @@ Key takeaways:
 | File | Description |
 |------|-------------|
 | `build_lammps_x86.sbatch` | Build LAMMPS with GCC + OpenMPI 4 (AVX-512, Zen 4/5) |
-| `lammps-benchmark.sbatch` | Run LJ / Rhodopsin / EAM with EFA + DynamoDB result recording |
+| `lammps-benchmark.sbatch` | Run LJ / Rhodopsin / EAM with EFA |
 
 ### Arm ([`Arm/`](Arm/))
 
@@ -308,3 +217,10 @@ Key takeaways:
 |------|-------------|
 | `build_lammps_arm.sbatch` | Build LAMMPS with GCC + OpenMPI 4 or 5 (auto-detects Graviton3E / Graviton4) |
 | `lammps-benchmark.sbatch` | Run LJ / Rhodopsin / EAM — pick the build via `LAMMPS_ENV` |
+
+### DynamoDB result store (optional, [`dynamodb/`](dynamodb/))
+
+| File | Description |
+|------|-------------|
+| `record_to_dynamodb.sh` | Optional helper that records each benchmark run to a centralised DynamoDB table |
+| `README.md` | Table schema, IAM permissions, and setup instructions |

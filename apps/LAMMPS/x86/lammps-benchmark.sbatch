@@ -1,7 +1,11 @@
 #!/bin/bash
 # Run a LAMMPS standard benchmark (LJ melt, Rhodopsin, or EAM Cu) on
-# x86_64 nodes (hpc8a / hpc7a) using OpenMPI + EFA, and record the result
-# to DynamoDB.
+# x86_64 nodes (hpc8a / hpc7a) using OpenMPI + EFA.
+#
+# If a DynamoDB recorder script is present at
+# /fsx/lammps/scripts/dynamodb/record_to_dynamodb.sh the result is also
+# pushed to a centralised table; the recorder is optional and the
+# benchmark itself does not depend on it. See apps/LAMMPS/dynamodb/.
 #
 # LAMMPS is a single-binary MD code. Each benchmark consists of an input
 # script (in.<model>) and, for some models, a data file. The bench/
@@ -42,8 +46,6 @@ MODEL="${MODEL:-lj}"
 SCALE="${SCALE:-1}"
 THREADS_PER_RANK="${THREADS_PER_RANK:-1}"
 BASE_DIR="${BASE_DIR:-/fsx/lammps}"
-DYNAMODB_TABLE="${DYNAMODB_TABLE:-LAMMPS_Benchmarks}"
-DYNAMODB_REGION="${DYNAMODB_REGION:-us-east-1}"
 
 # ---------------------------------------------------------------------------
 # Per-model config: input file, default timesteps, extra files needed.
@@ -287,71 +289,27 @@ Wall time:        ${WALL_TIME}s
 REPORT
 
 # ---------------------------------------------------------------------------
-# Record to DynamoDB. Failure is non-fatal — local logs are the source of
-# truth, the table is just a convenience index across runs.
+# Optionally record the result to DynamoDB. The recorder lives in a
+# separate file (apps/LAMMPS/dynamodb/record_to_dynamodb.sh) so customers
+# who don't want the central index can simply remove that directory — the
+# benchmark itself never depends on DynamoDB. See dynamodb/README.md for
+# table schema and required IAM permission.
 # ---------------------------------------------------------------------------
-echo "=== Recording results to DynamoDB (${DYNAMODB_TABLE} in ${DYNAMODB_REGION}) ==="
-
-MPI_VERSION=$(mpirun --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
-LIBFABRIC_VERSION=$(fi_info --version 2>/dev/null | awk '/libfabric:/ {print $2; exit}')
-EFA_VERSION=$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print $2; exit}')
-KERNEL_VERSION=$(uname -r)
-# shellcheck source=/dev/null
-. /etc/os-release
-OS_PRETTY="${PRETTY_NAME}"
-if [ -f /opt/parallelcluster/.bootstrapped ]; then
-    PC_VERSION=$(sed 's/aws-parallelcluster-cookbook-//g' /opt/parallelcluster/.bootstrapped)
-else
-    PC_VERSION="unknown"
-fi
-CLUSTER_NAME="${SLURM_CLUSTER_NAME:-unknown}"
-CONFIG="${SLURM_JOB_NUM_NODES}N-${NRANK_PER_NODE}rpn-${MODEL}-s${SCALE}"
-
-# Pick MPI stack tag based on which OpenMPI was loaded.
-if [[ "${LD_LIBRARY_PATH:-}" == *"openmpi5"* ]] || [[ "${MPI_VERSION}" == 5.* ]]; then
+if [[ "${LD_LIBRARY_PATH:-}" == *"openmpi5"* ]]; then
     MPI_STACK="openmpi-5"
 else
     MPI_STACK="openmpi-4"
 fi
-
-DYNAMO_FILE="${WORKDIR}/dynamodb_record.json"
-cat > "${DYNAMO_FILE}" <<DYNEOF
-{
-    "job_id":             {"S": "${SLURM_JOB_ID}"},
-    "config":             {"S": "${CONFIG}"},
-    "timestamp":          {"S": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"},
-    "model":              {"S": "${MODEL}"},
-    "scale":              {"N": "${SCALE}"},
-    "nodes":              {"N": "${SLURM_JOB_NUM_NODES}"},
-    "ranks_total":        {"N": "${NRANK_TOTAL}"},
-    "ranks_per_node":     {"N": "${NRANK_PER_NODE}"},
-    "threads_per_rank":   {"N": "${THREADS_PER_RANK}"},
-    "instance_type":      {"S": "${INSTANCE_TYPE}"},
-    "cluster_name":       {"S": "${CLUSTER_NAME}"},
-    "lammps_tag":         {"S": "${LAMMPS_TAG:-unknown}"},
-    "mpi_stack":          {"S": "${MPI_STACK}"},
-    "mpi_version":        {"S": "${MPI_VERSION}"},
-    "libfabric_version":  {"S": "${LIBFABRIC_VERSION}"},
-    "efa_version":        {"S": "${EFA_VERSION}"},
-    "kernel":             {"S": "${KERNEL_VERSION}"},
-    "os":                 {"S": "${OS_PRETTY}"},
-    "pc_version":         {"S": "${PC_VERSION}"},
-    "region":             {"S": "${REGION}"},
-    "atoms":              {"N": "${ATOMS}"},
-    "timesteps":          {"N": "${LOOP_STEPS}"},
-    "loop_time_s":        {"N": "${LOOP_TIME}"},
-    "timesteps_per_sec":  {"N": "${TIMESTEPS_PER_SEC}"},
-    "atom_steps_per_sec": {"N": "${ATOM_STEPS_PER_SEC}"},
-    "wall_time_s":        {"N": "${WALL_TIME}"},
-    "workdir":            {"S": "${WORKDIR}"}
-}
-DYNEOF
-
-if aws dynamodb put-item \
-        --table-name "${DYNAMODB_TABLE}" \
-        --region "${DYNAMODB_REGION}" \
-        --item file://"${DYNAMO_FILE}"; then
-    echo "DynamoDB record stored: job_id=${SLURM_JOB_ID} config=${CONFIG}"
+DYNAMODB_RECORDER="${DYNAMODB_RECORDER:-/fsx/lammps/scripts/dynamodb/record_to_dynamodb.sh}"
+if [ -x "${DYNAMODB_RECORDER}" ]; then
+    export SLURM_JOB_ID SLURM_JOB_NUM_NODES SLURM_CLUSTER_NAME
+    export MODEL SCALE
+    export NRANK_TOTAL NRANK_PER_NODE THREADS_PER_RANK
+    export INSTANCE_TYPE REGION LAMMPS_TAG MPI_STACK
+    export ATOMS LOOP_STEPS LOOP_TIME
+    export TIMESTEPS_PER_SEC ATOM_STEPS_PER_SEC WALL_TIME
+    export WORKDIR
+    "${DYNAMODB_RECORDER}" || true
 else
-    echo "WARNING: DynamoDB put-item failed; record JSON preserved at ${DYNAMO_FILE}" >&2
+    echo "DynamoDB recorder not found at ${DYNAMODB_RECORDER} — skipping result persistence"
 fi
