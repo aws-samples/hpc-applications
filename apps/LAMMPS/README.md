@@ -154,7 +154,8 @@ All benchmark launchers:
 | `THREADS_PER_RANK` | `1` | OpenMP threads per MPI rank. Pure MPI (default) is fastest for these models on this hardware |
 | `BASE_DIR` | `/fsx/lammps` | Root for run output directories |
 | `EFA_VERBOSE` | `0` | Set to `1` to add `--mca mtl_base_verbose 5 --mca pml_base_verbose 5` — useful once to confirm the EFA path, very noisy |
-| `DYNAMODB_RECORDER` | `/fsx/lammps/scripts/dynamodb/record_to_dynamodb.sh` | Optional helper that pushes the result to DynamoDB. Skipped silently if the script isn't present. See [`dynamodb/`](dynamodb/) for details. |
+
+To record each run to a centralised DynamoDB table, see [`dynamodb/`](dynamodb/) — the launchers ship with the recorder block commented out so DynamoDB is opt-in.
 
 ## Performance
 

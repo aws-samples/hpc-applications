@@ -1,8 +1,8 @@
 # LAMMPS — DynamoDB result store (optional)
 
-This directory contains the optional helper that records every LAMMPS benchmark run to a centralised DynamoDB table. It is **not** required to build or run LAMMPS — the benchmark scripts in [`x86/`](../x86/) and [`Arm/`](../Arm/) source [`record_to_dynamodb.sh`](record_to_dynamodb.sh) at the very end of the run, and skip it gracefully if the script (or the table, or the IAM permission) isn't available.
+This directory contains the optional helper that records every LAMMPS benchmark run to a centralised DynamoDB table. It is **not** required to build or run LAMMPS — the recorder call site is **commented out by default** in the benchmark scripts under [`x86/`](../x86/) and [`Arm/`](../Arm/), so customers who only want to run LAMMPS can ignore this directory entirely.
 
-If you don't care about cross-run aggregation, you can simply delete this directory or skip it during deployment.
+If you don't care about cross-run aggregation, simply leave the block commented (or delete this directory). The default benchmark scripts will not attempt any DynamoDB calls.
 
 ## Why a separate table
 
@@ -86,9 +86,9 @@ Attach the following inline policy to the role used by your compute nodes (e.g. 
 }
 ```
 
-### 3. Place this script under `/fsx/lammps/scripts/dynamodb/` (or anywhere on shared storage)
+### 3. Place this script under `/fsx/lammps/scripts/dynamodb/` (or anywhere on shared storage) and uncomment the call site
 
-The benchmark launchers source it from the same path layout used for the build / benchmark scripts, so a typical setup mirrors this repo's `apps/LAMMPS/` layout under `/fsx/lammps/scripts/`:
+A typical setup mirrors this repo's `apps/LAMMPS/` layout under `/fsx/lammps/scripts/`:
 
 ```
 /fsx/lammps/scripts/
@@ -97,7 +97,9 @@ The benchmark launchers source it from the same path layout used for the build /
 └── dynamodb/record_to_dynamodb.sh    <-- this file
 ```
 
-If [`record_to_dynamodb.sh`](record_to_dynamodb.sh) isn't present at the expected path the benchmark launcher prints a one-line note and continues — there is no failure path that depends on DynamoDB.
+Then edit the `x86/lammps-benchmark.sbatch` and / or `Arm/lammps-benchmark.sbatch` you intend to run and **uncomment** the block at the bottom marked `Optional: record the result to DynamoDB.` (each line in that block starts with `# ` after the comment header — strip the leading `# ` to enable the call).
+
+Override the recorder location with `DYNAMODB_RECORDER=/path/to/record_to_dynamodb.sh` on the `sbatch` command line if you place it somewhere other than the default. If the recorder isn't found at the resolved path, the benchmark prints a one-line note and continues — there is no failure path that depends on DynamoDB.
 
 ## Failure handling
 
@@ -112,8 +114,10 @@ aws dynamodb put-item \
 
 ## Disabling DynamoDB recording
 
-Three equivalent ways to skip the DynamoDB step entirely:
+The default state in this repository is **disabled** — the call site is commented out in `x86/lammps-benchmark.sbatch` and `Arm/lammps-benchmark.sbatch`. To skip DynamoDB recording you don't need to do anything: just submit the benchmark scripts as shipped.
 
-1. Don't deploy this directory — the benchmark scripts will fall back to a no-op when the script isn't found at the expected path.
-2. Set `DYNAMODB_TABLE=` (empty) in the benchmark submit env.
-3. Remove the `dynamodb:PutItem` permission from the compute role — the script will log a warning and exit successfully.
+To disable recording **after** you've enabled it, you have three equivalent options:
+
+1. Re-comment the `Optional: record the result to DynamoDB.` block at the bottom of the benchmark `.sbatch` file you submitted.
+2. Set `DYNAMODB_RECORDER=/path/that/does/not/exist` on the `sbatch` command line — the benchmark will log a one-line skip note and continue.
+3. Remove the `dynamodb:PutItem` permission from the compute role — the recorder will log a warning and exit successfully, the benchmark won't fail.

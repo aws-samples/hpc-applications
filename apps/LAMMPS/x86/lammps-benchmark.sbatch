@@ -2,10 +2,11 @@
 # Run a LAMMPS standard benchmark (LJ melt, Rhodopsin, or EAM Cu) on
 # x86_64 nodes (hpc8a / hpc7a) using OpenMPI + EFA.
 #
-# If a DynamoDB recorder script is present at
-# /fsx/lammps/scripts/dynamodb/record_to_dynamodb.sh the result is also
-# pushed to a centralised table; the recorder is optional and the
-# benchmark itself does not depend on it. See apps/LAMMPS/dynamodb/.
+# Optional: a commented-out block at the end of this script can record
+# each run to a DynamoDB table for cross-run aggregation. It is disabled
+# by default so customers don't need to provision DynamoDB. To enable,
+# follow the instructions in apps/LAMMPS/dynamodb/README.md and uncomment
+# the marked block at the bottom of this file.
 #
 # LAMMPS is a single-binary MD code. Each benchmark consists of an input
 # script (in.<model>) and, for some models, a data file. The bench/
@@ -90,6 +91,9 @@ NRANK_PER_NODE=$(( SLURM_NTASKS_PER_NODE / THREADS_PER_RANK ))
 # ---------------------------------------------------------------------------
 TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
 INSTANCE_TYPE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
+# REGION is referenced by the optional DynamoDB recorder block at the
+# bottom of this file (commented out by default).
+# shellcheck disable=SC2034
 REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
 WORKDIR="${BASE_DIR}/Run/${SLURM_JOB_NAME}/${MODEL}/${SLURM_CLUSTER_NAME:-cluster}/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${INSTANCE_TYPE}-${NRANK_TOTAL}x${THREADS_PER_RANK}-s${SCALE}-$(date '+%d-%m-%Y-%H-%M')"
 
@@ -289,27 +293,31 @@ Wall time:        ${WALL_TIME}s
 REPORT
 
 # ---------------------------------------------------------------------------
-# Optionally record the result to DynamoDB. The recorder lives in a
-# separate file (apps/LAMMPS/dynamodb/record_to_dynamodb.sh) so customers
-# who don't want the central index can simply remove that directory — the
-# benchmark itself never depends on DynamoDB. See dynamodb/README.md for
-# table schema and required IAM permission.
+# Optional: record the result to DynamoDB.
+#
+# Disabled by default so customers who only want to run LAMMPS aren't
+# forced to provision a DynamoDB table or grant dynamodb:PutItem to their
+# compute role. To enable cross-run aggregation, deploy
+# apps/LAMMPS/dynamodb/record_to_dynamodb.sh on shared storage (default
+# path /fsx/lammps/scripts/dynamodb/record_to_dynamodb.sh), grant the IAM
+# permission described in apps/LAMMPS/dynamodb/README.md, and uncomment
+# the block below by removing the leading '# ' from each line.
 # ---------------------------------------------------------------------------
-if [[ "${LD_LIBRARY_PATH:-}" == *"openmpi5"* ]]; then
-    MPI_STACK="openmpi-5"
-else
-    MPI_STACK="openmpi-4"
-fi
-DYNAMODB_RECORDER="${DYNAMODB_RECORDER:-/fsx/lammps/scripts/dynamodb/record_to_dynamodb.sh}"
-if [ -x "${DYNAMODB_RECORDER}" ]; then
-    export SLURM_JOB_ID SLURM_JOB_NUM_NODES SLURM_CLUSTER_NAME
-    export MODEL SCALE
-    export NRANK_TOTAL NRANK_PER_NODE THREADS_PER_RANK
-    export INSTANCE_TYPE REGION LAMMPS_TAG MPI_STACK
-    export ATOMS LOOP_STEPS LOOP_TIME
-    export TIMESTEPS_PER_SEC ATOM_STEPS_PER_SEC WALL_TIME
-    export WORKDIR
-    "${DYNAMODB_RECORDER}" || true
-else
-    echo "DynamoDB recorder not found at ${DYNAMODB_RECORDER} — skipping result persistence"
-fi
+# if [[ "${LD_LIBRARY_PATH:-}" == *"openmpi5"* ]]; then
+#     MPI_STACK="openmpi-5"
+# else
+#     MPI_STACK="openmpi-4"
+# fi
+# DYNAMODB_RECORDER="${DYNAMODB_RECORDER:-/fsx/lammps/scripts/dynamodb/record_to_dynamodb.sh}"
+# if [ -x "${DYNAMODB_RECORDER}" ]; then
+#     export SLURM_JOB_ID SLURM_JOB_NUM_NODES SLURM_CLUSTER_NAME
+#     export MODEL SCALE
+#     export NRANK_TOTAL NRANK_PER_NODE THREADS_PER_RANK
+#     export INSTANCE_TYPE REGION LAMMPS_TAG MPI_STACK
+#     export ATOMS LOOP_STEPS LOOP_TIME
+#     export TIMESTEPS_PER_SEC ATOM_STEPS_PER_SEC WALL_TIME
+#     export WORKDIR
+#     "${DYNAMODB_RECORDER}" || true
+# else
+#     echo "DynamoDB recorder not found at ${DYNAMODB_RECORDER} — skipping result persistence"
+# fi
