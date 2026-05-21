@@ -10,3 +10,9 @@
 
 # Scratch / temp build output
 build/
+
+# Python test artefacts
+__pycache__/
+*.pyc
+.pytest_cache/
+.hypothesis/

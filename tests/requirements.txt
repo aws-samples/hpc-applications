@@ -1,0 +1,5 @@
+# Property-based test deps for the LAMMPS support feature (and other future
+# specs that share this dir). Install with:
+#   pip install -r tests/requirements.txt
+hypothesis>=6.0
+pytest>=7.0
