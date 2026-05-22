@@ -190,7 +190,7 @@ Resources:
               DeleteOnTermination: true
           CustomActions:
             OnNodeStart:
-              Script: s3://hpc-applications-best-practice/ad-certificate-setup.sh
+              Script: https://raw.githubusercontent.com/aws-samples/hpc-applications/main/ParallelCluster/post-install/ad-certificate-setup.sh
               Args:
                 - !GetAtt HPCActiveDirectoryStack.Outputs.DomainCertificateSecretArn
           Iam:
@@ -234,7 +234,7 @@ Resources:
                     EnableWriteAccess: true
               CustomActions:
                 OnNodeStart:
-                  Script: s3://hpc-applications-best-practice/ad-certificate-setup.sh
+                  Script: https://raw.githubusercontent.com/aws-samples/hpc-applications/main/ParallelCluster/post-install/ad-certificate-setup.sh
                   Args:
                     - !GetAtt HPCActiveDirectoryStack.Outputs.DomainCertificateSecretArn
             - Name: hpc6id
@@ -262,7 +262,7 @@ Resources:
                     EnableWriteAccess: true
               CustomActions:
                 OnNodeStart:
-                  Script: s3://hpc-applications-best-practice/ad-certificate-setup.sh
+                  Script: https://raw.githubusercontent.com/aws-samples/hpc-applications/main/ParallelCluster/post-install/ad-certificate-setup.sh
                   Args:
                     - !GetAtt HPCActiveDirectoryStack.Outputs.DomainCertificateSecretArn
         SharedStorage:

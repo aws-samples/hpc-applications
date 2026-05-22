@@ -31,11 +31,11 @@ HeadNode:
       DeleteOnTermination: true
   CustomActions:
     OnNodeStart:
-      Script: REPLACE_WITH_AD_CERT_SETUP_SCRIPT
+      Script: https://raw.githubusercontent.com/aws-samples/hpc-applications/main/ParallelCluster/post-install/ad-certificate-setup.sh
       Args:
         - REPLACE_WITH_DOMAIN_CERTIFICATE_SECRET_ARN
     OnNodeConfigured:
-      Script: REPLACE_WITH_HEADNODE_POST_INSTALL_SCRIPT
+      Script: https://raw.githubusercontent.com/aws-samples/hpc-applications/main/ParallelCluster/post-install/post-install.headnode.sh
   Iam:
     AdditionalIamPolicies:
       - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
@@ -77,11 +77,11 @@ Scheduling:
             EnableWriteAccess: true
       CustomActions:
         OnNodeStart:
-          Script: REPLACE_WITH_AD_CERT_SETUP_SCRIPT
+          Script: https://raw.githubusercontent.com/aws-samples/hpc-applications/main/ParallelCluster/post-install/ad-certificate-setup.sh
           Args:
             - REPLACE_WITH_DOMAIN_CERTIFICATE_SECRET_ARN
         OnNodeConfigured:
-          Script: REPLACE_WITH_COMPUTE_POST_INSTALL_SCRIPT
+          Script: https://raw.githubusercontent.com/aws-samples/hpc-applications/main/ParallelCluster/post-install/post-install.compute.sh
     - Name: hpc6id
       CapacityType: ONDEMAND
       Networking:
@@ -107,11 +107,11 @@ Scheduling:
             EnableWriteAccess: true
       CustomActions:
         OnNodeStart:
-          Script: REPLACE_WITH_AD_CERT_SETUP_SCRIPT
+          Script: https://raw.githubusercontent.com/aws-samples/hpc-applications/main/ParallelCluster/post-install/ad-certificate-setup.sh
           Args:
             - REPLACE_WITH_DOMAIN_CERTIFICATE_SECRET_ARN
         OnNodeConfigured:
-          Script: REPLACE_WITH_COMPUTE_POST_INSTALL_SCRIPT
+          Script: https://raw.githubusercontent.com/aws-samples/hpc-applications/main/ParallelCluster/post-install/post-install.compute.sh
 SharedStorage:
   - Name: FsxLustre
     StorageType: FsxLustre
