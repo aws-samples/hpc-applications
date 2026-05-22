@@ -74,7 +74,7 @@ Resources:
       Handler: index.handler
       MemorySize: 128
       Role: !GetAtt PrepRole.Arn
-      Runtime: python3.9
+      Runtime: python3.12
       Timeout: 300
       TracingConfig:
         Mode: Active
@@ -356,7 +356,7 @@ Resources:
       Handler: index.handler
       MemorySize: 128
       Role: !GetAtt PostRole.Arn
-      Runtime: python3.9
+      Runtime: python3.12
       Timeout: 300
       TracingConfig:
         Mode: Active
@@ -572,7 +572,7 @@ Resources:
       Handler: index.handler
       MemorySize: 128
       Role: !GetAtt DomainCertificateSetupLambdaRole.Arn
-      Runtime: python3.9
+      Runtime: python3.12
       Timeout: 300
       TracingConfig:
         Mode: Active
@@ -686,7 +686,7 @@ Resources:
       Handler: index.handler
       MemorySize: 128
       Role: !GetAtt CleanupLambdaRole.Arn
-      Runtime: python3.9
+      Runtime: python3.12
       Timeout: 900
       TracingConfig:
         Mode: Active
