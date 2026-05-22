@@ -1,0 +1,59 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: HPC-Storage-OpenZFS
+Parameters:
+  PrivateSubnet:
+    Description: The ID of your private subnet.
+    Type: String
+    AllowedPattern: ^(subnet-[0-9a-z]+)$
+  SecurityGroup:
+    Description: The ID of the SecurityGroup you want to attach.
+    Type: String
+    AllowedPattern: ^(sg-[0-9a-z]+)$
+  StorageCapacity:
+    Description: Storage capacity of the FSx for OpenZFS file system, in GiB (64 - 524288).
+    Type: Number
+    Default: 256
+    MinValue: 64
+    MaxValue: 524288
+  ThroughputCapacity:
+    Description: Throughput capacity of the FSx for OpenZFS file system, in MB/s. Valid values for SINGLE_AZ_2.
+    Type: Number
+    Default: 160
+    AllowedValues: [160, 320, 640, 1280, 2560, 3840, 5120, 7680, 10240]
+Resources:
+  FSxOpenZFS:
+    Type: AWS::FSx::FileSystem
+    Properties:
+      FileSystemType: OPENZFS
+      StorageCapacity: !Ref StorageCapacity
+      StorageType: SSD
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref SecurityGroup
+      OpenZFSConfiguration:
+        WeeklyMaintenanceStartTime: "1:00:00"
+        DeploymentType: SINGLE_AZ_2
+        ThroughputCapacity: !Ref ThroughputCapacity
+        AutomaticBackupRetentionDays: 0
+        CopyTagsToBackups: true
+        CopyTagsToVolumes: true
+        RootVolumeConfiguration:
+          DataCompressionType: ZSTD
+          RecordSizeKiB: 128
+          ReadOnly: false
+          NfsExports:
+            - ClientConfigurations:
+                - Clients: "*"
+                  Options:
+                    - "rw"
+                    - "crossmnt"
+                    - "sync"
+                    - "no_root_squash"
+Outputs:
+  FileSystemId:
+    Value: !Ref FSxOpenZFS
+  RootVolumeId:
+    Value: !GetAtt FSxOpenZFS.RootVolumeId
+  DNSName:
+    Value: !GetAtt FSxOpenZFS.DNSName
