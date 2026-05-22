@@ -21,12 +21,12 @@ Parameters:
     Description: Subnet ID of the first private subnet.
     Type: String
     AllowedPattern: ^(subnet-[0-9a-z]+)$
-  PublicSubnetOne:
-    Description: Subnet ID of the first public subnet (used as a directory subnet).
+  DirectorySubnetOne:
+    Description: Subnet ID for the first AZ used by the Directory Service and LDAPS NLB.
     Type: String
     AllowedPattern: ^(subnet-[0-9a-z]+)$
-  PublicSubnetTwo:
-    Description: Subnet ID of the second public subnet (used as a directory subnet).
+  DirectorySubnetTwo:
+    Description: Subnet ID for the second AZ used by the Directory Service and LDAPS NLB.
     Type: String
     AllowedPattern: ^(subnet-[0-9a-z]+)$
 
@@ -104,8 +104,8 @@ Resources:
               domain = event['ResourceProperties']['DomainName']
               vpc_id = event['ResourceProperties']['Vpc']
               directory_id = event['ResourceProperties']['DirectoryId']
-              subnet1_id = event['ResourceProperties']['PublicSubnetOne']
-              subnet2_id = event['ResourceProperties']['PublicSubnetTwo']
+              subnet1_id = event['ResourceProperties']['DirectorySubnetOne']
+              subnet2_id = event['ResourceProperties']['DirectorySubnetTwo']
 
               directory = ds.describe_directories(DirectoryIds=[directory_id])['DirectoryDescriptions'][0]
               dns_ip_addrs = directory['DnsIpAddrs']
@@ -142,8 +142,8 @@ Resources:
       Edition: Standard
       VpcSettings:
         SubnetIds:
-          - !Ref PublicSubnetOne
-          - !Ref PublicSubnetTwo
+          - !Ref DirectorySubnetOne
+          - !Ref DirectorySubnetTwo
         VpcId: !Ref Vpc
 
   Prep:
@@ -152,8 +152,8 @@ Resources:
       ServiceToken: !GetAtt PrepLambda.Arn
       DomainName: !Ref DomainName
       Vpc: !Ref Vpc
-      PublicSubnetOne: !Ref PublicSubnetOne
-      PublicSubnetTwo: !Ref PublicSubnetTwo
+      DirectorySubnetOne: !Ref DirectorySubnetOne
+      DirectorySubnetTwo: !Ref DirectorySubnetTwo
       DirectoryId: !Ref Directory
 
   # -----------------------------------------------------------------------------
@@ -340,6 +340,14 @@ Resources:
                 Resource: !Sub
                   - arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${InstanceId}
                   - { InstanceId: !Ref AdDomainAdminNode }
+        - PolicyName: PutPasswordSecret
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:PutSecretValue
+                Resource: !Ref ReadOnlyPasswordSecret
 
   PostLambda:
     Type: AWS::Lambda::Function
@@ -366,6 +374,7 @@ Resources:
 
           ds = boto3.client("ds")
           ec2 = boto3.client("ec2")
+          sm = boto3.client("secretsmanager")
 
           def create_physical_resource_id():
               alnum = string.ascii_uppercase + string.ascii_lowercase + string.digits
@@ -389,6 +398,7 @@ Resources:
               read_only_password = event['ResourceProperties']['ReadOnlyPassword']
               user_password = event['ResourceProperties']['UserPassword']
               admin_password = event['ResourceProperties']['AdminPassword']
+              password_secret_arn = event['ResourceProperties']['PasswordSecretArn']
 
               response_data = {}
               reason = None
@@ -400,6 +410,7 @@ Resources:
                   ds.reset_user_password(DirectoryId=directory_id, UserName='ReadOnlyUser', NewPassword=read_only_password)
                   ds.reset_user_password(DirectoryId=directory_id, UserName='user000', NewPassword=user_password)
                   ds.reset_user_password(DirectoryId=directory_id, UserName='Admin', NewPassword=admin_password)
+                  sm.put_secret_value(SecretId=password_secret_arn, SecretString=read_only_password)
                   ec2.stop_instances(InstanceIds=[instance_id])
               else:
                   physical_resource_id = event['PhysicalResourceId']
@@ -415,6 +426,7 @@ Resources:
       UserPassword: !Ref AdminPassword
       AdminPassword: !Ref AdminPassword
       ReadOnlyPassword: !Ref AdminPassword
+      PasswordSecretArn: !Ref ReadOnlyPasswordSecret
 
   # -----------------------------------------------------------------------------
   # Secrets Manager: domain self-signed cert + private key (used for LDAPS).
@@ -435,6 +447,14 @@ Resources:
         - "DomainPrivateKeySecret-${StackIdSuffix}"
         - { StackIdSuffix: !Select [1, !Split ['/', !Ref 'AWS::StackId']] }
 
+  ReadOnlyPasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: ReadOnlyUser password for ParallelCluster DirectoryService
+      Name: !Sub
+        - "ReadOnlyPasswordSecret-${StackIdSuffix}"
+        - { StackIdSuffix: !Select [1, !Split ['/', !Ref 'AWS::StackId']] }
+
   # -----------------------------------------------------------------------------
   # Internal NLB fronting LDAPS (636/TLS) -> LDAP (389/TCP) on the AD DNS IPs.
   # -----------------------------------------------------------------------------
@@ -443,8 +463,8 @@ Resources:
     Properties:
       Scheme: internal
       Subnets:
-        - !Ref PublicSubnetOne
-        - !Ref PublicSubnetTwo
+        - !Ref DirectorySubnetOne
+        - !Ref DirectorySubnetTwo
       Type: network
 
   NetworkLoadBalancerTargetGroup:
@@ -737,6 +757,7 @@ Resources:
     Type: AWS::IAM::ManagedPolicy
     DependsOn:
       - DomainCertificateSecret
+      - ReadOnlyPasswordSecret
     Properties:
       ManagedPolicyName: !Sub
         - "DomainCertificateSecretReadPolicy-${StackIdSuffix}"
@@ -749,22 +770,25 @@ Resources:
               - secretsmanager:GetSecretValue
             Resource:
               - !Ref DomainCertificateSecret
+              - !Ref ReadOnlyPasswordSecret
 
 Outputs:
   VpcId:
     Value: !Ref Vpc
   PrivateSubnetOne:
     Value: !Ref PrivateSubnetOne
-  PublicSubnetOne:
-    Value: !Ref PublicSubnetOne
-  PublicSubnetTwo:
-    Value: !Ref PublicSubnetTwo
+  DirectorySubnetOne:
+    Value: !Ref DirectorySubnetOne
+  DirectorySubnetTwo:
+    Value: !Ref DirectorySubnetTwo
   DomainName:
     Value: !Ref DomainName
   DomainCertificateArn:
     Value: !GetAtt DomainCertificateSetup.DomainCertificateArn
   DomainCertificateSecretArn:
     Value: !Ref DomainCertificateSecret
+  ReadOnlyPasswordSecretArn:
+    Value: !Ref ReadOnlyPasswordSecret
   DomainReadOnlyUser:
     Value: !Sub
       - cn=ReadOnlyUser,ou=Users,ou=${ou},dc=${dc}

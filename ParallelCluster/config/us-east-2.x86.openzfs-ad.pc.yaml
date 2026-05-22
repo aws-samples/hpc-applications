@@ -1,0 +1,140 @@
+Imds:
+  ImdsSupport: v2.0
+Region: us-east-2
+Image:
+  Os: alinux2023
+DirectoryService:
+  DomainName: corp.pcluster.com
+  DomainAddr: ldaps://corp.pcluster.com
+  PasswordSecretArn: REPLACE_WITH_AD_PASSWORD_SECRET_ARN
+  DomainReadOnlyUser: REPLACE_WITH_AD_READONLY_USER_DN
+  LdapTlsCaCert: /opt/parallelcluster/shared/directory_service/domain-certificate.crt
+  LdapTlsReqCert: hard
+  GenerateSshKeysForUsers: true
+  AdditionalSssdConfigs:
+    override_homedir: /home/%u
+HeadNode:
+  InstanceType: c7a.2xlarge
+  Ssh:
+    KeyName: REPLACE_WITH_SSH_KEY_NAME
+  Networking:
+    SubnetId: REPLACE_WITH_SUBNET_ID
+    AdditionalSecurityGroups:
+      - REPLACE_WITH_SECURITY_GROUP_ID
+  DisableSimultaneousMultithreading: false
+  SharedStorageType: Efs
+  LocalStorage:
+    RootVolume:
+      Size: 100
+      Encrypted: true
+      VolumeType: gp3
+      DeleteOnTermination: true
+  CustomActions:
+    OnNodeStart:
+      Script: REPLACE_WITH_AD_CERT_SETUP_SCRIPT
+      Args:
+        - REPLACE_WITH_DOMAIN_CERTIFICATE_SECRET_ARN
+    OnNodeConfigured:
+      Script: REPLACE_WITH_HEADNODE_POST_INSTALL_SCRIPT
+  Iam:
+    AdditionalIamPolicies:
+      - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+      - Policy: REPLACE_WITH_AD_CERTIFICATE_SECRET_READ_POLICY_ARN
+    S3Access:
+      - BucketName: '*'
+        EnableWriteAccess: true
+  Imds:
+    Secured: true
+Scheduling:
+  Scheduler: slurm
+  SlurmSettings:
+    ScaledownIdletime: 10
+    QueueUpdateStrategy: TERMINATE
+    EnableMemoryBasedScheduling: true
+  SlurmQueues:
+    - Name: hpc8a
+      CapacityType: ONDEMAND
+      Networking:
+        SubnetIds:
+          - REPLACE_WITH_SUBNET_ID
+        AdditionalSecurityGroups:
+          - REPLACE_WITH_SECURITY_GROUP_ID
+        PlacementGroup:
+          Enabled: true
+      ComputeResources:
+        - Name: hpc8a-96xlarge
+          InstanceType: hpc8a.96xlarge
+          MinCount: 0
+          MaxCount: 200
+          Efa:
+            Enabled: true
+      Iam:
+        AdditionalIamPolicies:
+          - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+          - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+          - Policy: REPLACE_WITH_AD_CERTIFICATE_SECRET_READ_POLICY_ARN
+        S3Access:
+          - BucketName: '*'
+            EnableWriteAccess: true
+      CustomActions:
+        OnNodeStart:
+          Script: REPLACE_WITH_AD_CERT_SETUP_SCRIPT
+          Args:
+            - REPLACE_WITH_DOMAIN_CERTIFICATE_SECRET_ARN
+        OnNodeConfigured:
+          Script: REPLACE_WITH_COMPUTE_POST_INSTALL_SCRIPT
+    - Name: hpc6id
+      CapacityType: ONDEMAND
+      Networking:
+        SubnetIds:
+          - REPLACE_WITH_SUBNET_ID
+        AdditionalSecurityGroups:
+          - REPLACE_WITH_SECURITY_GROUP_ID
+        PlacementGroup:
+          Enabled: true
+      ComputeResources:
+        - Name: hpc6id-32xlarge
+          InstanceType: hpc6id.32xlarge
+          MinCount: 0
+          MaxCount: 200
+          Efa:
+            Enabled: true
+      Iam:
+        AdditionalIamPolicies:
+          - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+          - Policy: arn:aws:iam::aws:policy/SecretsManagerReadWrite
+          - Policy: REPLACE_WITH_AD_CERTIFICATE_SECRET_READ_POLICY_ARN
+        S3Access:
+          - BucketName: '*'
+            EnableWriteAccess: true
+      CustomActions:
+        OnNodeStart:
+          Script: REPLACE_WITH_AD_CERT_SETUP_SCRIPT
+          Args:
+            - REPLACE_WITH_DOMAIN_CERTIFICATE_SECRET_ARN
+        OnNodeConfigured:
+          Script: REPLACE_WITH_COMPUTE_POST_INSTALL_SCRIPT
+SharedStorage:
+  - Name: FsxLustre
+    StorageType: FsxLustre
+    MountDir: /fsx
+    FsxLustreSettings:
+      FileSystemId: REPLACE_WITH_FSX_LUSTRE_ID
+  - Name: OpenZFSHome
+    StorageType: FsxOpenZfs
+    MountDir: /home
+    FsxOpenZfsSettings:
+      VolumeId: REPLACE_WITH_FSX_OZFS_VOLUME_ID
+Monitoring:
+  DetailedMonitoring: true
+  Logs:
+    CloudWatch:
+      Enabled: true
+      RetentionInDays: 30
+      DeletionPolicy: Retain
+    Rotation:
+      Enabled: true
+  Dashboards:
+    CloudWatch:
+      Enabled: true
