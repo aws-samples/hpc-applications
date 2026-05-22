@@ -59,13 +59,23 @@ case "${MODEL}" in
         DEFAULT_TIMESTEPS=100
         EXTRA_FILES=("data.rhodo")
         ;;
+    rhodo_scaled)
+        # in.rhodo.scaled is the same Rhodopsin protein in water as
+        # in.rhodo, but the input deck replicates the box via -var x/y/z
+        # so the atom count grows as 32000 * x*y*z instead of 32000 * x^3
+        # (LJ-style). Used by Murata-Manufacturing's published
+        # benchmark with -var x 16 -var y 16 -var z 16 -> ~131M atoms.
+        DECK_FILE="in.rhodo.scaled"
+        DEFAULT_TIMESTEPS=100
+        EXTRA_FILES=("data.rhodo")
+        ;;
     eam)
         DECK_FILE="in.eam"
         DEFAULT_TIMESTEPS=100
         EXTRA_FILES=("Cu_u3.eam")
         ;;
     *)
-        echo "ERROR: Unknown MODEL: ${MODEL} (expected: lj | rhodo | eam)" >&2
+        echo "ERROR: Unknown MODEL: ${MODEL} (expected: lj | rhodo | rhodo_scaled | eam)" >&2
         exit 1
         ;;
 esac
@@ -183,6 +193,11 @@ MCA_FLAGS="--mca plm_rsh_agent ssh --mca pml cm --mca mtl ofi --mca btl ^tcp,ope
 if [ "${EFA_VERBOSE:-0}" = "1" ]; then
     MCA_FLAGS="${MCA_FLAGS} --mca mtl_base_verbose 5 --mca pml_base_verbose 5"
 fi
+
+# Graviton instances (hpc7g, m8g) are single-socket with a flat NUMA
+# layout, so the dual-socket flex-cores cpu-list pattern used on x86
+# isn't applicable. Plain map-by slot / map-by ppr:rpn:node:PE=t is the
+# right choice here.
 if (( THREADS_PER_RANK > 1 )); then
     BIND_FLAGS="--bind-to core --map-by ppr:${NRANK_PER_NODE}:node:PE=${THREADS_PER_RANK}"
 else

@@ -65,13 +65,23 @@ case "${MODEL}" in
         DEFAULT_TIMESTEPS=100
         EXTRA_FILES=("data.rhodo")
         ;;
+    rhodo_scaled)
+        # in.rhodo.scaled is the same Rhodopsin protein in water as
+        # in.rhodo, but the input deck replicates the box via -var x/y/z
+        # so the atom count grows as 32000 * x*y*z instead of 32000 * x^3
+        # (LJ-style). Used by Murata-Manufacturing's published
+        # benchmark with -var x 16 -var y 16 -var z 16 -> ~131M atoms.
+        DECK_FILE="in.rhodo.scaled"
+        DEFAULT_TIMESTEPS=100
+        EXTRA_FILES=("data.rhodo")
+        ;;
     eam)
         DECK_FILE="in.eam"
         DEFAULT_TIMESTEPS=100
         EXTRA_FILES=("Cu_u3.eam")
         ;;
     *)
-        echo "ERROR: Unknown MODEL: ${MODEL} (expected: lj | rhodo | eam)" >&2
+        echo "ERROR: Unknown MODEL: ${MODEL} (expected: lj | rhodo | rhodo_scaled | eam)" >&2
         exit 1
         ;;
 esac
@@ -202,11 +212,59 @@ MCA_FLAGS="--mca plm_rsh_agent ssh --mca pml cm --mca mtl ofi --mca btl ^tcp,ope
 if [ "${EFA_VERBOSE:-0}" = "1" ]; then
     MCA_FLAGS="${MCA_FLAGS} --mca mtl_base_verbose 5 --mca pml_base_verbose 5"
 fi
+
+# ---------------------------------------------------------------------------
+# Rank placement.
+#
+# Three regimes:
+#   1. Hybrid MPI + OpenMP                  -> map-by ppr:rpn:node:PE=t
+#   2. Pure MPI, fewer ranks/node than cores
+#      ("flex-cores" subset benchmarking)   -> --bind-to cpu-list:ordered
+#                                              with a hand-tuned list that
+#                                              spreads ranks symmetrically
+#                                              across all 24 CCDs and both
+#                                              sockets, exposing the full L3
+#                                              cache to a smaller rank set.
+#                                              See Utils/flexible-cores/.
+#   3. Pure MPI at full density (all 192 c) -> map-by slot
+#
+# Supported flex-cores rank-per-node values (mirroring
+# Utils/flexible-cores/hello-cpu.openmpi.explicit.sbatch):
+#     24, 48, 72, 96, 120, 144, 168, 192
+# Any other rank count falls back to map-by slot.
+# ---------------------------------------------------------------------------
+TOTAL_CORES_PER_NODE="${SLURM_CPUS_ON_NODE:-${SLURM_NTASKS_PER_NODE}}"
+FLEX_CPU_LIST=""
+if (( THREADS_PER_RANK == 1 )) && (( NRANK_PER_NODE < TOTAL_CORES_PER_NODE )); then
+    case ${NRANK_PER_NODE} in
+        24)
+            FLEX_CPU_LIST="0,8,16,24,32,40,48,56,64,72,80,88,96,104,112,120,128,136,144,152,160,168,176,184" ;;
+        48)
+            FLEX_CPU_LIST="0,4,8,12,16,20,24,28,32,36,40,44,48,52,56,60,64,68,72,76,80,84,88,92,96,100,104,108,112,116,120,124,128,132,136,140,144,148,152,156,160,164,168,172,176,180,184,188" ;;
+        72)
+            FLEX_CPU_LIST="0,1,2,8,9,10,16,17,18,24,25,26,32,33,34,40,41,42,48,49,50,56,57,58,64,65,66,72,73,74,80,81,82,88,89,90,96,97,98,104,105,106,112,113,114,120,121,122,128,129,130,136,137,138,144,145,146,152,153,154,160,161,162,168,169,170,176,177,178,184,185,186" ;;
+        96)
+            FLEX_CPU_LIST="0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,42,44,46,48,50,52,54,56,58,60,62,64,66,68,70,72,74,76,78,80,82,84,86,88,90,92,94,96,98,100,102,104,106,108,110,112,114,116,118,120,122,124,126,128,130,132,134,136,138,140,142,144,146,148,150,152,154,156,158,160,162,164,166,168,170,172,174,176,178,180,182,184,186,188,190" ;;
+        120)
+            FLEX_CPU_LIST="0,1,2,3,4,8,9,10,11,12,16,17,18,19,20,24,25,26,27,28,32,33,34,35,36,40,41,42,43,44,48,49,50,51,52,56,57,58,59,60,64,65,66,67,68,72,73,74,75,76,80,81,82,83,84,88,89,90,91,92,96,97,98,99,100,104,105,106,107,108,112,113,114,115,116,120,121,122,123,124,128,129,130,131,132,136,137,138,139,140,144,145,146,147,148,152,153,154,155,156,160,161,162,163,164,168,169,170,171,172,176,177,178,179,180,184,185,186,187,188" ;;
+        144)
+            FLEX_CPU_LIST="0,1,2,3,4,5,8,9,10,11,12,13,16,17,18,19,20,21,24,25,26,27,28,29,32,33,34,35,36,37,40,41,42,43,44,45,48,49,50,51,52,53,56,57,58,59,60,61,64,65,66,67,68,69,72,73,74,75,76,77,80,81,82,83,84,85,88,89,90,91,92,93,96,97,98,99,100,101,104,105,106,107,108,109,112,113,114,115,116,117,120,121,122,123,124,125,128,129,130,131,132,133,136,137,138,139,140,141,144,145,146,147,148,149,152,153,154,155,156,157,160,161,162,163,164,165,168,169,170,171,172,173,176,177,178,179,180,181,184,185,186,187,188,189" ;;
+        168)
+            FLEX_CPU_LIST="0,1,2,3,4,5,6,8,9,10,11,12,13,14,16,17,18,19,20,21,22,24,25,26,27,28,29,30,32,33,34,35,36,37,38,40,41,42,43,44,45,46,48,49,50,51,52,53,54,56,57,58,59,60,61,62,64,65,66,67,68,69,70,72,73,74,75,76,77,78,80,81,82,83,84,85,86,88,89,90,91,92,93,94,96,97,98,99,100,101,102,104,105,106,107,108,109,110,112,113,114,115,116,117,118,120,121,122,123,124,125,126,128,129,130,131,132,133,134,136,137,138,139,140,141,142,144,145,146,147,148,149,150,152,153,154,155,156,157,158,160,161,162,163,164,165,166,168,169,170,171,172,173,174,176,177,178,179,180,181,182,184,185,186,187,188,189,190" ;;
+        *)
+            : ;;  # fall through to map-by slot
+    esac
+fi
+
 if (( THREADS_PER_RANK > 1 )); then
     BIND_FLAGS="--bind-to core --map-by ppr:${NRANK_PER_NODE}:node:PE=${THREADS_PER_RANK}"
+elif [ -n "${FLEX_CPU_LIST}" ]; then
+    BIND_FLAGS="--bind-to cpu-list:ordered --cpu-list ${FLEX_CPU_LIST}"
+    echo "Flex-cores: pinning ${NRANK_PER_NODE} ranks/node via cpu-list (see Utils/flexible-cores/)"
 else
     BIND_FLAGS="--bind-to core --map-by slot"
 fi
+echo "BIND_FLAGS:    ${BIND_FLAGS}"
 X_ENV="-x OMP_NUM_THREADS -x OMP_PLACES -x OMP_PROC_BIND -x FI_PROVIDER -x FI_EFA_USE_DEVICE_RDMA -x RDMAV_FORK_SAFE -x PATH -x LD_LIBRARY_PATH"
 
 # ---------------------------------------------------------------------------
