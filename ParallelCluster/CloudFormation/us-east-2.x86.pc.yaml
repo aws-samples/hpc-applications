@@ -98,7 +98,7 @@ Resources:
               DeleteOnTermination: true
           CustomActions:
             OnNodeConfigured:
-              Script: s3://hpc-applications-best-practice/post-install.headnode.sh
+              Script: https://raw.githubusercontent.com/aws-samples/hpc-applications/main/ParallelCluster/post-install/post-install.headnode.sh
           Iam:
             AdditionalIamPolicies:
               - Policy: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
@@ -146,7 +146,7 @@ Resources:
                     EnableWriteAccess: true
               CustomActions:
                 OnNodeConfigured:
-                  Script: s3://hpc-applications-best-practice/post-install.compute.sh
+                  Script: https://raw.githubusercontent.com/aws-samples/hpc-applications/main/ParallelCluster/post-install/post-install.compute.sh
             - Name: hpc7a
               CapacityType: ONDEMAND
               Networking:
@@ -190,7 +190,7 @@ Resources:
                     EnableWriteAccess: true
               CustomActions:
                 OnNodeConfigured:
-                  Script: s3://hpc-applications-best-practice/post-install.compute.sh
+                  Script: https://raw.githubusercontent.com/aws-samples/hpc-applications/main/ParallelCluster/post-install/post-install.compute.sh
             - Name: hpc6id
               CapacityType: ONDEMAND
               Networking:
@@ -216,7 +216,7 @@ Resources:
                     EnableWriteAccess: true
               CustomActions:
                 OnNodeConfigured:
-                  Script: s3://hpc-applications-best-practice/post-install.compute.sh
+                  Script: https://raw.githubusercontent.com/aws-samples/hpc-applications/main/ParallelCluster/post-install/post-install.compute.sh
             - Name: hpc6a
               CapacityType: ONDEMAND
               Networking:
@@ -242,7 +242,7 @@ Resources:
                     EnableWriteAccess: true
               CustomActions:
                 OnNodeConfigured:
-                  Script: s3://hpc-applications-best-practice/post-install.compute.sh
+                  Script: https://raw.githubusercontent.com/aws-samples/hpc-applications/main/ParallelCluster/post-install/post-install.compute.sh
 
         SharedStorage:
           - Name: FsxLustre

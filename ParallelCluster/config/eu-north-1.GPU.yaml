@@ -74,7 +74,7 @@ Scheduling:
             EnableWriteAccess: true
       CustomActions:
         OnNodeConfigured:
-          Script: s3://hpc-applications-best-practice/post-install.compute.sh
+          Script: https://raw.githubusercontent.com/aws-samples/hpc-applications/main/ParallelCluster/post-install/post-install.compute.sh
     - Name: p5
       CapacityType: ONDEMAND
       Networking:
@@ -105,7 +105,7 @@ Scheduling:
             EnableWriteAccess: true
       CustomActions:
         OnNodeConfigured:
-          Script: s3://hpc-applications-best-practice/post-install.compute.sh
+          Script: https://raw.githubusercontent.com/aws-samples/hpc-applications/main/ParallelCluster/post-install/post-install.compute.sh
     - Name: p5-spot
       CapacityType: SPOT
       Networking:
@@ -136,7 +136,7 @@ Scheduling:
             EnableWriteAccess: true
       CustomActions:
         OnNodeConfigured:
-          Script: s3://hpc-applications-best-practice/post-install.compute.sh          
+          Script: https://raw.githubusercontent.com/aws-samples/hpc-applications/main/ParallelCluster/post-install/post-install.compute.sh          
 SharedStorage:
   - Name: FsxLustre
     StorageType: FsxLustre
