@@ -15,6 +15,7 @@ This repo is maintained by AWS HPC Solution Architects, who will take care of up
 9. [OpenFOAM](https://github.com/aws-samples/hpc-applications/tree/main/apps/OpenFoam)
 10. [OpenRadioss](https://github.com/aws-samples/hpc-applications/tree/main/apps/OpenRadioss)
 11. [LAMMPS](https://github.com/aws-samples/hpc-applications/tree/main/apps/LAMMPS)
+12. [GROMACS](apps/Gromacs/README.md)
 
 ## HPC synthetic benchmarks:
 1. [STREAM](https://github.com/aws-samples/hpc-applications/tree/main/apps/Stream) - Memory bandwidth benchmark
