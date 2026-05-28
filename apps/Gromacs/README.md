@@ -10,20 +10,6 @@ The scripts are organised by CPU architecture:
 
 Unlike LAMMPS, GROMACS ships **two binaries per build**: `gmx` (Thread_MPI, single-node) and `gmx_mpi` (Library_MPI, multi-node over EFA). Both binaries come from the same build script — they're separate CMake trees installed side-by-side under `tmpi/` and `ompi/`. The benchmark launcher picks the right one based on `SLURM_JOB_NUM_NODES`: 1 node → `gmx`, >1 node → `mpirun … gmx_mpi`.
 
-## Phasing
-
-| Phase | Architecture | Status |
-|-------|--------------|--------|
-| Phase 1 | x86 (hpc8a / hpc7a, AVX-512) | **Validated** |
-| Phase 2 | Arm (hpc7g / Graviton3E, m8g / Graviton4, ARM_SVE) | **Validated** |
-| Phase 3 | GPU (g6e / L40S, p5 / H100, CUDA) | Future-Scoped |
-
-Phase order is intentional: x86 ships first; Arm follows once Phase 1 is validated end-to-end; GPU is captured in the design but its acceptance criteria are deliberately flexible until implementation begins on real hardware.
-
-> The Phase 2 scripts are committed and `shellcheck`-clean; the live cluster scaling sweep (24 jobs across hpc7g and m8g) and the chart embedding land in the same operator hand-off as the x86 sweep. Until that completes, the Arm subsection of the Performance section reads "data collection pending" — same convention as Phase 1.
->
-> The Phase 3 scripts and the GPU scaling-sweep runbook are also committed and `shellcheck`-clean — the layout, CMake flags, env-script generation, `GPU_COUNT` validation, and topology classification can be reviewed by reading the source. Phase 3 stays labelled **Future-Scoped** because the live smoke build, smoke benchmarks, and 32-job chart sweep on g6e (L40S) and p5 (H100) require SSH access to a provisioned GPU cluster — the same operator hand-off pattern the x86 and Arm sweeps use. The 32-job manifest is in [`apps/Gromacs/GPU/scaling_sweep_manifest.sh`](GPU/scaling_sweep_manifest.sh) with the operator runbook at [`apps/Gromacs/GPU/SCALING_SWEEP.md`](GPU/SCALING_SWEEP.md).
-
 ## Build Variants
 
 ### x86 — Thread_MPI + Library_MPI (Phase 1, Validated)
@@ -300,67 +286,54 @@ Speedup-only charts (no absolute `ns/day` values), x86 normalised to a 1-node hp
 
 ### x86 — hpc8a (Zen5) vs hpc7a (Zen4)
 
-> **Charts pending live sweep — see [task 8.1](x86/SCALING_SWEEP.md).** The image links below use GitHub's `?raw=true` URL convention (same pattern as the LAMMPS README) so the PNGs will start rendering with **no further README change** the moment they land in [`Doc/img/Gromacs/`](../../Doc/img/Gromacs/) on `main`. Until then the per-replicate data lists in [`Doc/img/Gromacs/generate_charts.py`](../../Doc/img/Gromacs/generate_charts.py) are still placeholder zeros and the PNGs are deliberately **not** committed — a chart of zero-height bars would be more misleading than a broken-image marker.
-
-The chart files will follow the LAMMPS naming pattern, one PNG per workload:
+x86 charts below come from the live 24-job chart sweep that ran in eu-north-1: (1N, 2N, 4N) × {benchMEM, benchPEP-h} × 2 replicates × {hpc8a.96xlarge, hpc7a.96xlarge}. Per-replicate `Performance: ns/day` values are pasted into the literals near the top of [`Doc/img/Gromacs/generate_charts.py`](../../Doc/img/Gromacs/generate_charts.py); regenerate with `python3 Doc/img/Gromacs/generate_charts.py` from the repo root.
 
 #### benchMEM (~80,000 atoms, MPINAT membrane protein)
 
-![GROMACS benchMEM hpc8a vs hpc7a](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Gromacs/Gromacs-benchMEM-Hpc8aVsHpc7a.png?raw=true)
+![GROMACS benchMEM hpc8a vs hpc7a](../../Doc/img/Gromacs/Gromacs-benchMEM-Hpc8aVsHpc7a.png)
 
 #### benchPEP-h (~12,000,000 atoms, MPINAT peptide)
 
-![GROMACS benchPEP-h hpc8a vs hpc7a](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Gromacs/Gromacs-benchPEP-h-Hpc8aVsHpc7a.png?raw=true)
+![GROMACS benchPEP-h hpc8a vs hpc7a](../../Doc/img/Gromacs/Gromacs-benchPEP-h-Hpc8aVsHpc7a.png)
 
-How the charts get filled in:
-
-1. Tick all five prerequisites in [`apps/Gromacs/x86/SCALING_SWEEP.md`](x86/SCALING_SWEEP.md) (build artefacts on FSx, smoke benchmark green, DynamoDB table active, `dynamodb:PutItem` attached to the compute role, cluster copy of the launcher with the recorder block uncommented).
-2. On the x86 cluster head node, run [`apps/Gromacs/x86/scaling_sweep_manifest.sh`](x86/scaling_sweep_manifest.sh) — submits 24 jobs covering (1N, 2N, 4N) × {benchMEM, benchPEP-h} × 2 replicates × {hpc8a, hpc7a}. Wait for the queue to drain.
-3. Pull per-cell `ns/day` means from `Gromacs_Benchmarks` in `us-east-1` via [`apps/Gromacs/dynamodb/scan_sweep.sh`](dynamodb/).
-4. Paste the per-replicate `Performance: ns/day` lists into the `ns_hpc8a_*` / `ns_hpc7a_*` Python literals near the top of [`Doc/img/Gromacs/generate_charts.py`](../../Doc/img/Gromacs/generate_charts.py) (the `# TODO(8.1)` comment markers show every cell that needs filling).
-5. From the repo root, run `python3 Doc/img/Gromacs/generate_charts.py`. The script writes `Gromacs-benchMEM-Hpc8aVsHpc7a.png` and `Gromacs-benchPEP-h-Hpc8aVsHpc7a.png` next to itself.
-6. `git add Doc/img/Gromacs/Gromacs-*.png Doc/img/Gromacs/generate_charts.py` and commit.
-
-Once those PNGs reach `main`, the image links above auto-render — no edit to this README required.
+The benchPEP-h 4-node cells are absent on this chart: the 12 M-atom system hung at multi-node startup on the eu-north-1 cluster (both replicates plus retries cancelled at the 2-hour wall-time limit). The 1N and 2N data points already establish the AMD Zen 4 vs Zen 5 trend; investigation of the 4N benchPEP-h startup hang is deferred to a follow-up.
 
 ### Arm — Graviton3E (hpc7g) vs Graviton4 (m8g)
 
-> **Charts pending live sweep — see [task 14.2](Arm/SCALING_SWEEP.md).** The image links below use GitHub's `?raw=true` URL convention (same pattern as the x86 subsection above) so the PNGs will start rendering with **no further README change** the moment they land in [`Doc/img/Gromacs/`](../../Doc/img/Gromacs/) on `main`. Until then the per-replicate Arm data lists in [`Doc/img/Gromacs/generate_charts.py`](../../Doc/img/Gromacs/generate_charts.py) are still placeholder `[]` values, the `data_available_arm` gate near the top of that script keeps the Arm chart block skipped, and the PNGs are deliberately **not** committed — a chart of zero-height bars would be more misleading than a broken-image marker.
+> **Charts pending live sweep — see [task 14.2](Arm/SCALING_SWEEP.md).** The relative image paths below resolve as soon as the Arm PNGs land in [`Doc/img/Gromacs/`](../../Doc/img/Gromacs/) on `main`. Until then the per-replicate Arm data lists in [`Doc/img/Gromacs/generate_charts.py`](../../Doc/img/Gromacs/generate_charts.py) are still placeholder `[]` values, the `data_available_arm` gate near the top of that script keeps the Arm chart block skipped, and the PNGs are deliberately **not** committed — a chart of zero-height bars would be more misleading than a broken-image marker.
 
-The chart files will follow the LAMMPS naming pattern, one PNG per workload:
+The chart files follow the LAMMPS naming pattern, one PNG per workload:
 
 #### benchMEM (~80,000 atoms, MPINAT membrane protein)
 
-![GROMACS benchMEM Graviton3E vs Graviton4](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Gromacs/Gromacs-benchMEM-Graviton3VsGraviton4.png?raw=true)
+![GROMACS benchMEM Graviton3E vs Graviton4](../../Doc/img/Gromacs/Gromacs-benchMEM-Graviton3VsGraviton4.png)
 
 #### benchPEP-h (~12,000,000 atoms, MPINAT peptide)
 
-![GROMACS benchPEP-h Graviton3E vs Graviton4](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Gromacs/Gromacs-benchPEP-h-Graviton3VsGraviton4.png?raw=true)
+![GROMACS benchPEP-h Graviton3E vs Graviton4](../../Doc/img/Gromacs/Gromacs-benchPEP-h-Graviton3VsGraviton4.png)
 
 How the charts get filled in:
 
 1. Tick all five prerequisites in [`apps/Gromacs/Arm/SCALING_SWEEP.md`](Arm/SCALING_SWEEP.md) (Arm build artefacts on FSx for Graviton3E + Graviton4, smoke benchmarks green on both partitions, DynamoDB table active, `dynamodb:PutItem` attached to the **Arm** cluster compute role, cluster copy of the launcher with the recorder block uncommented).
-2. On the Arm cluster head node (`ec2-user@10.3.51.188`, reached via bastion `ec2-user@3.128.184.207`), run [`apps/Gromacs/Arm/scaling_sweep_manifest.sh`](Arm/scaling_sweep_manifest.sh) — submits 24 jobs covering (1N, 2N, 4N) × {benchMEM, benchPEP-h} × 2 replicates × {hpc7g at 64 rpn, m8g at 192 rpn}. Wait for the queue to drain.
+2. On the Arm cluster head node, run [`apps/Gromacs/Arm/scaling_sweep_manifest.sh`](Arm/scaling_sweep_manifest.sh) — submits 24 jobs covering (1N, 2N, 4N) × {benchMEM, benchPEP-h} × 2 replicates × {hpc7g at 64 rpn, m8g at 192 rpn}. Wait for the queue to drain.
 3. Pull per-cell `ns/day` means from `Gromacs_Benchmarks` in `us-east-1` via [`apps/Gromacs/dynamodb/scan_sweep.sh`](dynamodb/) (use `--since <YYYY-MM-DD>` to scope to the sweep window — the table also still holds Phase 1 hpc8a / hpc7a rows).
 4. Paste the per-replicate `Performance: ns/day` lists into the `ns_hpc7g_*` / `ns_m8g_*` Python literals near the top of [`Doc/img/Gromacs/generate_charts.py`](../../Doc/img/Gromacs/generate_charts.py) (the `# TODO(14.2)` comment markers show every cell that needs filling), then flip `data_available_arm = True` near the top of the script so the Arm chart block runs.
 5. From the repo root, run `python3 Doc/img/Gromacs/generate_charts.py`. The script writes `Gromacs-benchMEM-Graviton3VsGraviton4.png` and `Gromacs-benchPEP-h-Graviton3VsGraviton4.png` next to itself.
 6. `git add Doc/img/Gromacs/Gromacs-*-Graviton3VsGraviton4.png Doc/img/Gromacs/generate_charts.py` and commit.
 
-Once those PNGs reach `main`, the image links above auto-render — no edit to this README required.
-
 ### GPU — p5 (H100) vs g6e (L40S)
 
-> **Charts pending live sweep — see [task 19](GPU/SCALING_SWEEP.md).** The image links below use GitHub's `?raw=true` URL convention (same pattern as the x86 and Arm subsections above) so the PNGs will start rendering with **no further README change** the moment they land in [`Doc/img/Gromacs/`](../../Doc/img/Gromacs/) on `main`. Until then the per-replicate GPU data lists in [`Doc/img/Gromacs/generate_charts.py`](../../Doc/img/Gromacs/generate_charts.py) are still placeholder `[]` values, the `data_available_gpu` gate near the top of that script keeps the GPU chart block skipped, and the PNGs are deliberately **not** committed — a chart of zero-height bars would be more misleading than a broken-image marker.
+> **Charts pending live sweep — see [task 19](GPU/SCALING_SWEEP.md).** The relative image paths below resolve as soon as the GPU PNGs land in [`Doc/img/Gromacs/`](../../Doc/img/Gromacs/) on `main`. Until then the per-replicate GPU data lists in [`Doc/img/Gromacs/generate_charts.py`](../../Doc/img/Gromacs/generate_charts.py) are still placeholder `[]` values, the `data_available_gpu` gate near the top of that script keeps the GPU chart block skipped, and the PNGs are deliberately **not** committed — a chart of zero-height bars would be more misleading than a broken-image marker.
 
-The chart files will follow the LAMMPS naming pattern, one PNG per workload:
+The chart files follow the LAMMPS naming pattern, one PNG per workload:
 
 #### benchMEM (~80,000 atoms, MPINAT membrane protein)
 
-![GROMACS benchMEM p5 vs g6e](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Gromacs/Gromacs-benchMEM-P5VsG6e.png?raw=true)
+![GROMACS benchMEM p5 vs g6e](../../Doc/img/Gromacs/Gromacs-benchMEM-P5VsG6e.png)
 
 #### benchPEP-h (~12,000,000 atoms, MPINAT peptide)
 
-![GROMACS benchPEP-h p5 vs g6e](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Gromacs/Gromacs-benchPEP-h-P5VsG6e.png?raw=true)
+![GROMACS benchPEP-h p5 vs g6e](../../Doc/img/Gromacs/Gromacs-benchPEP-h-P5VsG6e.png)
 
 How the charts get filled in:
 
@@ -370,8 +343,6 @@ How the charts get filled in:
 4. Paste the per-replicate `Performance: ns/day` lists into the `ns_g6e_*` / `ns_p5_*` Python literals near the top of [`Doc/img/Gromacs/generate_charts.py`](../../Doc/img/Gromacs/generate_charts.py) (the `# TODO(19)` comment markers show every cell that needs filling), then flip `data_available_gpu = True` near the top of the script so the GPU chart block runs.
 5. From the repo root, run `python3 Doc/img/Gromacs/generate_charts.py`. The script writes `Gromacs-benchMEM-P5VsG6e.png` and `Gromacs-benchPEP-h-P5VsG6e.png` next to itself.
 6. `git add Doc/img/Gromacs/Gromacs-*-P5VsG6e.png Doc/img/Gromacs/generate_charts.py` and commit.
-
-Once those PNGs reach `main`, the image links above auto-render — no edit to this README required.
 
 ## Metrics
 
@@ -432,7 +403,3 @@ The launcher extracts:
 | `record_to_dynamodb.sh` | Optional helper that records each benchmark run to a centralised DynamoDB table |
 | `scan_sweep.sh` | Pull per-cell `ns/day` means from `Gromacs_Benchmarks` (`us-east-1`) and emit them in the shape the chart pipeline consumes |
 | `README.md` | Table schema, IAM permissions, and setup instructions — see [`dynamodb/README.md`](dynamodb/README.md) |
-
-## DynamoDB Result Recording
-
-Results from each benchmark run can optionally be recorded to a centralised DynamoDB table (`Gromacs_Benchmarks` in `us-east-1`) for cross-run aggregation, trend tracking, and chart generation. **The recording is off by default** — the call site at the bottom of every `gromacs-benchmark.sbatch` is committed with each line prefixed with `#`, so running the launcher as-is performs zero DynamoDB API calls and requires no AWS credentials with DynamoDB write permissions. To enable centralised recording, deploy the helper script, attach the scoped `dynamodb:PutItem` IAM policy, and uncomment the recorder block on the cluster copy under `/fsx/gromacs/scripts/`. Full instructions, table schema, IAM JSON, and the deploy-time uncomment recipe are in [`dynamodb/README.md`](dynamodb/README.md).
