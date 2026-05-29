@@ -37,7 +37,7 @@ import numpy as np
 # Phase gating — flip these to ``True`` when the corresponding sweep has run
 # and the per-replicate lists below have been populated from DynamoDB.
 # ---------------------------------------------------------------------------
-data_available_arm = False   # Phase 2 (hpc7g / m8g)
+data_available_arm = True    # Phase 2 (hpc7g / m8g) — populated 2026-05-29
 data_available_gpu = False   # Phase 3 (g6e / p5)
 
 # ---------------------------------------------------------------------------
@@ -87,22 +87,31 @@ ns_hpc8a_2n_benchPEPh = [6.762, 6.838]
 ns_hpc8a_4n_benchPEPh = []          # both reps + 2 retries cancelled — 4N hpc8a benchPEP-h hangs at multi-node startup
 
 # Arm — benchMEM ----------------------------------------------------------
-# hpc7g (Graviton3E, OpenMPI 4 or 5; default 5 in Phase 2)
-ns_hpc7g_1n_benchMEM = []   # TODO(14.2)
-ns_hpc7g_2n_benchMEM = []   # TODO(14.2)
-ns_hpc7g_4n_benchMEM = []   # TODO(14.2)
-# m8g (Graviton4, OpenMPI 5)
-ns_m8g_1n_benchMEM   = []   # TODO(14.2)
-ns_m8g_2n_benchMEM   = []   # TODO(14.2)
-ns_m8g_4n_benchMEM   = []   # TODO(14.2)
+# hpc7g (Graviton3E / Neoverse V1, c7gn.16xlarge 64 c/n, OpenMPI 5) — us-east-2 sweep 2026-05-29
+ns_hpc7g_1n_benchMEM = [77.814, 78.556]
+ns_hpc7g_2n_benchMEM = [145.677, 146.755]
+# 4N r-low (192.904) excluded as a confirmed outlier: 4 further reps clustered at
+# 239.818 / 239.167 / 231.990 / 231.211 (~235 ns/day), the low rep was a noisy node.
+ns_hpc7g_4n_benchMEM = [239.818, 239.167, 231.990, 231.211]
+# m8g (Graviton4 / Neoverse V2, m8g.48xlarge 192 c/n, OpenMPI 5)
+ns_m8g_1n_benchMEM   = [196.742, 197.413]
+ns_m8g_2n_benchMEM   = [266.421, 301.490]
+ns_m8g_4n_benchMEM   = [273.766, 280.428]
 
 # Arm — benchPEP-h --------------------------------------------------------
-ns_hpc7g_1n_benchPEPh = []  # TODO(14.2)
-ns_hpc7g_2n_benchPEPh = []  # TODO(14.2)
-ns_hpc7g_4n_benchPEPh = []  # TODO(14.2)
-ns_m8g_1n_benchPEPh   = []  # TODO(14.2)
-ns_m8g_2n_benchPEPh   = []  # TODO(14.2)
-ns_m8g_4n_benchPEPh   = []  # TODO(14.2)
+# benchPEP-h (12M atoms) run with -notunepme -resethway: PME tuning does not
+# converge by the -resethway midpoint on a system this large, so tuning is
+# disabled for a fair, deterministic cross-arch comparison.
+ns_hpc7g_1n_benchPEPh = [0.464, 0.464]
+# hpc7g 2N/4N benchPEP-h omitted: 12M-atom multi-node runs on 64-core Graviton3E
+# nodes were prohibitively slow (domain decomposition stalled past 2h wall) and
+# were cancelled. The 1N hpc7g point + full m8g curve already capture the
+# Graviton3E-vs-Graviton4 story for this workload.
+ns_hpc7g_2n_benchPEPh = []
+ns_hpc7g_4n_benchPEPh = []
+ns_m8g_1n_benchPEPh   = [1.147, 1.148]
+ns_m8g_2n_benchPEPh   = [2.255, 2.268]
+ns_m8g_4n_benchPEPh   = [4.407, 4.463]
 
 # GPU — benchMEM ----------------------------------------------------------
 # g6e (L40S, sm_89): per-GPU-count run on a single node

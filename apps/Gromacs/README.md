@@ -300,9 +300,7 @@ The benchPEP-h 4-node cells are absent on this chart: the 12 M-atom system hung 
 
 ### Arm — Graviton3E (hpc7g) vs Graviton4 (m8g)
 
-> **Charts pending live sweep — see [task 14.2](Arm/SCALING_SWEEP.md).** The relative image paths below resolve as soon as the Arm PNGs land in [`Doc/img/Gromacs/`](../../Doc/img/Gromacs/) on `main`. Until then the per-replicate Arm data lists in [`Doc/img/Gromacs/generate_charts.py`](../../Doc/img/Gromacs/generate_charts.py) are still placeholder `[]` values, the `data_available_arm` gate near the top of that script keeps the Arm chart block skipped, and the PNGs are deliberately **not** committed — a chart of zero-height bars would be more misleading than a broken-image marker.
-
-The chart files follow the LAMMPS naming pattern, one PNG per workload:
+Arm charts below come from the live 24-job sweep that ran in us-east-2: (1N, 2N, 4N) × {benchMEM, benchPEP-h} × 2 replicates × {hpc7g (Graviton3E, c7gn.16xlarge, 64 rpn), m8g (Graviton4, m8g.48xlarge, 192 rpn)}. Speedups normalise to a single hpc7g node. Per-replicate values are in [`Doc/img/Gromacs/generate_charts.py`](../../Doc/img/Gromacs/generate_charts.py); regenerate with `python3 Doc/img/Gromacs/generate_charts.py`.
 
 #### benchMEM (~80,000 atoms, MPINAT membrane protein)
 
@@ -312,14 +310,11 @@ The chart files follow the LAMMPS naming pattern, one PNG per workload:
 
 ![GROMACS benchPEP-h Graviton3E vs Graviton4](../../Doc/img/Gromacs/Gromacs-benchPEP-h-Graviton3VsGraviton4.png)
 
-How the charts get filled in:
+Notes on the Arm data:
 
-1. Tick all five prerequisites in [`apps/Gromacs/Arm/SCALING_SWEEP.md`](Arm/SCALING_SWEEP.md) (Arm build artefacts on FSx for Graviton3E + Graviton4, smoke benchmarks green on both partitions, DynamoDB table active, `dynamodb:PutItem` attached to the **Arm** cluster compute role, cluster copy of the launcher with the recorder block uncommented).
-2. On the Arm cluster head node, run [`apps/Gromacs/Arm/scaling_sweep_manifest.sh`](Arm/scaling_sweep_manifest.sh) — submits 24 jobs covering (1N, 2N, 4N) × {benchMEM, benchPEP-h} × 2 replicates × {hpc7g at 64 rpn, m8g at 192 rpn}. Wait for the queue to drain.
-3. Pull per-cell `ns/day` means from `Gromacs_Benchmarks` in `us-east-1` via [`apps/Gromacs/dynamodb/scan_sweep.sh`](dynamodb/) (use `--since <YYYY-MM-DD>` to scope to the sweep window — the table also still holds Phase 1 hpc8a / hpc7a rows).
-4. Paste the per-replicate `Performance: ns/day` lists into the `ns_hpc7g_*` / `ns_m8g_*` Python literals near the top of [`Doc/img/Gromacs/generate_charts.py`](../../Doc/img/Gromacs/generate_charts.py) (the `# TODO(14.2)` comment markers show every cell that needs filling), then flip `data_available_arm = True` near the top of the script so the Arm chart block runs.
-5. From the repo root, run `python3 Doc/img/Gromacs/generate_charts.py`. The script writes `Gromacs-benchMEM-Graviton3VsGraviton4.png` and `Gromacs-benchPEP-h-Graviton3VsGraviton4.png` next to itself.
-6. `git add Doc/img/Gromacs/Gromacs-*-Graviton3VsGraviton4.png Doc/img/Gromacs/generate_charts.py` and commit.
+- **benchPEP-h uses `-notunepme`**: on a 12M-atom system, PME tuning does not converge by the `-resethway` midpoint, so `-resethway` alone aborts. Disabling PME tuning makes the timer reset safe and gives every instance an identical, deterministic computation — the right call for a cross-architecture comparison.
+- **hpc7g multi-node benchPEP-h is omitted**: 12M-atom runs across multiple 64-core Graviton3E nodes stalled in domain decomposition past a 2-hour wall and were cancelled. The 1N hpc7g point plus the full m8g curve already capture the Graviton3E-vs-Graviton4 story (Graviton4 is ~2.5× faster per node).
+- **One hpc7g 4N benchMEM replicate (192.9 ns/day) was dropped as a confirmed outlier**: four further replicates clustered at ~235 ns/day, so the low rep (a noisy node) is excluded from the mean.
 
 ### GPU — p5 (H100) vs g6e (L40S)
 
