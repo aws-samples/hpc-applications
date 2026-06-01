@@ -1,14 +1,15 @@
 #!/bin/bash
 # Run a GROMACS standard MPINAT benchmark (benchMEM, benchPEP-h, STMV, or
-# RNAse) on x86_64 + CUDA nodes (g6e / L40S, p5 / H100) with single-GPU
-# Thread_MPI or multi-GPU Thread_MPI/Library_MPI.
+# RNAse) on x86_64 + CUDA nodes across three GPU families — g6e / L40S,
+# g7e / Blackwell RTX PRO 6000, p5 / H100 — with single-GPU Thread_MPI or
+# multi-GPU Thread_MPI/Library_MPI.
 #
-# Phase 3 (GPU) launcher — future-scoped. The acceptance criteria captured
-# in Requirement 6 of the spec are intentionally flexible on offload split
-# tuning and multi-node topology behaviour, and will be refined when the
-# GPU phase is validated end-to-end on real hardware. This script is
-# committed for review of layout / flags / logic; live cluster validation
-# on g6e (L40S) and p5 (H100) is a separate live-execution task.
+# Phase 3 (GPU) launcher. Pairs with build_gromacs_gpu.sbatch (GROMACS
+# v2026.1 on CUDA 13). The offload split (-bonded / -update) is left
+# overridable because -update gpu aborts benchMEM under GPU LINCS; it
+# defaults to GROMACS auto so each system runs the split GROMACS deems
+# valid. Capture the measured optimum per (model, GPU family) in
+# apps/Gromacs/README.md rather than freezing it here.
 #
 # Like the CPU launchers, GROMACS ships TWO MPI build paths and we install
 # both at build time. The launcher picks the right one based on GPU_COUNT
@@ -43,12 +44,12 @@
 # write that otherwise dominates I/O at high rank counts.
 #
 # GPU offload split:
-#   We pass `-nb gpu -pme gpu -bonded gpu -update gpu` to push the entire
-#   force / PME / bonded / update pipeline onto the GPU. This is the H100 /
-#   2024 best-practice but on smaller GPUs (L40S) keeping `-bonded cpu` may
-#   actually be faster — the offload split MAY NEED PER-BENCHMARK and
-#   PER-GPU TUNING. Capture the measured optimum in apps/Gromacs/README.md
-#   rather than freezing it here.
+#   We pass `-nb gpu -pme gpu -bonded "${GPU_BONDED:-auto}" -update
+#   "${GPU_UPDATE:-auto}"`. -nb / -pme always run on the GPU; -bonded and
+#   -update default to GROMACS `auto` because forcing `-update gpu` aborts
+#   benchMEM (GPU LINCS cannot handle its coupled constraints). Override
+#   GPU_BONDED / GPU_UPDATE (gpu|cpu|auto) to force a split during tuning.
+#   Capture the measured optimum in apps/Gromacs/README.md.
 #
 # Optional: a commented-out block at the end of this script can record
 # each run to a DynamoDB table for cross-run aggregation. It is disabled
@@ -61,7 +62,7 @@
 # Override via --export=ALL,...:
 #   GROMACS_ENV         path to env script. Default: auto-selected per
 #                       GPU_COUNT vs. detected GPUs/node from
-#                       /fsx/gromacs/x86_64-cuda*-{l40s,h100}/<tag>/.
+#                       /fsx/gromacs/x86_64-cuda*-{l40s,blackwell,h100}/<tag>/.
 #                       Most recently modified matching env script wins.
 #                       Set explicitly to force a particular variant
 #                       (e.g. ompi-env on a single node, or to pin to a
@@ -248,7 +249,7 @@ if [ -z "${GROMACS_ENV:-}" ]; then
     fi
     BEST_CANDIDATE=""
     BEST_MTIME=0
-    for CUDA_DIR in "${BASE_DIR}"/x86_64-cuda*-l40s "${BASE_DIR}"/x86_64-cuda*-h100; do
+    for CUDA_DIR in "${BASE_DIR}"/x86_64-cuda*-l40s "${BASE_DIR}"/x86_64-cuda*-blackwell "${BASE_DIR}"/x86_64-cuda*-h100; do
         [ -d "${CUDA_DIR}" ] || continue
         for ENV_PATTERN in "${ENV_PATTERNS[@]}"; do
             CANDIDATE_LINE="$(find "${CUDA_DIR}" -maxdepth 2 -type f \
@@ -270,6 +271,7 @@ if [ -z "${GROMACS_ENV:-}" ]; then
         echo "ERROR: GROMACS_ENV unset and no auto-discovered env script found" >&2
         echo "       Searched:" >&2
         echo "         ${BASE_DIR}/x86_64-cuda*-l40s/*/gromacs-*-{tmpi,ompi,ompi5}-env.sh" >&2
+        echo "         ${BASE_DIR}/x86_64-cuda*-blackwell/*/gromacs-*-{tmpi,ompi,ompi5}-env.sh" >&2
         echo "         ${BASE_DIR}/x86_64-cuda*-h100/*/gromacs-*-{tmpi,ompi,ompi5}-env.sh" >&2
         echo "       Set GROMACS_ENV=/path/to/gromacs-<tag>-{tmpi,ompi,ompi5}-env.sh" >&2
         exit 1
@@ -314,6 +316,7 @@ fi
 # results without re-shelling out to nvidia-smi after sourcing the env.
 case "${GROMACS_ENV}" in
     *-l40s/*) GPU_TARGET_TAG="l40s" ;;
+    *-blackwell/*) GPU_TARGET_TAG="blackwell" ;;
     *-h100/*) GPU_TARGET_TAG="h100" ;;
     *)
         # Fall back to nvidia-smi if the path doesn't encode the target.
@@ -321,6 +324,7 @@ case "${GROMACS_ENV}" in
         case "${gpu_name_probe}" in
             *H100*) GPU_TARGET_TAG="h100" ;;
             *L40S*|*L40s*) GPU_TARGET_TAG="l40s" ;;
+            *"RTX PRO 6000"*|*Blackwell*) GPU_TARGET_TAG="blackwell" ;;
             *) GPU_TARGET_TAG="unknown" ;;
         esac
         ;;
@@ -437,14 +441,16 @@ echo "GROMACS tag:    ${GROMACS_TAG:-unknown}"
 # nvidia-smi driver-side CUDA version line.
 # shellcheck disable=SC2034
 CUDA_VERSION="unknown"
+# NOTE: avoid 'cmd | awk ...exit...' pipelines here — awk closing the pipe
+# early sends SIGPIPE upstream, which under 'set -o pipefail' aborts the whole
+# script (exit 141). Capture into a variable first, then parse, with || true.
 if command -v nvcc >/dev/null 2>&1; then
-    CUDA_VERSION="$(nvcc --version 2>/dev/null \
-        | awk '/release/ {print $(NF-1)}' | tr -d ',')"
+    _nvcc_out="$(nvcc --version 2>/dev/null || true)"
+    CUDA_VERSION="$(printf '%s\n' "${_nvcc_out}" | awk '/release/ {print $(NF-1)}' | tr -d ',' || true)"
 fi
 if [ -z "${CUDA_VERSION}" ] || [ "${CUDA_VERSION}" = "unknown" ]; then
-    CUDA_VERSION="$(nvidia-smi 2>/dev/null \
-        | awk '/CUDA Version:/ {for (i=1;i<=NF;i++) if ($i=="Version:") {print $(i+1); exit}}' \
-        | tr -d ',')"
+    _smi_out="$(nvidia-smi 2>/dev/null || true)"
+    CUDA_VERSION="$(printf '%s\n' "${_smi_out}" | awk '/CUDA Version:/ {for (i=1;i<=NF;i++) if ($i=="Version:") {print $(i+1)}}' | head -1 | tr -d ',' || true)"
     CUDA_VERSION="${CUDA_VERSION:-unknown}"
 fi
 echo "CUDA version:   ${CUDA_VERSION}"
@@ -605,20 +611,33 @@ echo "provider=efa"
 # ---------------------------------------------------------------------------
 # Build mdrun args (Requirement 6.6).
 #
-# `-nb gpu -pme gpu -bonded gpu -update gpu` pushes the entire force / PME /
-# bonded / update pipeline onto the GPU. This is the H100 / 2024 best
-# practice but on smaller GPUs (L40S) keeping `-bonded cpu` may actually be
-# faster — the offload split MAY NEED PER-BENCHMARK and PER-GPU TUNING.
-# Capture the measured optimum in apps/Gromacs/README.md rather than
-# freezing it here.
+# `-nb gpu -pme gpu` always offload non-bonded and PME to the GPU. `-bonded`
+# and `-update` are overridable knobs (GPU_BONDED / GPU_UPDATE, gpu|cpu|auto)
+# defaulting to GROMACS `auto`: forcing `-update gpu` aborts systems with 3+
+# coupled constraints (e.g. benchMEM) via the GPU LINCS path, so we let
+# GROMACS pick a valid split per system. Capture the measured optimum per
+# (model, GPU family) in apps/Gromacs/README.md rather than freezing it here.
 #
 # `-resethway` discards the warm-up half of the run from the timing.
 # `-noconfout` suppresses the per-rank confout.gro write.
 # ---------------------------------------------------------------------------
+GPU_BONDED="${GPU_BONDED:-auto}"
+GPU_UPDATE="${GPU_UPDATE:-auto}"
 MDRUN_ARGS=(mdrun -s "${TPR_FILE}" -nsteps "${TIMESTEPS}" -resethway -noconfout
     -nstlist "${NSTLIST}"
-    -nb gpu -pme gpu -bonded gpu -update gpu
+    -nb gpu -pme gpu -bonded "${GPU_BONDED}" -update "${GPU_UPDATE}"
     -deffnm md)
+
+# Multi-rank PME-on-GPU requires a dedicated PME rank. With `-pme gpu` and
+# more than one rank, GROMACS refuses to auto-split PME across ranks and
+# demands an explicit `-npme` ("PME tasks were required to run on GPUs with
+# multiple ranks but the -npme option was not specified"). One PME rank is
+# the correct choice for single-node multi-GPU GROMACS, so we pass `-npme 1`
+# whenever GPU_COUNT > 1. Single-GPU runs leave PME on the one rank's GPU.
+NPME_ARGS=()
+if (( GPU_COUNT > 1 )); then
+    NPME_ARGS=(-npme 1)
+fi
 
 # ---------------------------------------------------------------------------
 # Run
@@ -634,25 +653,28 @@ if [ "${ENV_VARIANT}" = "tmpi" ]; then
         T_END=$(date +%s.%N)
     else
         # Single-node multi-GPU Thread_MPI: -ntmpi == GPU_COUNT, one rank
-        # per GPU. -gpu_id 0,1,...,(GPU_COUNT-1).
+        # per GPU. -gpu_id 0,1,...,(GPU_COUNT-1). -npme 1 dedicates one rank
+        # to PME (required for PME-on-GPU with >1 rank).
         GPU_ID_LIST="$(seq -s, 0 $((GPU_COUNT - 1)))"
-        echo "=== Running gmx mdrun (Thread_MPI, ${GPU_COUNT} GPUs, gpu_id=${GPU_ID_LIST}) ==="
+        echo "=== Running gmx mdrun (Thread_MPI, ${GPU_COUNT} GPUs, gpu_id=${GPU_ID_LIST}, npme=1) ==="
         T_START=$(date +%s.%N)
         "${GMX_BIN}" "${MDRUN_ARGS[@]}" \
             -ntmpi "${GPU_COUNT}" \
+            "${NPME_ARGS[@]}" \
             -gpu_id "${GPU_ID_LIST}" \
             2>&1 | tee log.run
         T_END=$(date +%s.%N)
     fi
 else
     # Library_MPI: one rank per GPU across the allocation. CUDA_VISIBLE_DEVICES
-    # is forwarded via -x; libcuda picks the local GPU per rank.
+    # is forwarded via -x; libcuda picks the local GPU per rank. -npme 1
+    # dedicates one rank to PME (required for PME-on-GPU with >1 rank).
     echo "=== Running gmx_mpi mdrun (Library_MPI, ${GPU_COUNT} GPUs across ${SLURM_JOB_NUM_NODES} nodes) ==="
     T_START=$(date +%s.%N)
     # shellcheck disable=SC2086
     mpirun -np "${GPU_COUNT}" --hostfile hostfile \
         ${BIND_FLAGS} ${MCA_FLAGS} ${X_ENV} \
-        "${GMX_BIN}" "${MDRUN_ARGS[@]}" \
+        "${GMX_BIN}" "${MDRUN_ARGS[@]}" "${NPME_ARGS[@]}" \
         2>&1 | tee log.run
     T_END=$(date +%s.%N)
 fi

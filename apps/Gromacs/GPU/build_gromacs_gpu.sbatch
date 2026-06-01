@@ -1,12 +1,12 @@
 #!/bin/bash
-# Build GROMACS for x86_64 + CUDA (g6e / L40S, p5 / H100) using GCC + nvcc.
+# Build GROMACS for x86_64 + CUDA across three GPU families using GCC + nvcc:
+#   g6e / L40S                  (Ada Lovelace, sm_89)
+#   g7e / Blackwell RTX PRO 6000 (Blackwell,   sm_120)
+#   p5  / H100                  (Hopper,       sm_90)
 #
-# Phase 3 (GPU) build — future-scoped. The acceptance criteria captured in
-# Requirement 5 of the spec are intentionally flexible on CUDA toolkit
-# version, NVLink topology and offload split, and will be refined when the
-# GPU phase is validated end-to-end on real hardware. This script is
-# committed so the layout, flags and Env_Scripts can be reviewed by reading
-# the source; live cluster validation is a separate task.
+# Phase 3 (GPU). Pins GROMACS v2026.1 on CUDA 13: the GPU nodes ship CUDA 13.0
+# and GROMACS 2024.4 cannot build against CUDA 13 (upstream added CUDA 13
+# support in 2025.3). v2026.1 also matches the team's reference MPS document.
 #   https://www.gromacs.org/   https://gitlab.com/gromacs/gromacs
 #
 # Like the x86 / Arm builds, this script produces TWO CMake variants and
@@ -22,18 +22,25 @@
 #                                       -DGMX_THREAD_MPI=OFF and linked
 #                                       against the system OpenMPI.
 #
-# Both variants share the same CUDA flags
-# (-DGMX_GPU=CUDA, -DGMX_CUDA_TARGET_SM="89;90", --use_fast_math) and the
-# same host-side AVX-512 SIMD setting preserved from the Phase 1 x86 build,
-# so the CPU portion of the workload still runs at full Zen 4/5 speed.
+# Both variants share the same CUDA flags (-DGMX_GPU=CUDA,
+# -DGMX_CUDA_TARGET_SM=<per-target>, --use_fast_math). The host SIMD level is
+# auto-detected from /proc/cpuinfo (the g6e / p5 host CPUs do not all advertise
+# AVX-512), and -march=native is passed to the host compiler. For a GPU build
+# the host SIMD barely matters because force / PME / bonded / update run on the
+# GPU.
+#
+# Toolchain: GROMACS 2026 needs C++20 (GCC >= 12) and CMake >= 3.28, and the
+# Blackwell sm_120 target needs a recent nvcc. We use the AL2023 GCC 14
+# packages (installed as /usr/bin/gcc14-gcc, gcc14-g++) and a CMake 3.28.3
+# staged on shared FSx.
 #
 # Override via --export=ALL,...:
 #   GROMACS_TAG     git tag from https://gitlab.com/gromacs/gromacs
-#                   (default: v2024.4)
+#                   (default: v2026.1)
 #   BASE_DIR        install root (default: /fsx/gromacs)
-#   GPU_TARGET      l40s | h100 | auto (default — auto-detects from
-#                   nvidia-smi --query-gpu=name)
-#   CUDA_TOOLKIT    CUDA major version on PATH (default: 12 — must be >= 12)
+#   GPU_TARGET      l40s | h100 | blackwell | auto (default — auto-detects
+#                   from nvidia-smi --query-gpu=name)
+#   CUDA_TOOLKIT    CUDA major version on PATH (default: 13 — must be >= 13)
 #   OMPI_VERSION    4 (default) or 5
 #   COMPILE_CORES   parallel compile threads (default: 48)
 
@@ -48,10 +55,10 @@
 
 set -euo pipefail
 
-GROMACS_TAG="${GROMACS_TAG:-v2024.4}"
+GROMACS_TAG="${GROMACS_TAG:-v2026.1}"
 BASE_DIR="${BASE_DIR:-/fsx/gromacs}"
 GPU_TARGET="${GPU_TARGET:-auto}"
-CUDA_TOOLKIT="${CUDA_TOOLKIT:-12}"
+CUDA_TOOLKIT="${CUDA_TOOLKIT:-13}"
 OMPI_VERSION="${OMPI_VERSION:-4}"
 COMPILE_CORES="${COMPILE_CORES:-48}"
 
@@ -98,7 +105,7 @@ fi
 
 if [ -z "${NVCC_BIN}" ]; then
     echo "ERROR: CUDA toolkit (nvcc) not detected on PATH or under /usr/local/cuda" >&2
-    echo "       Install the CUDA toolkit (>= 12) before submitting this build." >&2
+    echo "       Install the CUDA toolkit (>= 13) before submitting this build." >&2
     exit 1
 fi
 
@@ -116,8 +123,9 @@ if ! [[ "${CUDA_MAJOR}" =~ ^[0-9]+$ ]]; then
     echo "ERROR: could not parse CUDA major version from '${CUDA_VERSION_STR}'" >&2
     exit 1
 fi
-if [ "${CUDA_MAJOR}" -lt 12 ]; then
-    echo "ERROR: CUDA toolkit major version ${CUDA_MAJOR} is below the required minimum of 12" >&2
+if [ "${CUDA_MAJOR}" -lt 13 ]; then
+    echo "ERROR: CUDA toolkit major version ${CUDA_MAJOR} is below the required minimum of 13" >&2
+    echo "       GROMACS ${GROMACS_TAG} on this phase targets CUDA 13 (Blackwell sm_120)." >&2
     exit 1
 fi
 
@@ -134,22 +142,23 @@ if [ "${PREFLIGHT_ELAPSED}" -gt 30 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# AVX-512 host check (Req 5.8). The GPU build preserves -DGMX_SIMD=AVX_512
-# for the host CPU code path, so the build host must support AVX-512 or we
-# refuse to proceed. g6e (Sapphire Rapids) and p5 (Sapphire Rapids) both
-# carry AVX-512.
+# Host SIMD auto-detection (Req 5.8). For a GPU build the host SIMD barely
+# matters (force / PME / bonded / update run on the GPU), and the g6e / p5
+# host CPUs do not all advertise AVX-512, so rather than hardcode AVX_512 we
+# pick the widest SIMD the build host actually supports.
 # ---------------------------------------------------------------------------
-if ! grep -q '\bavx512f\b' /proc/cpuinfo; then
-    echo "ERROR: build host does not advertise AVX-512 (avx512f flag missing)" >&2
-    echo "       The GPU build preserves -DGMX_SIMD=AVX_512 for host code." >&2
-    echo "       Re-submit on a g6e or p5 (or any AVX-512 capable) build node." >&2
-    exit 1
+if grep -q '\bavx512f\b' /proc/cpuinfo; then
+    HOST_SIMD="AVX_512"
+elif grep -q '\bavx2\b' /proc/cpuinfo; then
+    HOST_SIMD="AVX2_256"
+else
+    HOST_SIMD="SSE4.1"
 fi
-echo "AVX-512:        OK (avx512f present in /proc/cpuinfo)"
+echo "Host SIMD:      ${HOST_SIMD} (auto-detected from /proc/cpuinfo)"
 
 # ---------------------------------------------------------------------------
-# GPU auto-detection from nvidia-smi (Req 5.4 — install path encodes target).
-# Pattern lifted directly from design.md Section 3.
+# GPU auto-detection from nvidia-smi (Req 5.4 / 5.10 — install path encodes
+# target). Pattern lifted directly from design.md Section 3.
 # ---------------------------------------------------------------------------
 if [ "${GPU_TARGET}" = "auto" ]; then
     gpu_name="$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1 || true)"
@@ -157,22 +166,35 @@ if [ "${GPU_TARGET}" = "auto" ]; then
     case "${gpu_name}" in
         *H100*) GPU_TARGET="h100" ;;
         *L40S*|*L40s*) GPU_TARGET="l40s" ;;
+        *"RTX PRO 6000"*|*Blackwell*|*GB200*|*B200*) GPU_TARGET="blackwell" ;;
         *)
             echo "ERROR: unsupported GPU: ${gpu_name}" >&2
-            echo "       Set GPU_TARGET=l40s or GPU_TARGET=h100 explicitly to override" >&2
+            echo "       Set GPU_TARGET=l40s|h100|blackwell explicitly to override" >&2
             exit 1
             ;;
     esac
 fi
 
 case "${GPU_TARGET}" in
-    l40s|h100) ;;
+    l40s|h100|blackwell) ;;
     *)
-        echo "ERROR: Unknown GPU_TARGET: ${GPU_TARGET} (expected: l40s | h100 | auto)" >&2
+        echo "ERROR: Unknown GPU_TARGET: ${GPU_TARGET} (expected: l40s | h100 | blackwell | auto)" >&2
         exit 1
         ;;
 esac
 echo "GPU target:     ${GPU_TARGET}"
+
+# Map the GPU target to its CUDA compute capability (SM) for nvcc codegen.
+#   L40S               = Ada Lovelace  sm_89
+#   H100               = Hopper        sm_90
+#   RTX PRO 6000 (g7e) = Blackwell     sm_120 (needs CUDA >= 12.8; native on
+#                                       CUDA 13 + GROMACS 2026)
+case "${GPU_TARGET}" in
+    l40s)      CUDA_SM="89" ;;
+    h100)      CUDA_SM="90" ;;
+    blackwell) CUDA_SM="120" ;;
+esac
+echo "CUDA SM target: ${CUDA_SM}"
 
 # ---------------------------------------------------------------------------
 # OpenMPI selection. Both 4 and 5 are accepted on x86 GPU instances.
@@ -208,7 +230,7 @@ ENV_SCRIPT_OMPI="${INSTALL_ROOT}/gromacs-${GROMACS_TAG}-${OMPI_ENV_SUFFIX}-env.s
 mkdir -p "${BUILD_DIR}"
 
 # ---------------------------------------------------------------------------
-# Pre-flight: install root must not already exist (Req 5.9 intent — never
+# Pre-flight: install root must not already exist (Req 5.11 intent — never
 # silently overwrite a prior install). The user must `rm -rf` the existing
 # directory or bump GROMACS_TAG.
 # ---------------------------------------------------------------------------
@@ -229,7 +251,7 @@ echo "Build dir:      ${BUILD_DIR}"
 # Trap any failure (set -e propagates here). Same shape as the x86 / Arm
 # builds: the TOUCHED flags are flipped inside build_variant() right
 # before we clobber the install prefix, so a configure/compile failure
-# leaves untouched any earlier successful install (Req 5.9).
+# leaves untouched any earlier successful install (Req 5.11).
 # ---------------------------------------------------------------------------
 on_error() {
     local exit_code=$?
@@ -264,14 +286,33 @@ OMPI_INSTALLED=0
 
 # ---------------------------------------------------------------------------
 # Prereqs (safe to re-run; dnf will say "already installed").
-# GROMACS needs: cmake >= 3.18, gcc/g++ 11+, git, make, python3.
-# FFTW is built in-tree via -DGMX_BUILD_OWN_FFTW=ON so we don't depend on
-# fftw-devel from the OS.
+# GROMACS 2026 needs C++20, so we install GCC 14 (AL2023 packages). FFTW is
+# built in-tree via -DGMX_BUILD_OWN_FFTW=ON so we don't depend on fftw-devel
+# from the OS.
 # ---------------------------------------------------------------------------
 echo "=== Installing build prerequisites ==="
-sudo dnf install -y git cmake make gcc-c++ gcc-gfortran python3 which 2>&1 | tail -5
-echo "GCC:    $(gcc --version | head -1)"
-echo "G++:    $(g++ --version | head -1)"
+sudo dnf install -y git make python3 which \
+    gcc14 gcc14-c++ gcc14-gfortran 2>&1 | tail -5
+
+# ---------------------------------------------------------------------------
+# Toolchain for GROMACS 2026 (C++20 needs GCC >= 12; CMake >= 3.28 required;
+# Blackwell sm_120 needs a recent nvcc). GCC 14.2 comes from the AL2023 repo
+# under versioned names (/usr/bin/gcc14-gcc, gcc14-g++); CMake 3.28.3 is
+# staged on shared FSx at /fsx/tools.
+# ---------------------------------------------------------------------------
+GMX_CC="$(command -v gcc14-gcc || command -v gcc-14 || echo /usr/bin/gcc14-gcc)"
+GMX_CXX="$(command -v gcc14-g++ || command -v g++-14 || echo /usr/bin/gcc14-g++)"
+GMX_FC="$(command -v gcc14-gfortran || command -v gfortran-14 || true)"
+export CC="${GMX_CC}"
+export CXX="${GMX_CXX}"
+[ -n "${GMX_FC}" ] && export FC="${GMX_FC}"
+
+CMAKE_328="/fsx/tools/cmake-3.28.3-linux-x86_64/bin"
+if [ -x "${CMAKE_328}/cmake" ]; then
+    export PATH="${CMAKE_328}:${PATH}"
+fi
+echo "CC:     ${CC} ($(${CC} --version | head -1))"
+echo "CXX:    ${CXX} ($(${CXX} --version | head -1))"
 echo "CMake:  $(cmake --version | head -1)"
 
 # ---------------------------------------------------------------------------
@@ -318,24 +359,24 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Common CMake flags shared by both variants. AVX-512 is preserved for the
-# host-side CPU code (Req 5.8). CUDA target SMs cover both L40S (sm_89)
-# and H100 (sm_90) so a single binary runs on either GPU. --use_fast_math
-# and -DGMX_RELAXED_DOUBLE_PRECISION=OFF match Req 5.8 wording.
+# Common CMake flags shared by both variants. Host SIMD is auto-detected
+# (HOST_SIMD) with -march=native. The CUDA SM target is per-GPU-family
+# (sm_89 L40S / sm_90 H100 / sm_120 Blackwell). --use_fast_math and
+# -DGMX_RELAXED_DOUBLE_PRECISION=OFF match Req 5.8 wording.
 # ---------------------------------------------------------------------------
-CXX_FLAGS="-O3 -march=x86-64-v4 -mtune=znver4 -DNDEBUG"
+CXX_FLAGS="-O3 -march=native -DNDEBUG"
 echo "CXX flags:      ${CXX_FLAGS}"
 
 COMMON_CMAKE_FLAGS=(
     -DCMAKE_BUILD_TYPE=Release
     -DCMAKE_C_FLAGS="${CXX_FLAGS}"
     -DCMAKE_CXX_FLAGS="${CXX_FLAGS}"
-    -DGMX_SIMD=AVX_512
+    "-DGMX_SIMD=${HOST_SIMD}"
     -DGMX_FFT_LIBRARY=fftw3
     -DGMX_BUILD_OWN_FFTW=ON
     -DGMX_OPENMP=ON
     -DGMX_GPU=CUDA
-    "-DGMX_CUDA_TARGET_SM=89;90"
+    "-DGMX_CUDA_TARGET_SM=${CUDA_SM}"
     -DGMX_RELAXED_DOUBLE_PRECISION=OFF
     -DCMAKE_CUDA_FLAGS=--use_fast_math
     "-DCUDA_TOOLKIT_ROOT_DIR=${CUDA_HOME}"
@@ -367,6 +408,9 @@ build_variant() {
     echo "=== Running CMake (${variant}) ==="
     cmake "${SRC_DIR}" \
         -DCMAKE_INSTALL_PREFIX="${prefix}" \
+        -DCMAKE_C_COMPILER="${CC}" \
+        -DCMAKE_CXX_COMPILER="${CXX}" \
+        -DCMAKE_CUDA_HOST_COMPILER="${CXX}" \
         "${COMMON_CMAKE_FLAGS[@]}" \
         "$@"
 
@@ -441,7 +485,7 @@ echo "CUDA_VISIBLE_DEVICES default: ${CUDA_VISIBLE_DEVICES_DEFAULT} (detected ${
 # CUDA toolkit module so PATH and LD_LIBRARY_PATH pick up libcudart and
 # friends. The ompi variant additionally loads the chosen OpenMPI module.
 # Customer sites that ship CUDA via a different module name (e.g.
-# `cuda/12.6`) can adjust the `module load` line locally — we use
+# `cuda/13.0`) can adjust the `module load` line locally — we use
 # `module load cuda` as the canonical default and tolerate failure with
 # `|| true` so the script still works on hosts that ship CUDA via PATH
 # rather than environment-modules.
@@ -449,7 +493,7 @@ echo "CUDA_VISIBLE_DEVICES default: ${CUDA_VISIBLE_DEVICES_DEFAULT} (detected ${
 cat > "${ENV_SCRIPT_TMPI}" <<ENV
 #!/bin/bash
 # GROMACS ${GROMACS_TAG} — ${TARGET_TAG} Thread_MPI + CUDA variant
-# (GCC + nvcc ${CUDA_VERSION_STR}, ${GPU_TARGET}, AVX_512 host)
+# (GCC 14 + nvcc ${CUDA_VERSION_STR}, ${GPU_TARGET} sm_${CUDA_SM}, ${HOST_SIMD} host SIMD)
 # Single-node multi-GPU. Use the ompi variant for multi-node GPU runs.
 # CUDA toolkit is loaded via environment-modules if available; falls back
 # to whatever PATH already advertises if the module command is missing.
@@ -466,7 +510,7 @@ chmod +x "${ENV_SCRIPT_TMPI}"
 cat > "${ENV_SCRIPT_OMPI}" <<ENV
 #!/bin/bash
 # GROMACS ${GROMACS_TAG} — ${TARGET_TAG} Library_MPI + CUDA variant
-# (GCC + nvcc ${CUDA_VERSION_STR} + OpenMPI ${OMPI_VERSION}, ${GPU_TARGET}, AVX_512 host)
+# (GCC 14 + nvcc ${CUDA_VERSION_STR} + OpenMPI ${OMPI_VERSION}, ${GPU_TARGET} sm_${CUDA_SM}, ${HOST_SIMD} host SIMD)
 # Multi-node GPU runs. Invoke gmx_mpi under mpirun.
 ${MPI_CUDA_AWARE_COMMENT}
 module purge

@@ -6,7 +6,9 @@ Generate the GROMACS performance charts:
 2. Arm chart (Phase 2): hpc7g (Graviton3E / Neoverse V1) vs m8g (Graviton4 /
    Neoverse V2) per workload — gated behind ``data_available_arm`` until the
    Arm sweep lands.
-3. GPU chart (Phase 3): p5 (H100) vs g6e (L40S) per workload — gated behind
+3. GPU chart (Phase 3): three-family comparison g6e (L40S) vs g7e (Blackwell
+   RTX PRO 6000) vs p5 (H100) per workload, plus a price/performance chart
+   (ns/day per dollar-hour, us-east-2 on-demand) — gated behind
    ``data_available_gpu`` until the GPU sweep lands.
 
 Workloads: ``benchMEM`` (~80k atoms, MPINAT membrane protein) and ``benchPEP-h``
@@ -114,26 +116,53 @@ ns_m8g_2n_benchPEPh   = [2.255, 2.268]
 ns_m8g_4n_benchPEPh   = [4.407, 4.463]
 
 # GPU — benchMEM ----------------------------------------------------------
-# g6e (L40S, sm_89): per-GPU-count run on a single node
-ns_g6e_1g_benchMEM = []     # TODO(19)
-ns_g6e_2g_benchMEM = []     # TODO(19)
-ns_g6e_4g_benchMEM = []     # TODO(19)
-ns_g6e_8g_benchMEM = []     # TODO(19)
-# p5 (H100, sm_90)
-ns_p5_1g_benchMEM  = []     # TODO(19)
-ns_p5_2g_benchMEM  = []     # TODO(19)
-ns_p5_4g_benchMEM  = []     # TODO(19)
-ns_p5_8g_benchMEM  = []     # TODO(19)
+# Single-node multi-GPU scaling, GROMACS v2026.1 / CUDA 13. ns/day per
+# replicate. g6e = L40S (sm_89), g7e = Blackwell RTX PRO 6000 (sm_120),
+# p5 = H100 (sm_90). Multi-GPU runs use -npme 1 (dedicated PME rank).
+# g6e (L40S)
+ns_g6e_1g_benchMEM = []     # TODO(20.1)
+ns_g6e_2g_benchMEM = []     # TODO(20.1)
+ns_g6e_4g_benchMEM = []     # TODO(20.1)
+ns_g6e_8g_benchMEM = []     # TODO(20.1)
+# g7e (Blackwell RTX PRO 6000) — 1-GPU measured 2026-06-01 (jobs 704/705)
+ns_g7e_1g_benchMEM = [383.187, 386.679]
+ns_g7e_2g_benchMEM = []     # TODO(20.1)
+ns_g7e_4g_benchMEM = []     # TODO(20.1)
+ns_g7e_8g_benchMEM = []     # TODO(20.1)
+# p5 (H100)
+ns_p5_1g_benchMEM  = []     # TODO(20.1)
+ns_p5_2g_benchMEM  = []     # TODO(20.1)
+ns_p5_4g_benchMEM  = []     # TODO(20.1)
+ns_p5_8g_benchMEM  = []     # TODO(20.1)
 
 # GPU — benchPEP-h --------------------------------------------------------
-ns_g6e_1g_benchPEPh = []    # TODO(19)
-ns_g6e_2g_benchPEPh = []    # TODO(19)
-ns_g6e_4g_benchPEPh = []    # TODO(19)
-ns_g6e_8g_benchPEPh = []    # TODO(19)
-ns_p5_1g_benchPEPh  = []    # TODO(19)
-ns_p5_2g_benchPEPh  = []    # TODO(19)
-ns_p5_4g_benchPEPh  = []    # TODO(19)
-ns_p5_8g_benchPEPh  = []    # TODO(19)
+# g6e (L40S)
+ns_g6e_1g_benchPEPh = []    # TODO(20.1)
+ns_g6e_2g_benchPEPh = []    # TODO(20.1)
+ns_g6e_4g_benchPEPh = []    # TODO(20.1)
+ns_g6e_8g_benchPEPh = []    # TODO(20.1)
+# g7e (Blackwell) — 1-GPU measured 2026-06-01 (jobs 706/707)
+ns_g7e_1g_benchPEPh = [6.606, 6.604]
+ns_g7e_2g_benchPEPh = []    # TODO(20.1)
+ns_g7e_4g_benchPEPh = []    # TODO(20.1)
+ns_g7e_8g_benchPEPh = []    # TODO(20.1)
+# p5 (H100)
+ns_p5_1g_benchPEPh  = []    # TODO(20.1)
+ns_p5_2g_benchPEPh  = []    # TODO(20.1)
+ns_p5_4g_benchPEPh  = []    # TODO(20.1)
+ns_p5_8g_benchPEPh  = []    # TODO(20.1)
+
+# ---------------------------------------------------------------------------
+# GPU instance on-demand pricing — us-east-2, retrieved 2026-06-01.
+# Used only for the price/performance chart (ns/day per dollar-hour). The
+# .48xlarge SKU is the one swept (8 GPUs/node) for all three families.
+# Keep prices out of matplotlib calls (Requirement 12.10).
+# ---------------------------------------------------------------------------
+GPU_PRICE_USD_PER_HR = {
+    "g6e": 30.13,   # g6e.48xlarge (8x L40S)
+    "g7e": 33.14,   # g7e.48xlarge (8x Blackwell RTX PRO 6000)
+    "p5":  55.04,   # p5.48xlarge  (8x H100)
+}
 
 # ---------------------------------------------------------------------------
 # Per-workload lookup tables — keep numeric values out of matplotlib calls.
@@ -163,10 +192,12 @@ ARM_DATA = {
 GPU_DATA = {
     "benchMEM": {
         "g6e": [ns_g6e_1g_benchMEM, ns_g6e_2g_benchMEM, ns_g6e_4g_benchMEM, ns_g6e_8g_benchMEM],
+        "g7e": [ns_g7e_1g_benchMEM, ns_g7e_2g_benchMEM, ns_g7e_4g_benchMEM, ns_g7e_8g_benchMEM],
         "p5":  [ns_p5_1g_benchMEM,  ns_p5_2g_benchMEM,  ns_p5_4g_benchMEM,  ns_p5_8g_benchMEM],
     },
     "benchPEP-h": {
         "g6e": [ns_g6e_1g_benchPEPh, ns_g6e_2g_benchPEPh, ns_g6e_4g_benchPEPh, ns_g6e_8g_benchPEPh],
+        "g7e": [ns_g7e_1g_benchPEPh, ns_g7e_2g_benchPEPh, ns_g7e_4g_benchPEPh, ns_g7e_8g_benchPEPh],
         "p5":  [ns_p5_1g_benchPEPh,  ns_p5_2g_benchPEPh,  ns_p5_4g_benchPEPh,  ns_p5_8g_benchPEPh],
     },
 }
@@ -305,6 +336,163 @@ def render_two_instance_chart(
     return True
 
 
+# Per-family colors for the three-way GPU charts.
+GPU_FAMILY_STYLE = {
+    "g6e": ("#4E79A7", "g6e (L40S, sm_89)"),
+    "g7e": ("#59A14F", "g7e (Blackwell RTX PRO 6000, sm_120)"),
+    "p5":  ("#F28E2B", "p5 (H100, sm_90)"),
+}
+GPU_FAMILY_ORDER = ["g6e", "g7e", "p5"]
+
+
+def render_three_family_gpu_chart(
+    workload_id,
+    workload_subtitle,
+    gpu_counts,
+    family_cells,
+    output_filename,
+    suptitle,
+):
+    """Render a grouped-bar speedup chart across up to three GPU families.
+
+    Speedup is normalised to the slowest family's 1-GPU mean so all three
+    families share one baseline (Requirement 12.5). Families/cells with no
+    data are skipped without raising. Returns ``True`` if at least one bar
+    was drawn.
+    """
+    present = {
+        fam: [cell_mean(c) for c in family_cells[fam]]
+        for fam in GPU_FAMILY_ORDER if fam in family_cells
+    }
+    # Baseline = the smallest 1-GPU mean among families that have one, so
+    # every rendered family is >= 1.0x and the comparison is like-for-like.
+    one_gpu_means = [
+        means[0] for means in present.values()
+        if means and means[0] is not None
+    ]
+    if not one_gpu_means:
+        print(f"  skipping {output_filename} — no 1-GPU data for {workload_id}")
+        return False
+    baseline = min(one_gpu_means)
+
+    fig, ax = plt.subplots(figsize=FIG_SIZE)
+    families_drawn = [
+        fam for fam in GPU_FAMILY_ORDER
+        if fam in present and any(m is not None for m in present[fam])
+    ]
+    n_fam = len(families_drawn)
+    group_w = 0.8
+    bar_w = group_w / max(n_fam, 1)
+    x_pos = np.arange(len(gpu_counts))
+
+    any_bar = False
+    for fi, fam in enumerate(families_drawn):
+        color, label = GPU_FAMILY_STYLE[fam]
+        means = present[fam]
+        offset = (fi - (n_fam - 1) / 2) * bar_w
+        heights = [(m / baseline) if m is not None else 0.0 for m in means]
+        ax.bar(x_pos + offset, heights, bar_w, color=color,
+               edgecolor=EDGE_COLOR, label=label)
+        for i, h in enumerate(heights):
+            if h > 0:
+                any_bar = True
+                ax.text(i + offset, h + ANNOTATION_OFFSET, f"{h:.2f}x",
+                        ha="center", va="bottom",
+                        fontsize=ANNOTATION_FONTSIZE - 1,
+                        fontweight=ANNOTATION_WEIGHT)
+
+    if not any_bar:
+        plt.close(fig)
+        print(f"  skipping {output_filename} — no data for {workload_id}")
+        return False
+
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels([f"{g}G" for g in gpu_counts])
+    ax.set_xlabel("Number of GPUs (single-node)")
+    ax.set_ylabel("Speedup vs slowest 1-GPU family  (higher is better)")
+    ax.set_title(f"GROMACS — {workload_subtitle}", fontsize=TITLE_FONTSIZE)
+    ax.grid(True, axis="y", linestyle=GRID_LINESTYLE, alpha=GRID_ALPHA)
+    ax.legend(loc="upper left", fontsize=8)
+    fig.suptitle(suptitle, fontsize=SUPTITLE_FONTSIZE,
+                 fontweight=SUPTITLE_WEIGHT, y=1.00)
+    plt.tight_layout()
+    plt.savefig(output_filename, dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  wrote {output_filename}")
+    return True
+
+
+def render_gpu_price_perf_chart(
+    workload_id,
+    workload_subtitle,
+    gpu_counts,
+    family_cells,
+    price_per_hr,
+    output_filename,
+    suptitle,
+):
+    """Render a price/performance chart: ns/day per US dollar-hour.
+
+    For each family and GPU count, the metric is
+    ``mean(ns/day) / hourly_price`` (Requirement 12.9). Absolute ns/day is
+    never rendered. Skips cells/families with no data or no price without
+    raising. Returns ``True`` if at least one bar was drawn.
+    """
+    fig, ax = plt.subplots(figsize=FIG_SIZE)
+    families_drawn = [
+        fam for fam in GPU_FAMILY_ORDER
+        if fam in family_cells and fam in price_per_hr
+        and any(cell_mean(c) is not None for c in family_cells[fam])
+    ]
+    n_fam = len(families_drawn)
+    if n_fam == 0:
+        plt.close(fig)
+        print(f"  skipping {output_filename} — no priced data for {workload_id}")
+        return False
+
+    group_w = 0.8
+    bar_w = group_w / n_fam
+    x_pos = np.arange(len(gpu_counts))
+
+    any_bar = False
+    for fi, fam in enumerate(families_drawn):
+        color, base_label = GPU_FAMILY_STYLE[fam]
+        price = price_per_hr[fam]
+        label = f"{base_label}  (${price:.2f}/hr)"
+        means = [cell_mean(c) for c in family_cells[fam]]
+        offset = (fi - (n_fam - 1) / 2) * bar_w
+        heights = [(m / price) if m is not None else 0.0 for m in means]
+        ax.bar(x_pos + offset, heights, bar_w, color=color,
+               edgecolor=EDGE_COLOR, label=label)
+        for i, h in enumerate(heights):
+            if h > 0:
+                any_bar = True
+                ax.text(i + offset, h * (1 + ANNOTATION_OFFSET), f"{h:.2f}",
+                        ha="center", va="bottom",
+                        fontsize=ANNOTATION_FONTSIZE - 1,
+                        fontweight=ANNOTATION_WEIGHT)
+
+    if not any_bar:
+        plt.close(fig)
+        print(f"  skipping {output_filename} — no data for {workload_id}")
+        return False
+
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels([f"{g}G" for g in gpu_counts])
+    ax.set_xlabel("Number of GPUs (single-node)")
+    ax.set_ylabel("ns/day per $/hr  (higher is better)")
+    ax.set_title(f"GROMACS — {workload_subtitle}", fontsize=TITLE_FONTSIZE)
+    ax.grid(True, axis="y", linestyle=GRID_LINESTYLE, alpha=GRID_ALPHA)
+    ax.legend(loc="upper right", fontsize=8)
+    fig.suptitle(suptitle, fontsize=SUPTITLE_FONTSIZE,
+                 fontweight=SUPTITLE_WEIGHT, y=1.00)
+    plt.tight_layout()
+    plt.savefig(output_filename, dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  wrote {output_filename}")
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Chart 1 — x86 hpc8a vs hpc7a (per workload)
 # ---------------------------------------------------------------------------
@@ -361,30 +549,37 @@ else:
           "sweep data has been pulled from DynamoDB (see task 14.2).")
 
 # ---------------------------------------------------------------------------
-# Chart 3 — GPU p5 (H100) vs g6e (L40S) — Phase 3
+# Chart 3 — GPU three-family comparison (g6e / g7e / p5) — Phase 3
+# Plus a price/performance chart (ns/day per dollar-hour) per workload.
 # ---------------------------------------------------------------------------
 if data_available_gpu:
-    print("\nGPU charts (p5 vs g6e):")
+    print("\nGPU performance charts (g6e vs g7e vs p5):")
     for model_id, subtitle in WORKLOADS:
-        fname = f"Gromacs-{model_id}-P5VsG6e.png"
-        cells = GPU_DATA[model_id]
-        render_two_instance_chart(
+        render_three_family_gpu_chart(
             workload_id=model_id,
             workload_subtitle=subtitle,
-            x_values=GPU_COUNTS,
-            baseline_lists=cells["g6e"],
-            comparison_lists=cells["p5"],
-            baseline_label="g6e (L40S, sm_89)",
-            comparison_label="p5 (H100, sm_90)",
-            baseline_unit_label="G",
-            x_axis_label="Number of GPUs (single-node, NVLink/NVSwitch where present)",
-            output_filename=fname,
-            suptitle="GROMACS — p5 (H100) vs g6e (L40S)   "
-                     "[CUDA 12 + GCC + OpenMPI]",
+            gpu_counts=GPU_COUNTS,
+            family_cells=GPU_DATA[model_id],
+            output_filename=f"Gromacs-{model_id}-G6eVsG7eVsP5.png",
+            suptitle="GROMACS — g6e (L40S) vs g7e (Blackwell) vs p5 (H100)   "
+                     "[CUDA 13 + GCC 14, GROMACS v2026.1]",
+        )
+
+    print("\nGPU price/performance charts (ns/day per $/hr, us-east-2):")
+    for model_id, subtitle in WORKLOADS:
+        render_gpu_price_perf_chart(
+            workload_id=model_id,
+            workload_subtitle=subtitle,
+            gpu_counts=GPU_COUNTS,
+            family_cells=GPU_DATA[model_id],
+            price_per_hr=GPU_PRICE_USD_PER_HR,
+            output_filename=f"Gromacs-{model_id}-GpuPricePerf.png",
+            suptitle="GROMACS GPU price/performance — g6e vs g7e vs p5   "
+                     "[us-east-2 on-demand, 8-GPU .48xlarge SKUs]",
         )
 else:
-    print("\nGPU charts: skipped — set data_available_gpu=True once Phase 3 "
-          "sweep data has been pulled from DynamoDB (see task 19).")
+    print("\nGPU charts: skipped — set data_available_gpu=True once the Phase 3 "
+          "sweep results have been filled into the ns_* lists (see task 20.1).")
 
 # ---------------------------------------------------------------------------
 # Final exit. Empty/sentinel data is not an error condition — Phase 1
