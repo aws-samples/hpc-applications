@@ -620,6 +620,14 @@ echo "provider=efa"
 #
 # `-resethway` discards the warm-up half of the run from the timing.
 # `-noconfout` suppresses the per-rank confout.gro write.
+#
+# PME tuning vs -resethway: on large systems (benchPEP-h, ~12M atoms) PME
+# auto-tuning is still active at the -resethway midpoint, which makes the
+# counter reset fail fatally ("PME tuning was still active when attempting to
+# reset mdrun counters"). We disable PME tuning with -notunepme for that model
+# so the reset (and thus the warm-up exclusion) is deterministic. Smaller
+# systems converge PME tuning well before the midpoint and keep tuning on.
+# Override TUNEPME=on to force tuning back on for experimentation.
 # ---------------------------------------------------------------------------
 GPU_BONDED="${GPU_BONDED:-auto}"
 GPU_UPDATE="${GPU_UPDATE:-auto}"
@@ -627,6 +635,12 @@ MDRUN_ARGS=(mdrun -s "${TPR_FILE}" -nsteps "${TIMESTEPS}" -resethway -noconfout
     -nstlist "${NSTLIST}"
     -nb gpu -pme gpu -bonded "${GPU_BONDED}" -update "${GPU_UPDATE}"
     -deffnm md)
+
+# Disable PME tuning for the large benchPEP-h system (see note above), unless
+# the user explicitly re-enables it with TUNEPME=on.
+if [ "${MODEL}" = "benchPEP-h" ] && [ "${TUNEPME:-off}" != "on" ]; then
+    MDRUN_ARGS+=(-notunepme)
+fi
 
 # Multi-rank PME-on-GPU requires a dedicated PME rank. With `-pme gpu` and
 # more than one rank, GROMACS refuses to auto-split PME across ranks and
