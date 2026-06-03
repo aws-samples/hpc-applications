@@ -40,7 +40,7 @@ import numpy as np
 # and the per-replicate lists below have been populated from DynamoDB.
 # ---------------------------------------------------------------------------
 data_available_arm = True    # Phase 2 (hpc7g / m8g) — populated 2026-05-29
-data_available_gpu = False   # Phase 3 (g6e / p5)
+data_available_gpu = True    # Phase 3 (g6e / g7e / p5) — populated 2026-06-02
 
 # ---------------------------------------------------------------------------
 # Workload list. Each entry is ``(model_id, chart_subtitle)``. ``model_id`` is
@@ -118,39 +118,51 @@ ns_m8g_4n_benchPEPh   = [4.407, 4.463]
 # GPU — benchMEM ----------------------------------------------------------
 # Single-node multi-GPU scaling, GROMACS v2026.1 / CUDA 13. ns/day per
 # replicate. g6e = L40S (sm_89), g7e = Blackwell RTX PRO 6000 (sm_120),
-# p5 = H100 (sm_90). Multi-GPU runs use -npme 1 (dedicated PME rank).
+# p5 = H100 (sm_90). Measured on hpc-4 (us-east-2), .48xlarge SKUs, 2026-06-01/02.
+#
+# benchMEM (~80k atoms) is run 1-GPU ONLY: it is far too small to split
+# across GPUs, so multi-GPU anti-scales hard and stalls. Evidence: g6e
+# 2-GPU measured 8.0 ns/day vs 1-GPU 265 ns/day (recorded below as a comment,
+# not charted). We therefore present benchMEM as a single-GPU throughput
+# comparison only.
 # g6e (L40S)
-ns_g6e_1g_benchMEM = []     # TODO(20.1)
-ns_g6e_2g_benchMEM = []     # TODO(20.1)
-ns_g6e_4g_benchMEM = []     # TODO(20.1)
-ns_g6e_8g_benchMEM = []     # TODO(20.1)
-# g7e (Blackwell RTX PRO 6000) — 1-GPU measured 2026-06-01 (jobs 704/705)
+ns_g6e_1g_benchMEM = [264.744, 265.445]
+ns_g6e_2g_benchMEM = []     # anti-scales (measured 8.003, 8.014) — not charted
+ns_g6e_4g_benchMEM = []     # not run (anti-scaling, too small to split)
+ns_g6e_8g_benchMEM = []     # not run
+# g7e (Blackwell RTX PRO 6000)
 ns_g7e_1g_benchMEM = [383.187, 386.679]
-ns_g7e_2g_benchMEM = []     # TODO(20.1)
-ns_g7e_4g_benchMEM = []     # TODO(20.1)
-ns_g7e_8g_benchMEM = []     # TODO(20.1)
+ns_g7e_2g_benchMEM = []     # not run
+ns_g7e_4g_benchMEM = []     # not run
+ns_g7e_8g_benchMEM = []     # not run
 # p5 (H100)
-ns_p5_1g_benchMEM  = []     # TODO(20.1)
-ns_p5_2g_benchMEM  = []     # TODO(20.1)
-ns_p5_4g_benchMEM  = []     # TODO(20.1)
-ns_p5_8g_benchMEM  = []     # TODO(20.1)
+ns_p5_1g_benchMEM  = [232.040, 237.447]
+ns_p5_2g_benchMEM  = []     # not run
+ns_p5_4g_benchMEM  = []     # not run
+ns_p5_8g_benchMEM  = []     # not run
 
 # GPU — benchPEP-h --------------------------------------------------------
+# benchPEP-h (~12M atoms), full 1/2/4/8-GPU scaling, run with -notunepme
+# (PME tuning does not converge by the -resethway midpoint on a system this
+# large) and -npme 1 (dedicated PME rank, required for multi-rank PME-on-GPU).
+# NOTE: these are single-node multi-GPU runs over PCIe (no NVLink on these
+# SKUs), so even the 12M-atom system anti-scales — inter-GPU PME/PP traffic
+# dominates. The 1-GPU column is the meaningful raw-throughput comparison.
 # g6e (L40S)
-ns_g6e_1g_benchPEPh = []    # TODO(20.1)
-ns_g6e_2g_benchPEPh = []    # TODO(20.1)
-ns_g6e_4g_benchPEPh = []    # TODO(20.1)
-ns_g6e_8g_benchPEPh = []    # TODO(20.1)
-# g7e (Blackwell) — 1-GPU measured 2026-06-01 (jobs 706/707)
-ns_g7e_1g_benchPEPh = [6.606, 6.604]
-ns_g7e_2g_benchPEPh = []    # TODO(20.1)
-ns_g7e_4g_benchPEPh = []    # TODO(20.1)
-ns_g7e_8g_benchPEPh = []    # TODO(20.1)
+ns_g6e_1g_benchPEPh = [3.436, 3.452]
+ns_g6e_2g_benchPEPh = [2.477, 2.487]
+ns_g6e_4g_benchPEPh = [0.850, 0.855]
+ns_g6e_8g_benchPEPh = [0.417]            # r2 not parseable (transient); r1 valid
+# g7e (Blackwell)
+ns_g7e_1g_benchPEPh = [6.614]            # r1 not parseable (transient); r2 valid
+ns_g7e_2g_benchPEPh = [4.390, 4.361]
+ns_g7e_4g_benchPEPh = [0.855, 0.849]
+ns_g7e_8g_benchPEPh = [0.425, 0.426]
 # p5 (H100)
-ns_p5_1g_benchPEPh  = []    # TODO(20.1)
-ns_p5_2g_benchPEPh  = []    # TODO(20.1)
-ns_p5_4g_benchPEPh  = []    # TODO(20.1)
-ns_p5_8g_benchPEPh  = []    # TODO(20.1)
+ns_p5_1g_benchPEPh  = [4.117, 4.116]
+ns_p5_2g_benchPEPh  = [2.899, 2.918]
+ns_p5_4g_benchPEPh  = [0.847, 0.846]
+ns_p5_8g_benchPEPh  = [0.410, 0.409]
 
 # ---------------------------------------------------------------------------
 # GPU instance on-demand pricing — us-east-2, retrieved 2026-06-01.

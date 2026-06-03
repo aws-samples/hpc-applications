@@ -6,7 +6,7 @@ The scripts are organised by CPU architecture:
 
 - [`x86/`](x86/) — builds and benchmarks for x86_64 (`hpc8a`, `hpc7a`)
 - [`Arm/`](Arm/) — builds and benchmarks for aarch64 (`hpc7g` / Graviton3E, `m8g` / Graviton4)
-- `GPU/` — *(Phase 3, future-scoped)* CUDA builds and benchmarks for `g6e` (L40S) and `p5` (H100)
+- `GPU/` — *(Phase 3, Validated)* CUDA 13 builds and benchmarks for `g6e` (L40S), `g7e` (Blackwell RTX PRO 6000), and `p5` (H100)
 
 Unlike LAMMPS, GROMACS ships **two binaries per build**: `gmx` (Thread_MPI, single-node) and `gmx_mpi` (Library_MPI, multi-node over EFA). Both binaries come from the same build script — they're separate CMake trees installed side-by-side under `tmpi/` and `ompi/`. The benchmark launcher picks the right one based on `SLURM_JOB_NUM_NODES`: 1 node → `gmx`, >1 node → `mpirun … gmx_mpi`.
 
@@ -88,13 +88,18 @@ Override via `--export=ALL,...`:
 | `BASE_DIR` | `/fsx/gromacs` | Install root |
 | `COMPILE_CORES` | `48` | Parallel compile threads |
 
-### GPU — Thread_MPI + Library_MPI + CUDA (Phase 3, Future-Scoped — scripts committed)
+### GPU — Thread_MPI + Library_MPI + CUDA (Phase 3, Validated)
 
-A single build script produces **both** Thread_MPI (`gmx`) and Library_MPI (`gmx_mpi`) variants in one job, both linked against CUDA, and auto-detects L40S (g6e, sm_89) vs H100 (p5, sm_90) from `nvidia-smi --query-gpu=name`. SIMD: `-DGMX_SIMD=AVX_512` is preserved for the host CPU code (host AVX-512 is required, not optional — Sapphire Rapids on g6e and p5 has it). FFT: in-tree FFTW3 via `-DGMX_BUILD_OWN_FFTW=ON`. The build aborts within 30 s on a host without `nvidia-smi`, without `nvcc`, with CUDA toolkit major version below 12, or without AVX-512.
+A single build script produces **both** Thread_MPI (`gmx`) and Library_MPI (`gmx_mpi`) variants in one job, both linked against CUDA 13, and auto-detects L40S (g6e, sm_89), Blackwell RTX PRO 6000 (g7e, sm_120), and H100 (p5, sm_90) from `nvidia-smi --query-gpu=name`. Pins **GROMACS v2026.1**: the GPU nodes ship CUDA 13.0 and GROMACS 2024.4 cannot build against CUDA 13 (upstream added CUDA 13 support in 2025.3). SIMD: the host SIMD level is **auto-detected** from `/proc/cpuinfo` (`AVX_512` / `AVX2_256` / `SSE4.1`) with `-march=native` — the g6e/p5 host CPUs do not all advertise AVX-512, and for a GPU build the host SIMD barely matters since force/PME/bonded/update run on the GPU. FFT: in-tree FFTW3 via `-DGMX_BUILD_OWN_FFTW=ON`. The build aborts within 30 s on a host without `nvidia-smi`, without `nvcc`, or with CUDA toolkit major version below 13.
+
+GROMACS 2026 needs C++20 (GCC ≥ 12) and CMake ≥ 3.28, and the Blackwell `sm_120` target needs a recent nvcc, so the build uses **GCC 14** (AL2023 `gcc14`/`gcc14-c++`/`gcc14-gfortran`, installed as `/usr/bin/gcc14-gcc` / `gcc14-g++`) and a **CMake 3.28.3** staged on shared FSx at `/fsx/tools`.
 
 ```bash
 # g6e (L40S, sm_89) — default partition, 1 GPU job
 sbatch GPU/build_gromacs_gpu.sbatch
+
+# g7e (Blackwell RTX PRO 6000, sm_120) — 8-GPU node
+sbatch -p g7e --gres=gpu:8 GPU/build_gromacs_gpu.sbatch
 
 # p5 (H100, sm_90) — 8-GPU node
 sbatch -p p5 --gres=gpu:8 GPU/build_gromacs_gpu.sbatch
@@ -103,9 +108,9 @@ sbatch -p p5 --gres=gpu:8 GPU/build_gromacs_gpu.sbatch
 sbatch --export=ALL,OMPI_VERSION=5 GPU/build_gromacs_gpu.sbatch
 ```
 
-- Compiler: GCC 11.5 (system, AL2023) + `nvcc` from the CUDA toolkit on PATH (>= 12)
-- Host flags: `-O3 -march=x86-64-v4 -mtune=znver4 -DNDEBUG` (preserves AVX-512 host SIMD)
-- CUDA flags: `-DGMX_GPU=CUDA -DGMX_CUDA_TARGET_SM="89;90" -DCMAKE_CUDA_FLAGS=--use_fast_math -DGMX_RELAXED_DOUBLE_PRECISION=OFF`
+- Compiler: GCC 14 (AL2023 `gcc14`) + `nvcc` from CUDA 13 on PATH (>= 13 required)
+- Host flags: `-O3 -march=native -DNDEBUG` (host SIMD auto-detected from `/proc/cpuinfo`)
+- CUDA flags: `-DGMX_GPU=CUDA -DGMX_CUDA_TARGET_SM="<89|90|120>" -DCMAKE_CUDA_FLAGS=--use_fast_math -DGMX_RELAXED_DOUBLE_PRECISION=OFF` (SM chosen per detected GPU family)
 - MPI: system OpenMPI 4.1.7 at `/opt/amazon/openmpi` (default) **or** OpenMPI 5.0.9 at `/opt/amazon/openmpi5` (set `OMPI_VERSION=5`)
 - Build time: ~30–40 minutes (both variants, dominated by `nvcc`)
 
@@ -120,8 +125,9 @@ Outputs (the `tmpi/` directory holds the `gmx` Thread_MPI binary used for single
 
 | GPU target | CUDA SM | Install location | Env scripts |
 |------------|---------|------------------|-------------|
-| L40S (g6e) | sm_89 | `/fsx/gromacs/x86_64-cuda12-l40s/<tag>/{tmpi,ompi}/bin/` | `gromacs-<tag>-tmpi-env.sh`, `gromacs-<tag>-ompi-env.sh` (or `…-ompi5-env.sh` if `OMPI_VERSION=5`) |
-| H100 (p5) | sm_90 | `/fsx/gromacs/x86_64-cuda12-h100/<tag>/{tmpi,ompi}/bin/` | `gromacs-<tag>-tmpi-env.sh`, `gromacs-<tag>-ompi-env.sh` (or `…-ompi5-env.sh` if `OMPI_VERSION=5`) |
+| L40S (g6e) | sm_89 | `/fsx/gromacs/x86_64-cuda13-l40s/<tag>/{tmpi,ompi}/bin/` | `gromacs-<tag>-tmpi-env.sh`, `gromacs-<tag>-ompi-env.sh` (or `…-ompi5-env.sh` if `OMPI_VERSION=5`) |
+| Blackwell (g7e) | sm_120 | `/fsx/gromacs/x86_64-cuda13-blackwell/<tag>/{tmpi,ompi}/bin/` | `gromacs-<tag>-tmpi-env.sh`, `gromacs-<tag>-ompi-env.sh` (or `…-ompi5-env.sh` if `OMPI_VERSION=5`) |
+| H100 (p5) | sm_90 | `/fsx/gromacs/x86_64-cuda13-h100/<tag>/{tmpi,ompi}/bin/` | `gromacs-<tag>-tmpi-env.sh`, `gromacs-<tag>-ompi-env.sh` (or `…-ompi5-env.sh` if `OMPI_VERSION=5`) |
 
 Both env scripts also export a default `CUDA_VISIBLE_DEVICES=0,1,…,N-1` covering every GPU detected on the build host so a freshly-sourced env script picks up all visible GPUs by default. The launcher tightens that to the first `GPU_COUNT` GPUs at run time.
 
@@ -129,9 +135,9 @@ Override via `--export=ALL,...`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GROMACS_TAG` | `v2024.4` | Git tag from the [GROMACS GitLab](https://gitlab.com/gromacs/gromacs) |
-| `GPU_TARGET` | `auto` | `l40s` / `h100` / `auto` (auto-detects from `nvidia-smi --query-gpu=name`) |
-| `CUDA_TOOLKIT` | `12` | Minimum CUDA major version required on PATH (build aborts if `nvcc --version` reports below this) |
+| `GROMACS_TAG` | `v2026.1` | Git tag from the [GROMACS GitLab](https://gitlab.com/gromacs/gromacs) |
+| `GPU_TARGET` | `auto` | `l40s` / `blackwell` / `h100` / `auto` (auto-detects from `nvidia-smi --query-gpu=name`) |
+| `CUDA_TOOLKIT` | `13` | Minimum CUDA major version required on PATH (build aborts if `nvcc --version` reports below this) |
 | `OMPI_VERSION` | `4` | `4` or `5` — controls which OpenMPI module is loaded for the Library_MPI variant |
 | `BASE_DIR` | `/fsx/gromacs` | Install root |
 | `COMPILE_CORES` | `48` | Parallel compile threads |
@@ -214,7 +220,7 @@ sbatch -p m8g --ntasks-per-node=192 --nodes=4 \
 
 The Arm launcher auto-discovers the most recently modified env script under `aarch64-graviton4-ompi5/<tag>/`, then `aarch64-graviton3-ompi5/<tag>/`, then `aarch64-graviton3/<tag>/`. Override with `--export=ALL,GROMACS_ENV=/path/to/gromacs-<tag>-ompi5-env.sh` to pin a specific build (e.g., to compare Graviton3E + OpenMPI 4 against Graviton3E + OpenMPI 5 on the same hardware). Graviton4 + OpenMPI 4 is rejected at submit time — same constraint as the build script.
 
-### GPU examples (Phase 3, Future-Scoped — scripts committed)
+### GPU examples (Phase 3, Validated)
 
 The GPU launcher dispatches to one of three execution paths based on `GPU_COUNT` vs detected GPUs/node:
 
@@ -251,9 +257,9 @@ sbatch -p p5 --gres=gpu:8 --export=ALL,MODEL=benchPEP-h,GPU_COUNT=8 \
   GPU/gromacs-benchmark.sbatch
 ```
 
-The launcher passes `-nb gpu -pme gpu -bonded gpu -update gpu` to `gmx mdrun` to push the entire force / PME / bonded / update pipeline onto the GPU. This is the H100 / 2024 best-practice but on smaller GPUs (L40S) keeping `-bonded cpu` may actually be faster — the offload split may need per-benchmark and per-GPU tuning. Capture the measured optimum during the live sweep rather than freezing it in the script.
+The launcher passes `-nb gpu -pme gpu -bonded "${GPU_BONDED:-auto}" -update "${GPU_UPDATE:-auto}"` to `gmx mdrun`. Non-bonded and PME always run on the GPU; `-bonded` and `-update` default to GROMACS `auto` because forcing `-update gpu` **aborts benchMEM** (its 3+ coupled constraints can't run under GPU LINCS). Override `GPU_BONDED` / `GPU_UPDATE` (`gpu`/`cpu`/`auto`) to force a split during tuning. Multi-GPU runs additionally pass `-npme 1` (a dedicated PME rank, required for PME-on-GPU with more than one rank), and `benchPEP-h` adds `-notunepme` (PME tuning does not converge by the `-resethway` midpoint on a 12M-atom system; override with `TUNEPME=on`).
 
-The launcher also auto-discovers the most recently modified env script under `x86_64-cuda*-{l40s,h100}/<tag>/`, picking the `*-tmpi-env.sh` for `GPU_COUNT <= GPUs/node` and the `*-ompi[5]-env.sh` for multi-node runs. Override with `--export=ALL,GROMACS_ENV=/path/to/gromacs-<tag>-tmpi-env.sh` to pin a specific build (e.g., to compare CUDA 12.4 against CUDA 12.6 on the same hardware).
+The launcher also auto-discovers the most recently modified env script under `x86_64-cuda*-{l40s,blackwell,h100}/<tag>/`, picking the `*-tmpi-env.sh` for `GPU_COUNT <= GPUs/node` and the `*-ompi[5]-env.sh` for multi-node runs. Override with `--export=ALL,GROMACS_ENV=/path/to/gromacs-<tag>-tmpi-env.sh` to pin a specific build (e.g., to compare families on the same node count).
 
 ## Overrides
 
@@ -282,7 +288,7 @@ All benchmark launchers:
 
 ## Performance
 
-Speedup-only charts (no absolute `ns/day` values), x86 normalised to a 1-node hpc7a baseline, Arm normalised to a 1-node hpc7g baseline, and GPU normalised to a 1-GPU g6e (L40S) baseline. Same chart conventions as the LAMMPS README.
+Speedup-only charts (no absolute `ns/day` values), x86 normalised to a 1-node hpc7a baseline, Arm normalised to a 1-node hpc7g baseline. The GPU section adds a three-family comparison (g6e/g7e/p5) normalised to the slowest family's 1-GPU result, plus a price/performance chart (ns/day per dollar-hour). Same chart conventions as the LAMMPS README.
 
 ### x86 — hpc8a (Zen5) vs hpc7a (Zen4)
 
@@ -316,28 +322,31 @@ Notes on the Arm data:
 - **hpc7g multi-node benchPEP-h is omitted**: 12M-atom runs across multiple 64-core Graviton3E nodes stalled in domain decomposition past a 2-hour wall and were cancelled. The 1N hpc7g point plus the full m8g curve already capture the Graviton3E-vs-Graviton4 story (Graviton4 is ~2.5× faster per node).
 - **One hpc7g 4N benchMEM replicate (192.9 ns/day) was dropped as a confirmed outlier**: four further replicates clustered at ~235 ns/day, so the low rep (a noisy node) is excluded from the mean.
 
-### GPU — p5 (H100) vs g6e (L40S)
+### GPU — g6e (L40S) vs g7e (Blackwell) vs p5 (H100)
 
-> **Charts pending live sweep — see [task 19](GPU/SCALING_SWEEP.md).** The relative image paths below resolve as soon as the GPU PNGs land in [`Doc/img/Gromacs/`](../../Doc/img/Gromacs/) on `main`. Until then the per-replicate GPU data lists in [`Doc/img/Gromacs/generate_charts.py`](../../Doc/img/Gromacs/generate_charts.py) are still placeholder `[]` values, the `data_available_gpu` gate near the top of that script keeps the GPU chart block skipped, and the PNGs are deliberately **not** committed — a chart of zero-height bars would be more misleading than a broken-image marker.
+GPU charts come from the live three-family sweep on the `hpc-4` cluster (us-east-2), GROMACS v2026.1 / CUDA 13, `.48xlarge` SKUs (8 GPUs/node). Per-replicate `Performance: ns/day` values are in [`Doc/img/Gromacs/generate_charts.py`](../../Doc/img/Gromacs/generate_charts.py); regenerate with `python3 Doc/img/Gromacs/generate_charts.py`.
 
-The chart files follow the LAMMPS naming pattern, one PNG per workload:
+**Two charts per workload:** a raw three-family performance comparison (speedup normalised to the slowest family's 1-GPU result) and a **price/performance** chart (ns/day per US dollar-hour, us-east-2 on-demand: g6e.48xlarge $30.13, g7e.48xlarge $33.14, p5.48xlarge $55.04).
 
 #### benchMEM (~80,000 atoms, MPINAT membrane protein)
 
-![GROMACS benchMEM p5 vs g6e](../../Doc/img/Gromacs/Gromacs-benchMEM-P5VsG6e.png)
+![GROMACS benchMEM g6e vs g7e vs p5](../../Doc/img/Gromacs/Gromacs-benchMEM-G6eVsG7eVsP5.png)
+
+![GROMACS benchMEM GPU price/performance](../../Doc/img/Gromacs/Gromacs-benchMEM-GpuPricePerf.png)
 
 #### benchPEP-h (~12,000,000 atoms, MPINAT peptide)
 
-![GROMACS benchPEP-h p5 vs g6e](../../Doc/img/Gromacs/Gromacs-benchPEP-h-P5VsG6e.png)
+![GROMACS benchPEP-h g6e vs g7e vs p5](../../Doc/img/Gromacs/Gromacs-benchPEP-h-G6eVsG7eVsP5.png)
 
-How the charts get filled in:
+![GROMACS benchPEP-h GPU price/performance](../../Doc/img/Gromacs/Gromacs-benchPEP-h-GpuPricePerf.png)
 
-1. Tick all five prerequisites in [`apps/Gromacs/GPU/SCALING_SWEEP.md`](GPU/SCALING_SWEEP.md) (GPU build artefacts on FSx for L40S + H100, smoke benchmarks green on both partitions including multi-GPU and `GPU_COUNT` validation, DynamoDB table active, `dynamodb:PutItem` attached to the **GPU** cluster compute role, cluster copy of the launcher with the recorder block uncommented).
-2. On the GPU cluster head node, run [`apps/Gromacs/GPU/scaling_sweep_manifest.sh`](GPU/scaling_sweep_manifest.sh) — submits 32 jobs covering (1, 2, 4, 8 GPUs) × {benchMEM, benchPEP-h} × 2 replicates × {g6e at 8 GPUs/node, p5 at 8 GPUs/node}. Wait for the queue to drain.
-3. Pull per-cell `ns/day` means from `Gromacs_Benchmarks` in `us-east-1` via [`apps/Gromacs/dynamodb/scan_sweep.sh`](dynamodb/) (use `--since <YYYY-MM-DD>` to scope to the sweep window — the table also still holds Phase 1 / Phase 2 rows). Phase 3 records carry additional `gpu_count` and `cuda_version` attributes.
-4. Paste the per-replicate `Performance: ns/day` lists into the `ns_g6e_*` / `ns_p5_*` Python literals near the top of [`Doc/img/Gromacs/generate_charts.py`](../../Doc/img/Gromacs/generate_charts.py) (the `# TODO(19)` comment markers show every cell that needs filling), then flip `data_available_gpu = True` near the top of the script so the GPU chart block runs.
-5. From the repo root, run `python3 Doc/img/Gromacs/generate_charts.py`. The script writes `Gromacs-benchMEM-P5VsG6e.png` and `Gromacs-benchPEP-h-P5VsG6e.png` next to itself.
-6. `git add Doc/img/Gromacs/Gromacs-*-P5VsG6e.png Doc/img/Gromacs/generate_charts.py` and commit.
+Notes on the GPU data:
+
+- **benchMEM is charted at 1 GPU only.** The ~80k-atom system is far too small to split across GPUs: a 2-GPU g6e run measured ~8 ns/day versus ~265 ns/day on a single GPU, and higher GPU counts stall. The single-GPU comparison is the meaningful one for this workload.
+- **GROMACS anti-scales across GPUs on these SKUs.** Every family loses throughput as GPU count rises (e.g. benchPEP-h on p5: 4.1 → 2.9 → 0.85 → 0.41 ns/day from 1→8 GPUs). These are single-node multi-GPU runs with a dedicated PME rank over **PCIe** — none of the swept `.48xlarge` SKUs expose NVLink to GROMACS here — so inter-GPU PME/PP communication dominates and outweighs the extra compute even on the 12M-atom system. GROMACS multi-GPU scaling needs NVLink/NVSwitch peer-to-peer to pay off; on PCIe-only topologies, **one GPU per job is the right choice**.
+- **Single-GPU ranking:** g7e (Blackwell RTX PRO 6000) is fastest on both workloads (benchMEM ~385, benchPEP-h ~6.6 ns/day), ahead of p5/H100 (~235 / ~4.1) and g6e/L40S (~265 / ~3.4). On price/performance, g7e leads as well — it is both the fastest and, at $33/hr vs p5's $55/hr, the most cost-effective of the three for these GROMACS workloads.
+- **benchPEP-h uses `-notunepme`** (PME tuning does not converge by the `-resethway` midpoint at 12M atoms) and **multi-GPU uses `-npme 1`** (a dedicated PME rank, required for PME-on-GPU with more than one rank).
+- Two cells lost one replicate each to transient interruptions during the sweep (g6e benchPEP-h 8-GPU r2, g7e benchPEP-h 1-GPU r1); the surviving replicate in each carries the mean.
 
 ## Metrics
 
@@ -386,8 +395,8 @@ The launcher extracts:
 
 | File | Description |
 |------|-------------|
-| `build_gromacs_gpu.sbatch` | Build GROMACS with GCC + nvcc (CUDA 12 + AVX_512 host, sm_89 + sm_90 target) and OpenMPI 4 or 5. Auto-detects L40S (g6e) vs H100 (p5) from `nvidia-smi`. Produces both Thread_MPI (`gmx`) and Library_MPI (`gmx_mpi`) variants in one job |
-| `gromacs-benchmark.sbatch` | Run benchMEM / benchPEP-h / STMV / RNAse on g6e (L40S) or p5 (H100). Validates `GPU_COUNT` against `min(8, nvidia-smi -L count)`; dispatches to single-GPU Thread_MPI, single-node multi-GPU Thread_MPI with `-gpu_id 0,1,…`, or multi-node Library_MPI under `mpirun`; classifies inter-GPU fabric (NVLink / NVSwitch / PCIe) on a single log line |
+| `build_gromacs_gpu.sbatch` | Build GROMACS v2026.1 with GCC 14 + nvcc (CUDA 13, host SIMD auto-detected, sm_89 / sm_90 / sm_120 per detected GPU) and OpenMPI 4 or 5. Auto-detects L40S (g6e), Blackwell RTX PRO 6000 (g7e), or H100 (p5) from `nvidia-smi`. Produces both Thread_MPI (`gmx`) and Library_MPI (`gmx_mpi`) variants in one job |
+| `gromacs-benchmark.sbatch` | Run benchMEM / benchPEP-h / STMV / RNAse on g6e (L40S), g7e (Blackwell), or p5 (H100). Validates `GPU_COUNT` against `min(8, nvidia-smi -L count)`; dispatches to single-GPU Thread_MPI, single-node multi-GPU Thread_MPI with `-gpu_id 0,1,…` and `-npme 1`, or multi-node Library_MPI under `mpirun`; classifies inter-GPU fabric (NVLink / NVSwitch / PCIe) on a single log line |
 | `scaling_sweep_manifest.sh` | Phase 3 chart-sweep manifest (32 jobs) — operator hand-off documented in [`GPU/SCALING_SWEEP.md`](GPU/SCALING_SWEEP.md) |
 | `SCALING_SWEEP.md` | Operator runbook for the Phase 3 chart sweep (prerequisites, run commands, DynamoDB confirmation, hand-off to the chart pipeline) |
 
