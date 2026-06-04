@@ -40,7 +40,13 @@ import numpy as np
 # and the per-replicate lists below have been populated from DynamoDB.
 # ---------------------------------------------------------------------------
 data_available_arm = True    # Phase 2 (hpc7g / m8g) — populated 2026-05-29
-data_available_gpu = True    # Phase 3 (g6e / g7e / p5) — populated 2026-06-02
+# GPU charts are intentionally DISABLED. The earlier single-simulation
+# multi-GPU scaling approach anti-scaled (PCIe-bound) and is the wrong model
+# for GROMACS. The GPU study is being redone with NVIDIA MPS GPU-sharing
+# (many independent sims per GPU) over the Zenodo benchmark suite across
+# g4dn/g5/g6/g6e/g7e, measuring aggregate throughput and price-performance.
+# Do NOT re-enable until that data lands.
+data_available_gpu = False
 
 # ---------------------------------------------------------------------------
 # Workload list. Each entry is ``(model_id, chart_subtitle)``. ``model_id`` is

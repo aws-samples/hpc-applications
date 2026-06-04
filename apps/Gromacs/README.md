@@ -6,7 +6,7 @@ The scripts are organised by CPU architecture:
 
 - [`x86/`](x86/) — builds and benchmarks for x86_64 (`hpc8a`, `hpc7a`)
 - [`Arm/`](Arm/) — builds and benchmarks for aarch64 (`hpc7g` / Graviton3E, `m8g` / Graviton4)
-- `GPU/` — *(Phase 3, Validated)* CUDA 13 builds and benchmarks for `g6e` (L40S), `g7e` (Blackwell RTX PRO 6000), and `p5` (H100)
+- `GPU/` — *(Phase 3, benchmarks being redone)* CUDA 13 build scripts for `g6e` (L40S), `g7e` (Blackwell RTX PRO 6000), and `p5` (H100). The build path is validated; the **benchmark methodology is being reworked** around NVIDIA MPS GPU-sharing (see Performance → GPU)
 
 Unlike LAMMPS, GROMACS ships **two binaries per build**: `gmx` (Thread_MPI, single-node) and `gmx_mpi` (Library_MPI, multi-node over EFA). Both binaries come from the same build script — they're separate CMake trees installed side-by-side under `tmpi/` and `ompi/`. The benchmark launcher picks the right one based on `SLURM_JOB_NUM_NODES`: 1 node → `gmx`, >1 node → `mpirun … gmx_mpi`.
 
@@ -88,7 +88,7 @@ Override via `--export=ALL,...`:
 | `BASE_DIR` | `/fsx/gromacs` | Install root |
 | `COMPILE_CORES` | `48` | Parallel compile threads |
 
-### GPU — Thread_MPI + Library_MPI + CUDA (Phase 3, Validated)
+### GPU — Thread_MPI + Library_MPI + CUDA (Phase 3, build validated; benchmarks being redone)
 
 A single build script produces **both** Thread_MPI (`gmx`) and Library_MPI (`gmx_mpi`) variants in one job, both linked against CUDA 13, and auto-detects L40S (g6e, sm_89), Blackwell RTX PRO 6000 (g7e, sm_120), and H100 (p5, sm_90) from `nvidia-smi --query-gpu=name`. Pins **GROMACS v2026.1**: the GPU nodes ship CUDA 13.0 and GROMACS 2024.4 cannot build against CUDA 13 (upstream added CUDA 13 support in 2025.3). SIMD: the host SIMD level is **auto-detected** from `/proc/cpuinfo` (`AVX_512` / `AVX2_256` / `SSE4.1`) with `-march=native` — the g6e/p5 host CPUs do not all advertise AVX-512, and for a GPU build the host SIMD barely matters since force/PME/bonded/update run on the GPU. FFT: in-tree FFTW3 via `-DGMX_BUILD_OWN_FFTW=ON`. The build aborts within 30 s on a host without `nvidia-smi`, without `nvcc`, or with CUDA toolkit major version below 13.
 
@@ -220,7 +220,9 @@ sbatch -p m8g --ntasks-per-node=192 --nodes=4 \
 
 The Arm launcher auto-discovers the most recently modified env script under `aarch64-graviton4-ompi5/<tag>/`, then `aarch64-graviton3-ompi5/<tag>/`, then `aarch64-graviton3/<tag>/`. Override with `--export=ALL,GROMACS_ENV=/path/to/gromacs-<tag>-ompi5-env.sh` to pin a specific build (e.g., to compare Graviton3E + OpenMPI 4 against Graviton3E + OpenMPI 5 on the same hardware). Graviton4 + OpenMPI 4 is rejected at submit time — same constraint as the build script.
 
-### GPU examples (Phase 3, Validated)
+### GPU examples (Phase 3, benchmark methodology being redone)
+
+> The GPU benchmark launcher below runs, but the **single-simulation multi-GPU scaling approach it implements is not the recommended way to run GROMACS on GPUs** (it anti-scales over PCIe — see Performance → GPU). It is kept for reference while the MPS-based methodology is built out. Do not use these numbers for customer recommendations.
 
 The GPU launcher dispatches to one of three execution paths based on `GPU_COUNT` vs detected GPUs/node:
 
@@ -288,7 +290,7 @@ All benchmark launchers:
 
 ## Performance
 
-Speedup-only charts (no absolute `ns/day` values), x86 normalised to a 1-node hpc7a baseline, Arm normalised to a 1-node hpc7g baseline. The GPU section adds a three-family comparison (g6e/g7e/p5) normalised to the slowest family's 1-GPU result, plus a price/performance chart (ns/day per dollar-hour). Same chart conventions as the LAMMPS README.
+Speedup-only charts (no absolute `ns/day` values), x86 normalised to a 1-node hpc7a baseline, Arm normalised to a 1-node hpc7g baseline. Same chart conventions as the LAMMPS README. The GPU section is being reworked (NVIDIA MPS GPU-sharing) and currently publishes no charts.
 
 ### x86 — hpc8a (Zen5) vs hpc7a (Zen4)
 
@@ -319,34 +321,22 @@ Arm charts below come from the live 24-job sweep that ran in us-east-2: (1N, 2N,
 Notes on the Arm data:
 
 - **benchPEP-h uses `-notunepme`**: on a 12M-atom system, PME tuning does not converge by the `-resethway` midpoint, so `-resethway` alone aborts. Disabling PME tuning makes the timer reset safe and gives every instance an identical, deterministic computation — the right call for a cross-architecture comparison.
-- **hpc7g multi-node benchPEP-h is omitted**: 12M-atom runs across multiple 64-core Graviton3E nodes stalled in domain decomposition past a 2-hour wall and were cancelled. The 1N hpc7g point plus the full m8g curve already capture the Graviton3E-vs-Graviton4 story (Graviton4 is ~2.5× faster per node).
 - **One hpc7g 4N benchMEM replicate (192.9 ns/day) was dropped as a confirmed outlier**: four further replicates clustered at ~235 ns/day, so the low rep (a noisy node) is excluded from the mean.
 
-### GPU — g6e (L40S) vs g7e (Blackwell) vs p5 (H100)
+### GPU — being redone with NVIDIA MPS GPU-sharing
 
-GPU charts come from the live three-family sweep on the `hpc-4` cluster (us-east-2), GROMACS v2026.1 / CUDA 13, `.48xlarge` SKUs (8 GPUs/node). Per-replicate `Performance: ns/day` values are in [`Doc/img/Gromacs/generate_charts.py`](../../Doc/img/Gromacs/generate_charts.py); regenerate with `python3 Doc/img/Gromacs/generate_charts.py`.
-
-**Two charts per workload:** a raw three-family performance comparison (speedup normalised to the slowest family's 1-GPU result) and a **price/performance** chart (ns/day per US dollar-hour, us-east-2 on-demand: g6e.48xlarge $30.13, g7e.48xlarge $33.14, p5.48xlarge $55.04).
-
-#### benchMEM (~80,000 atoms, MPINAT membrane protein)
-
-![GROMACS benchMEM g6e vs g7e vs p5](../../Doc/img/Gromacs/Gromacs-benchMEM-G6eVsG7eVsP5.png)
-
-![GROMACS benchMEM GPU price/performance](../../Doc/img/Gromacs/Gromacs-benchMEM-GpuPricePerf.png)
-
-#### benchPEP-h (~12,000,000 atoms, MPINAT peptide)
-
-![GROMACS benchPEP-h g6e vs g7e vs p5](../../Doc/img/Gromacs/Gromacs-benchPEP-h-G6eVsG7eVsP5.png)
-
-![GROMACS benchPEP-h GPU price/performance](../../Doc/img/Gromacs/Gromacs-benchPEP-h-GpuPricePerf.png)
-
-Notes on the GPU data:
-
-- **benchMEM is charted at 1 GPU only.** The ~80k-atom system is far too small to split across GPUs: a 2-GPU g6e run measured ~8 ns/day versus ~265 ns/day on a single GPU, and higher GPU counts stall. The single-GPU comparison is the meaningful one for this workload.
-- **GROMACS anti-scales across GPUs on these SKUs.** Every family loses throughput as GPU count rises (e.g. benchPEP-h on p5: 4.1 → 2.9 → 0.85 → 0.41 ns/day from 1→8 GPUs). These are single-node multi-GPU runs with a dedicated PME rank over **PCIe** — none of the swept `.48xlarge` SKUs expose NVLink to GROMACS here — so inter-GPU PME/PP communication dominates and outweighs the extra compute even on the 12M-atom system. GROMACS multi-GPU scaling needs NVLink/NVSwitch peer-to-peer to pay off; on PCIe-only topologies, **one GPU per job is the right choice**.
-- **Single-GPU ranking:** g7e (Blackwell RTX PRO 6000) is fastest on both workloads (benchMEM ~385, benchPEP-h ~6.6 ns/day), ahead of p5/H100 (~235 / ~4.1) and g6e/L40S (~265 / ~3.4). On price/performance, g7e leads as well — it is both the fastest and, at $33/hr vs p5's $55/hr, the most cost-effective of the three for these GROMACS workloads.
-- **benchPEP-h uses `-notunepme`** (PME tuning does not converge by the `-resethway` midpoint at 12M atoms) and **multi-GPU uses `-npme 1`** (a dedicated PME rank, required for PME-on-GPU with more than one rank).
-- Two cells lost one replicate each to transient interruptions during the sweep (g6e benchPEP-h 8-GPU r2, g7e benchPEP-h 1-GPU r1); the surviving replicate in each carries the mean.
+> **The GPU benchmarks are being re-done and are intentionally not published here yet.**
+>
+> Our initial GPU approach scaled a *single* GROMACS simulation across multiple GPUs. That **anti-scales** on these instances: they expose only PCIe between GPUs (no NVLink to GROMACS), so inter-GPU PME/PP communication dominates and throughput drops as GPUs are added. Recommending multi-GPU scaling would point customers at the slower configuration.
+>
+> The correct model for GROMACS on GPUs — for the small-to-medium systems that under-utilize a modern GPU — is **NVIDIA CUDA MPS GPU-sharing**: packing many independent simulations onto one GPU for higher *aggregate* throughput. The GPU study is being re-run with:
+>
+> - **NVIDIA MPS** (`nvidia-cuda-mps-control`, `CUDA_MPS_ACTIVE_THREAD_PERCENTAGE`), one process per share, `-ntomp 1`, `--bind-to none`
+> - The **Zenodo GROMACS benchmark suite** (Villin 5K → STMV 1M) that spans the GPU-utilization range where MPS matters
+> - **Throughput GPU families** g4dn / g5 / g6 / g6e / g7e (not flagship training GPUs)
+> - A grid search over concurrent processes × OMP threads × `nstlist`, reported as **aggregate ns/day and price-performance (ns/$)**
+>
+> Build and benchmark scripts for the MPS methodology will land here when the data is validated.
 
 ## Metrics
 
