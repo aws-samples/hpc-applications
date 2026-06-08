@@ -40,13 +40,17 @@ import numpy as np
 # and the per-replicate lists below have been populated from DynamoDB.
 # ---------------------------------------------------------------------------
 data_available_arm = True    # Phase 2 (hpc7g / m8g) — populated 2026-05-29
-# GPU charts are intentionally DISABLED. The earlier single-simulation
-# multi-GPU scaling approach anti-scaled (PCIe-bound) and is the wrong model
-# for GROMACS. The GPU study is being redone with NVIDIA MPS GPU-sharing
-# (many independent sims per GPU) over the Zenodo benchmark suite across
-# g4dn/g5/g6/g6e/g7e, measuring aggregate throughput and price-performance.
-# Do NOT re-enable until that data lands.
+# GPU (single-simulation multi-GPU scaling) charts are intentionally DISABLED.
+# That approach anti-scaled (PCIe-bound) and is the wrong model for GROMACS.
+# The GPU study was redone with NVIDIA MPS GPU-sharing — see ``data_available_mps``
+# below. Do NOT re-enable this legacy gate.
 data_available_gpu = False
+
+# GPU MPS GPU-sharing charts (Phase 3, redone). Many independent simulations
+# packed onto ONE GPU via NVIDIA CUDA MPS, reported as aggregate throughput
+# (sum of per-sim ns/day) and price-performance (ns/day per GPU-$/hr). Measured
+# on g7e (Blackwell RTX PRO 6000) and g6e (L40S) in us-east-2, 2026-06-05.
+data_available_mps = True
 
 # ---------------------------------------------------------------------------
 # Workload list. Each entry is ``(model_id, chart_subtitle)``. ``model_id`` is
@@ -218,6 +222,52 @@ GPU_DATA = {
         "g7e": [ns_g7e_1g_benchPEPh, ns_g7e_2g_benchPEPh, ns_g7e_4g_benchPEPh, ns_g7e_8g_benchPEPh],
         "p5":  [ns_p5_1g_benchPEPh,  ns_p5_2g_benchPEPh,  ns_p5_4g_benchPEPh,  ns_p5_8g_benchPEPh],
     },
+}
+
+# ---------------------------------------------------------------------------
+# GPU MPS GPU-sharing data — aggregate throughput (sum of per-sim ns/day) for
+# N independent simulations sharing ONE GPU via NVIDIA CUDA MPS. Measured in
+# us-east-2 (2026-06-05), GROMACS v2026.1 / CUDA 13, nstlist=150, ntomp=1,
+# --bind-to none, GPU_UPDATE=auto, -notunepme. cuda_graph=1 for villin/
+# rnase_cubic, =0 for ion_channel.
+#
+# Systems span the GPU-utilization range where MPS matters: villin (~5K atoms,
+# heavily under-utilizes a modern GPU) → ion_channel (~149K atoms, closer to
+# saturating one GPU). NPROC is the number of concurrent sims packed on the GPU.
+# ---------------------------------------------------------------------------
+MPS_NPROC = [1, 2, 4, 8]
+
+MPS_SYSTEMS = [
+    ("villin",       "Villin (~5,000 atoms)"),
+    ("rnase_cubic",  "RNase-cubic (~24,000 atoms)"),
+    ("ion_channel",  "Ion-channel (~149,000 atoms)"),
+]
+
+# g7e (Blackwell RTX PRO 6000) aggregate ns/day by concurrent-sim count.
+MPS_G7E = {
+    "villin":      [2697, 4662, 8130, 12354],
+    "rnase_cubic": [1166, 2041, 3232, 4203],
+    "ion_channel": [323,  520,  739,  908],
+}
+
+# g6e (L40S) aggregate ns/day — villin family (the small-system MPS sweet spot)
+# is the cross-family price-performance comparison point.
+MPS_G6E = {
+    "villin":      [2845, 4938, 7910, 11119],
+}
+
+# Per-GPU on-demand pricing (us-east-2, Linux, 2026-06-05). The sweep ran
+# single-GPU MPS, but g6e.24xlarge is a 4-GPU box (1-GPU g6e sizes were
+# capacity-blocked), so price-performance uses PER-GPU cost for a fair
+# like-for-like comparison.
+MPS_PRICE_PER_GPU_HR = {
+    "g7e": 5.27,   # g7e.8xlarge  = $5.2682/hr, 1 GPU
+    "g6e": 3.77,   # g6e.24xlarge = $15.0656/hr, 4 GPU -> $3.77/GPU
+}
+
+MPS_FAMILY_STYLE = {
+    "g7e": ("#59A14F", "g7e (Blackwell RTX PRO 6000)"),
+    "g6e": ("#4E79A7", "g6e (L40S)"),
 }
 
 # ---------------------------------------------------------------------------
@@ -512,6 +562,158 @@ def render_gpu_price_perf_chart(
 
 
 # ---------------------------------------------------------------------------
+# MPS chart renderers
+# ---------------------------------------------------------------------------
+def render_mps_gain_chart(
+    nproc_counts,
+    systems,
+    family_label,
+    per_system_aggregate,
+    output_filename,
+    suptitle,
+):
+    """Render the MPS throughput-gain chart for one GPU family.
+
+    For each system, the bars show aggregate throughput at 1/2/4/8 concurrent
+    sims normalised to that system's own 1-sim aggregate, i.e. the *MPS gain*
+    (how much extra total throughput MPS unlocks by packing more independent
+    sims onto the GPU). Normalising per-system keeps every curve starting at
+    1.0x so the differing absolute ns/day across system sizes does not appear
+    on the chart. Returns ``True`` if at least one bar was drawn.
+    """
+    drawn_systems = [
+        (sid, sub) for sid, sub in systems
+        if sid in per_system_aggregate and per_system_aggregate[sid]
+        and per_system_aggregate[sid][0]
+    ]
+    if not drawn_systems:
+        print(f"  skipping {output_filename} — no MPS data")
+        return False
+
+    fig, ax = plt.subplots(figsize=FIG_SIZE)
+    n_sys = len(drawn_systems)
+    group_w = 0.8
+    bar_w = group_w / n_sys
+    x_pos = np.arange(len(nproc_counts))
+    palette = ["#4E79A7", "#F28E2B", "#59A14F", "#E15759"]
+
+    any_bar = False
+    for si, (sid, sub) in enumerate(drawn_systems):
+        agg = per_system_aggregate[sid]
+        baseline = agg[0]
+        offset = (si - (n_sys - 1) / 2) * bar_w
+        heights = [(a / baseline) if a else 0.0 for a in agg]
+        ax.bar(x_pos + offset, heights, bar_w, color=palette[si % len(palette)],
+               edgecolor=EDGE_COLOR, label=sub)
+        for i, h in enumerate(heights):
+            if h > 0:
+                any_bar = True
+                ax.text(i + offset, h + ANNOTATION_OFFSET, f"{h:.1f}x",
+                        ha="center", va="bottom",
+                        fontsize=ANNOTATION_FONTSIZE - 1,
+                        fontweight=ANNOTATION_WEIGHT)
+
+    if not any_bar:
+        plt.close(fig)
+        print(f"  skipping {output_filename} — no MPS data")
+        return False
+
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels([f"{n}" for n in nproc_counts])
+    ax.set_xlabel("Concurrent simulations sharing one GPU (NVIDIA MPS)")
+    ax.set_ylabel("Aggregate throughput vs 1 sim  (higher is better)")
+    ax.set_title(f"GROMACS MPS throughput gain — {family_label}",
+                 fontsize=TITLE_FONTSIZE)
+    ax.grid(True, axis="y", linestyle=GRID_LINESTYLE, alpha=GRID_ALPHA)
+    ax.legend(loc="upper left", fontsize=9)
+    y_top = max(
+        [a / per_system_aggregate[sid][0]
+         for sid, _ in drawn_systems
+         for a in per_system_aggregate[sid] if per_system_aggregate[sid][0]]
+        + [1.0]
+    ) * Y_HEADROOM
+    ax.set_ylim(0, y_top)
+    fig.suptitle(suptitle, fontsize=SUPTITLE_FONTSIZE,
+                 fontweight=SUPTITLE_WEIGHT, y=1.00)
+    plt.tight_layout()
+    plt.savefig(output_filename, dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  wrote {output_filename}")
+    return True
+
+
+def render_mps_price_perf_chart(
+    nproc_counts,
+    system_id,
+    system_subtitle,
+    family_aggregate,
+    price_per_gpu_hr,
+    output_filename,
+    suptitle,
+):
+    """Render an MPS price-performance chart: aggregate ns/day per GPU-$/hr.
+
+    Compares GPU families for a single system. Metric is
+    ``aggregate_ns_per_day / per_GPU_hourly_price`` so a cheaper GPU with
+    slightly lower throughput can still win on price-performance. Uses PER-GPU
+    pricing (the sweep ran single-GPU MPS; g6e was only available on a 4-GPU
+    SKU). Returns ``True`` if at least one bar was drawn.
+    """
+    families_drawn = [
+        fam for fam in family_aggregate
+        if fam in price_per_gpu_hr and family_aggregate[fam]
+    ]
+    if not families_drawn:
+        print(f"  skipping {output_filename} — no priced MPS data")
+        return False
+
+    fig, ax = plt.subplots(figsize=FIG_SIZE)
+    n_fam = len(families_drawn)
+    group_w = 0.8
+    bar_w = group_w / n_fam
+    x_pos = np.arange(len(nproc_counts))
+
+    any_bar = False
+    for fi, fam in enumerate(families_drawn):
+        color, base_label = MPS_FAMILY_STYLE.get(fam, ("#888888", fam))
+        price = price_per_gpu_hr[fam]
+        label = f"{base_label}  (${price:.2f}/GPU-hr)"
+        agg = family_aggregate[fam]
+        offset = (fi - (n_fam - 1) / 2) * bar_w
+        heights = [(a / price) if a else 0.0 for a in agg]
+        ax.bar(x_pos + offset, heights, bar_w, color=color,
+               edgecolor=EDGE_COLOR, label=label)
+        for i, h in enumerate(heights):
+            if h > 0:
+                any_bar = True
+                ax.text(i + offset, h * (1 + ANNOTATION_OFFSET), f"{h:.0f}",
+                        ha="center", va="bottom",
+                        fontsize=ANNOTATION_FONTSIZE - 1,
+                        fontweight=ANNOTATION_WEIGHT)
+
+    if not any_bar:
+        plt.close(fig)
+        print(f"  skipping {output_filename} — no MPS data")
+        return False
+
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels([f"{n}" for n in nproc_counts])
+    ax.set_xlabel("Concurrent simulations sharing one GPU (NVIDIA MPS)")
+    ax.set_ylabel("Aggregate ns/day per GPU-$/hr  (higher is better)")
+    ax.set_title(f"GROMACS MPS price-performance — {system_subtitle}",
+                 fontsize=TITLE_FONTSIZE)
+    ax.grid(True, axis="y", linestyle=GRID_LINESTYLE, alpha=GRID_ALPHA)
+    ax.legend(loc="upper left", fontsize=9)
+    fig.suptitle(suptitle, fontsize=SUPTITLE_FONTSIZE,
+                 fontweight=SUPTITLE_WEIGHT, y=1.00)
+    plt.tight_layout()
+    plt.savefig(output_filename, dpi=DPI, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  wrote {output_filename}")
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Chart 1 — x86 hpc8a vs hpc7a (per workload)
 # ---------------------------------------------------------------------------
 print("x86 charts (hpc8a vs hpc7a):")
@@ -598,6 +800,41 @@ if data_available_gpu:
 else:
     print("\nGPU charts: skipped — set data_available_gpu=True once the Phase 3 "
           "sweep results have been filled into the ns_* lists (see task 20.1).")
+
+# ---------------------------------------------------------------------------
+# Chart 4 — GPU MPS GPU-sharing (Phase 3, redone)
+#   (a) MPS throughput-gain vs system size (g7e), one curve per system
+#   (b) MPS price-performance for villin (g7e vs g6e), per GPU-$/hr
+# ---------------------------------------------------------------------------
+if data_available_mps:
+    print("\nGPU MPS throughput-gain chart (g7e, by system size):")
+    render_mps_gain_chart(
+        nproc_counts=MPS_NPROC,
+        systems=MPS_SYSTEMS,
+        family_label="g7e (Blackwell RTX PRO 6000)",
+        per_system_aggregate=MPS_G7E,
+        output_filename="Gromacs-MPS-ThroughputGain-G7e.png",
+        suptitle="GROMACS NVIDIA MPS — aggregate throughput gain by system size   "
+                 "[g7e Blackwell, CUDA 13, GROMACS v2026.1]",
+    )
+
+    print("\nGPU MPS price-performance chart (villin, g7e vs g6e):")
+    render_mps_price_perf_chart(
+        nproc_counts=MPS_NPROC,
+        system_id="villin",
+        system_subtitle="Villin (~5,000 atoms)",
+        family_aggregate={
+            "g7e": MPS_G7E["villin"],
+            "g6e": MPS_G6E["villin"],
+        },
+        price_per_gpu_hr=MPS_PRICE_PER_GPU_HR,
+        output_filename="Gromacs-MPS-PricePerf-Villin.png",
+        suptitle="GROMACS NVIDIA MPS price-performance — g7e vs g6e   "
+                 "[us-east-2 on-demand, per-GPU pricing]",
+    )
+else:
+    print("\nGPU MPS charts: skipped — set data_available_mps=True once the "
+          "MPS sweep results have been filled into the MPS_* tables.")
 
 # ---------------------------------------------------------------------------
 # Final exit. Empty/sentinel data is not an error condition — Phase 1
