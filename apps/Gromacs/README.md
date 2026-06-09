@@ -347,12 +347,12 @@ Even the largest system here still benefits at 8 concurrent sims — none of the
 
 ![GROMACS MPS price-performance, villin, g7e vs g6e](../../Doc/img/Gromacs/Gromacs-MPS-PricePerf-Villin.png)
 
-For absolute throughput, **g7e (Blackwell) is fastest** — 12,354 ns/day aggregate at 8 villin sims vs 11,119 on g6e. But for **price-performance, g6e (L40S) wins by ~26%**:
+For absolute throughput, **g7e (Blackwell) is fastest** at 8 concurrent villin sims. But once normalised to **per-GPU cost, g6e (L40S) wins on price-performance by ~26%**:
 
-| GPU | villin 8-sim aggregate (ns/day) | per-GPU $/hr | ns/day per GPU-$ |
-|-----|-------------------------------:|-------------:|----------------:|
-| g7e (Blackwell) | 12,354 | $5.27 | ~2,345 |
-| g6e (L40S) | 11,119 | $3.77 | **~2,949** |
+| GPU | per-GPU $/hr | villin 8-sim ns/day per GPU-$ |
+|-----|-------------:|------------------------------:|
+| g7e (Blackwell) | $5.27 | ~2,345 |
+| g6e (L40S) | $3.77 | **~2,949** |
 
 > **Pricing caveat.** The sweep ran single-GPU MPS, but g6e was only available on the 4-GPU `g6e.24xlarge` SKU (1-GPU g6e sizes were capacity-blocked at the time), so the comparison uses **per-GPU** cost ($15.0656/hr ÷ 4 = $3.77/GPU for g6e.24xlarge; $5.2682/hr for the 1-GPU g7e.8xlarge), us-east-2 on-demand Linux. Use per-GPU normalisation for a fair like-for-like read.
 
