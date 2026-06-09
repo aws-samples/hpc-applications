@@ -327,7 +327,7 @@ Notes on the Arm data:
 
 > **Why MPS, not multi-GPU scaling.** A single small-to-medium GROMACS simulation under-utilizes a modern datacenter GPU. Scaling *one* simulation across multiple GPUs **anti-scales** on these instances — they expose only PCIe between GPUs (no NVLink to GROMACS), so inter-GPU PME/PP traffic dominates and throughput drops as GPUs are added. The throughput-optimal pattern is the opposite: pack **many independent simulations onto one GPU** with NVIDIA CUDA MPS (Multi-Process Service) and measure *aggregate* throughput. This is the right model for ensemble / high-throughput work — parameter scans, replica ensembles, free-energy windows.
 
-These results come from the focused MPS sweep in us-east-2 (2026-06-05), GROMACS v2026.1 / CUDA 13, on g7e (Blackwell RTX PRO 6000) and g6e (L40S). Each data point is the aggregate ns/day of *N* independent simulations sharing one GPU. Inputs are from the upstream [Zenodo GROMACS benchmark suite](https://zenodo.org/record/3893789), chosen to span the GPU-utilization range: Villin (~5K atoms, heavily under-utilizes the GPU) → RNase-cubic (~24K) → Ion-channel (~149K, close to saturating one GPU). Regenerate the charts with `python3 Doc/img/Gromacs/generate_charts.py`.
+These results come from the focused MPS sweep in us-east-2 (2026-06-05), GROMACS v2026.1 / CUDA 13, on g7e (Blackwell RTX PRO 6000). Each data point is the aggregate ns/day of *N* independent simulations sharing one GPU. Inputs are from the upstream [Zenodo GROMACS benchmark suite](https://zenodo.org/record/3893789), chosen to span the GPU-utilization range: Villin (~5K atoms, heavily under-utilizes the GPU) → RNase-cubic (~24K) → Ion-channel (~149K, close to saturating one GPU). Regenerate the charts with `python3 Doc/img/Gromacs/generate_charts.py`.
 
 #### MPS throughput gain by system size (g7e Blackwell)
 
@@ -343,24 +343,11 @@ Aggregate throughput at 1/2/4/8 concurrent sims, normalised to a single sim of t
 
 Even the largest system here still benefits at 8 concurrent sims — none of them saturate the GPU with a single simulation. The smaller the system, the more idle GPU capacity a single sim leaves on the table, and the more MPS recovers.
 
-#### MPS price-performance — g7e (Blackwell) vs g6e (L40S)
-
-![GROMACS MPS price-performance, villin, g7e vs g6e](../../Doc/img/Gromacs/Gromacs-MPS-PricePerf-Villin.png)
-
-For absolute throughput, **g7e (Blackwell) is fastest** at 8 concurrent villin sims. But once normalised to **per-GPU cost, g6e (L40S) wins on price-performance by ~26%**:
-
-| GPU | per-GPU $/hr | villin 8-sim ns/day per GPU-$ |
-|-----|-------------:|------------------------------:|
-| g7e (Blackwell) | $5.27 | ~2,345 |
-| g6e (L40S) | $3.77 | **~2,949** |
-
-> **Pricing caveat.** The sweep ran single-GPU MPS, but g6e was only available on the 4-GPU `g6e.24xlarge` SKU (1-GPU g6e sizes were capacity-blocked at the time), so the comparison uses **per-GPU** cost ($15.0656/hr ÷ 4 = $3.77/GPU for g6e.24xlarge; $5.2682/hr for the 1-GPU g7e.8xlarge), us-east-2 on-demand Linux. Use per-GPU normalisation for a fair like-for-like read.
-
 **Best-practice summary**
 
 - Use **NVIDIA MPS GPU-sharing** for GROMACS throughput workloads — pack independent sims onto one GPU rather than scaling one sim across GPUs.
 - The gain is **largest on small systems**; large systems (≥150K atoms) that already keep a GPU busy gain less but still benefit at higher concurrency.
-- Choose **g7e (Blackwell)** for the highest absolute throughput, **g6e (L40S)** for the best price-performance.
+- Choose **g7e (Blackwell)** for the highest absolute throughput; g6e (L40S) is a lower-cost-per-GPU alternative.
 - Key knobs (all baked into [`GPU/gromacs-mps-benchmark.sbatch`](GPU/gromacs-mps-benchmark.sbatch)): one MPS daemon per node (`nvidia-cuda-mps-control -d`), `CUDA_MPS_ACTIVE_THREAD_PERCENTAGE = 100/N`, one MPI rank per sim with `-ntomp 1`, `--bind-to none` (NUMA misplacement otherwise costs 13–48%), `-nstlist 150`, `GMX_CUDA_GRAPH=1` for small systems, and `-update auto -notunepme` for robustness (systems with 3+ coupled constraints can't use GPU LINCS, and PME tuning doesn't converge by the `-resethway` midpoint under an MPS share).
 
 ## Metrics
