@@ -115,12 +115,15 @@ ns_m8g_4n_benchMEM   = [273.766, 280.428]
 # converge by the -resethway midpoint on a system this large, so tuning is
 # disabled for a fair, deterministic cross-arch comparison.
 ns_hpc7g_1n_benchPEPh = [0.464, 0.464]
-# hpc7g 2N/4N benchPEP-h omitted: 12M-atom multi-node runs on 64-core Graviton3E
-# nodes were prohibitively slow (domain decomposition stalled past 2h wall) and
-# were cancelled. The 1N hpc7g point + full m8g curve already capture the
-# Graviton3E-vs-Graviton4 story for this workload.
-ns_hpc7g_2n_benchPEPh = []
-ns_hpc7g_4n_benchPEPh = []
+# hpc7g 2N/4N benchPEP-h collected with per-node-count LAYOUT TUNING (Activity 2+3,
+# 2026-06-12/14). The 12M-atom system is fastest with a HYBRID 32 ranks/node x 2
+# OMP-threads split, NOT pure-MPI 64x1 (which both underperforms and intermittently
+# hangs at multi-node DD/PME startup on the 64-core Graviton3E nodes). Values below
+# are the tuned optimum per node count:
+#   2N: 32x2 = 0.912  (vs 8x8 0.833, 16x4 0.777)
+#   4N: 32x2 = 1.792  (vs 8x8 1.512)
+ns_hpc7g_2n_benchPEPh = [0.912]
+ns_hpc7g_4n_benchPEPh = [1.792]
 ns_m8g_1n_benchPEPh   = [1.147, 1.148]
 ns_m8g_2n_benchPEPh   = [2.255, 2.268]
 ns_m8g_4n_benchPEPh   = [4.407, 4.463]

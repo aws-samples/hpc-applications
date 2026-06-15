@@ -322,6 +322,7 @@ Notes on the Arm data:
 
 - **benchPEP-h uses `-notunepme`**: on a 12M-atom system, PME tuning does not converge by the `-resethway` midpoint, so `-resethway` alone aborts. Disabling PME tuning makes the timer reset safe and gives every instance an identical, deterministic computation — the right call for a cross-architecture comparison.
 - **One hpc7g 4N benchMEM replicate (192.9 ns/day) was dropped as a confirmed outlier**: four further replicates clustered at ~235 ns/day, so the low rep (a noisy node) is excluded from the mean.
+- **hpc7g multi-node benchPEP-h uses a tuned hybrid layout (32 ranks/node × 2 OpenMP threads), not pure MPI**: for the 12M-atom system, a split with fewer MPI ranks and more threads per rank is fastest at both 2 and 4 nodes. The pure-MPI 64-ranks/node layout both runs slower *and* intermittently hangs at multi-node domain-decomposition startup on the 64-core Graviton3E nodes. The optimum shifts with system size — the small benchMEM (80K atoms) is fastest with pure-MPI 64 ranks/node, while the large benchPEP-h prefers the hybrid split — so tune the MPI×OpenMP layout per system *and* node count (set `THREADS_PER_RANK`). The hpc7g benchPEP-h 2N/4N points on the chart above are the per-node-count optimum.
 
 ### GPU — NVIDIA MPS GPU-sharing (throughput-optimal)
 
