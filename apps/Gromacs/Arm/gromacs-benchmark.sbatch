@@ -20,7 +20,7 @@
 #     ranks/node EFA endpoints on Neoverse V2)
 #
 # The combination Graviton4 + OpenMPI 4 is **rejected at submit time**
-# per Requirement 3.7.
+#
 #
 # The four benchmarks come from the upstream Max Planck Institute test set
 # (https://www.mpinat.mpg.de/grubmueller/bench) and are fixed-size — there
@@ -102,7 +102,7 @@ BASE_DIR="${BASE_DIR:-/fsx/gromacs}"
 DYNAMODB_RECORDER="${DYNAMODB_RECORDER:-/fsx/gromacs/scripts/dynamodb/record_to_dynamodb.sh}"
 
 # ---------------------------------------------------------------------------
-# Per-model config (Requirement 7.1, design.md section 4 model table).
+# Per-model config (design.md section 4 model table).
 #   .tpr filename, default nsteps, MPINAT URL.
 # Pages serve .tpr.gz archives — fetched, gunzipped, validated non-empty,
 # then cached at /fsx/gromacs/benchmarks/<MODEL>/<MODEL>.tpr.
@@ -176,7 +176,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Auto-pick GROMACS_ENV if the user didn't supply one (Requirement 4.5).
+# Auto-pick GROMACS_ENV if the user didn't supply one.
 #   Single node -> tmpi (no MPI dep)
 #   Multi-node  -> ompi5 (default for aarch64) or ompi (Graviton3E + OMPI4)
 # Search the three valid install roots in priority order, picking the most
@@ -224,8 +224,7 @@ if [ ! -f "${GROMACS_ENV}" ] || [ ! -r "${GROMACS_ENV}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# GROMACS_ENV suffix validation + Graviton4-OMPI4 reject (Requirement 3.7,
-# 4.5). The build script never produces an aarch64-graviton4 + ompi-env
+# GROMACS_ENV suffix validation + Graviton4-OMPI4 reject (# 4.5). The build script never produces an aarch64-graviton4 + ompi-env
 # pair, but a customer could hand-craft a path; we explicitly reject it
 # here so the failure mode is visible at submit time rather than as a
 # 192-rank EFA endpoint exhaustion at runtime.
@@ -244,7 +243,7 @@ esac
 if [[ "${GROMACS_ENV}" == *"aarch64-graviton4"* ]] \
         && [[ "${GROMACS_ENV}" == *"-ompi-env.sh" ]]; then
     echo "ERROR: GROMACS_ENV='${GROMACS_ENV}' pairs Graviton4 with OpenMPI 4" >&2
-    echo "       This combination is rejected at submit time per Requirement 3.7:" >&2
+    echo "       This combination is rejected at submit time:" >&2
     echo "       OpenMPI 4.1.7 cannot scale to 192 ranks/node EFA endpoints on" >&2
     echo "       Neoverse V2. Use a *-ompi5-env.sh script for Graviton4." >&2
     exit 1
@@ -462,7 +461,7 @@ ATOMS="${ATOMS:-0}"
 
 # ---------------------------------------------------------------------------
 # Hostfile + system tuning (page-cache drop + THP enable on every node).
-# Failure on any node is fatal (Requirement 2.11) — the run would not be
+# Failure on any node is fatal — the run would not be
 # reproducible if some nodes were tuned and others weren't.
 # ---------------------------------------------------------------------------
 echo "=== Building hostfile and tuning nodes ==="
@@ -512,7 +511,7 @@ X_ENV="-x OMP_NUM_THREADS -x OMP_PLACES -x OMP_PROC_BIND"
 X_ENV="${X_ENV} -x FI_PROVIDER -x FI_EFA_USE_DEVICE_RDMA -x RDMAV_FORK_SAFE"
 X_ENV="${X_ENV} -x PATH -x LD_LIBRARY_PATH -x GMXLIB"
 
-# Three-line MCA selection block (Requirement 10.6) printed on its own
+# Three-line MCA selection block printed on its own
 # lines so log-scrapers can match each token literally.
 echo "pml=cm"
 echo "mtl=ofi"
@@ -600,7 +599,7 @@ LOOP_STEPS="$(awk '/Statistics over [0-9]+ steps/ {for (i=1;i<=NF;i++) if ($i=="
 LOOP_STEPS="${LOOP_STEPS:-${TIMESTEPS}}"
 
 # ---------------------------------------------------------------------------
-# Run metadata (Requirement 11.6 — captured here so the optional DynamoDB
+# Run metadata (captured here so the optional DynamoDB
 # block at the bottom can reference them without re-shelling out).
 #
 # The four metadata vars below (KERNEL_VERSION, OS_PRETTY, PC_VERSION,
@@ -635,8 +634,7 @@ fi
 # Derive MPI_STACK from the env-script suffix so the DynamoDB record
 # disambiguates Graviton3E + OpenMPI 4 from Graviton3E + OpenMPI 5 — both
 # show up as ENV_VARIANT=ompi but record different mpi_stack values per
-# Requirement 11.6.
-# shellcheck disable=SC2034
+## shellcheck disable=SC2034
 MPI_STACK="tmpi"
 if [ "${ENV_VARIANT}" = "ompi" ]; then
     case "${GROMACS_ENV}" in
@@ -705,7 +703,7 @@ REPORT
 # Note: this public-repo committed file ships with the call site
 # DISABLED. The cluster copy under /fsx/gromacs/scripts/Arm/ ships with
 # the call site ENABLED so internal benchmark sweeps record to
-# Gromacs_Benchmarks in us-east-1 (Requirement 11.9).
+# Gromacs_Benchmarks in us-east-1.
 # ---------------------------------------------------------------------------
 # export SLURM_JOB_ID SLURM_JOB_NUM_NODES SLURM_CLUSTER_NAME
 # export MODEL

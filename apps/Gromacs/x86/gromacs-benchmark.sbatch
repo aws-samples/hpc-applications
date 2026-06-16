@@ -86,7 +86,7 @@ BASE_DIR="${BASE_DIR:-/fsx/gromacs}"
 DYNAMODB_RECORDER="${DYNAMODB_RECORDER:-/fsx/gromacs/scripts/dynamodb/record_to_dynamodb.sh}"
 
 # ---------------------------------------------------------------------------
-# Per-model config (Requirement 7.1, design.md section 4 model table).
+# Per-model config (design.md section 4 model table).
 #   .tpr filename, default nsteps, MPINAT URL.
 # Pages serve .tpr.gz archives — fetched, gunzipped, validated non-empty,
 # then cached at /fsx/gromacs/benchmarks/<MODEL>/<MODEL>.tpr.
@@ -159,7 +159,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Auto-pick GROMACS_ENV if the user didn't supply one (Requirement 2.2 / 4.5).
+# Auto-pick GROMACS_ENV if the user didn't supply one.
 # Single node -> tmpi (no MPI dep); multi-node -> ompi (Library_MPI under EFA).
 # Prefer the most recently modified env script under
 # /fsx/gromacs/x86_64/<tag>/ so a fresh build is picked up without code change.
@@ -399,7 +399,7 @@ ATOMS="${ATOMS:-0}"
 
 # ---------------------------------------------------------------------------
 # Hostfile + system tuning (page-cache drop + THP enable on every node).
-# Failure on any node is fatal (Requirement 2.11) — the run would not be
+# Failure on any node is fatal — the run would not be
 # reproducible if some nodes were tuned and others weren't.
 # ---------------------------------------------------------------------------
 echo "=== Building hostfile and tuning nodes ==="
@@ -449,7 +449,7 @@ X_ENV="-x OMP_NUM_THREADS -x OMP_PLACES -x OMP_PROC_BIND"
 X_ENV="${X_ENV} -x FI_PROVIDER -x FI_EFA_USE_DEVICE_RDMA -x RDMAV_FORK_SAFE"
 X_ENV="${X_ENV} -x PATH -x LD_LIBRARY_PATH -x GMXLIB"
 
-# Three-line MCA selection block (Requirement 10.6) printed on its own
+# Three-line MCA selection block printed on its own
 # lines so log-scrapers can match each token literally.
 echo "pml=cm"
 echo "mtl=ofi"
@@ -458,7 +458,7 @@ echo "provider=efa"
 # ---------------------------------------------------------------------------
 # Build mdrun args. -resethway discards the warm-up half of the run from
 # the timing; -noconfout suppresses the multi-GiB confout.gro write that
-# otherwise dominates I/O at high rank counts (Requirement 2.12).
+# otherwise dominates I/O at high rank counts.
 # ---------------------------------------------------------------------------
 MDRUN_ARGS=(mdrun -s "${TPR_FILE}" -nsteps "${TIMESTEPS}" -resethway -noconfout
     -nstlist "${NSTLIST}" -deffnm md)
@@ -538,7 +538,7 @@ LOOP_STEPS="$(awk '/Statistics over [0-9]+ steps/ {for (i=1;i<=NF;i++) if ($i=="
 LOOP_STEPS="${LOOP_STEPS:-${TIMESTEPS}}"
 
 # ---------------------------------------------------------------------------
-# Run metadata (Requirement 11.6 — captured here so the optional DynamoDB
+# Run metadata (captured here so the optional DynamoDB
 # block at the bottom can reference them without re-shelling out).
 #
 # The four metadata vars below (KERNEL_VERSION, OS_PRETTY, PC_VERSION,

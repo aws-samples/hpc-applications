@@ -1,7 +1,6 @@
-# Phase 3 GROMACS GPU scaling sweep — runbook (task 19)
+# Phase 3 GROMACS GPU scaling sweep — runbook
 
-This document is the operational checklist for spec task **19** in
-[`tasks.md`](../../../.kiro/specs/gromacs-support/tasks.md):
+This document is the operational checklist for the GPU scaling sweep:
 
 > Run a Phase 3 chart sweep (1, 2, 4, 8 GPUs on g6e and p5; benchMEM and
 > benchPEP-h); update `generate_charts.py` to render
@@ -48,7 +47,7 @@ and / or produces records the chart pipeline can't consume.
 | 4 | `dynamodb:PutItem` on `Gromacs_Benchmarks` is attached to the **GPU cluster** compute role | `salloc -p g6e -N1 --gres=gpu:1 -t 5:00 bash -lc 'aws dynamodb put-item --table-name Gromacs_Benchmarks --region us-east-1 --item ''{"job_id":{"S":"smoke-gpu"},"config":{"S":"0N-0rpn-test"}}'''` succeeds, then a follow-up `delete-item` cleans up. **The Phase 1 IAM policy attached the permission to the x86 cluster role and Phase 2 added the Arm cluster role — Phase 3 needs the same scoped policy on the GPU cluster role.** | 3.2 |
 | 5 | Cluster copy of the launcher exists with the DynamoDB call site **uncommented** | `grep -c '^aws dynamodb put-item' /fsx/gromacs/scripts/GPU/gromacs-benchmark.sbatch` is at least 1 (the public-repo copy is `0`) — see [`apps/Gromacs/dynamodb/README.md`](../dynamodb/README.md) for the deploy-time uncomment recipe. Phase 3 records additionally carry `gpu_count` and `cuda_version` attributes the recorder appends only when both env vars are set | 18.1, 19 |
 
-If you can tick (1) but not (2), do the smoke runs as task 18 specifies
+If you can tick (1) but not (2), do the smoke runs as specified in the prerequisites
 before launching the sweep. If you can't tick (4), attach the inline
 policy from [`apps/Gromacs/dynamodb/README.md`](../dynamodb/README.md) to
 the GPU compute role and re-test. The 32-job sweep is meant to run with
@@ -80,7 +79,7 @@ All jobs are **single-node** — both g6e.48xlarge (8x L40S) and
 p5.48xlarge (8x H100) ship up to 8 GPUs in one chassis, and the
 launcher's `GPU_COUNT` validation tops out at `min(8, nvidia-smi -L
 count)`. Multi-node GPU runs (Library_MPI under `mpirun`) are out of
-Phase 3 scope per Requirement 6.2 and are not part of this manifest.
+Phase 3 scope and are not part of this manifest.
 The launcher still supports them when `GPU_COUNT` exceeds GPUs/node —
 see [`apps/Gromacs/GPU/gromacs-benchmark.sbatch`](gromacs-benchmark.sbatch)
 for the path.
@@ -188,7 +187,7 @@ ns_g6e_1g_benchPEPh = [4.520, 4.535]
 # ... and so on for the other seven cells
 ```
 
-The `# TODO(19)` comment markers in `generate_charts.py` show every
+The empty data lists in `generate_charts.py` show every
 cell that needs filling. Then flip the gate near the top of the script:
 
 ```python

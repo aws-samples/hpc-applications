@@ -1,8 +1,7 @@
 #!/bin/bash
-# Phase 1 GROMACS scaling sweep manifest — task 8.1
+# Phase 1 GROMACS scaling sweep manifest
 # ---------------------------------------------------------------------------
-# Submits the 24-job scaling sweep required by spec task 8.1
-# (.kiro/specs/gromacs-support/tasks.md, requirement 12.7):
+# Submits the 24-job scaling sweep:
 #
 #   (1N, 2N, 4N) x {benchMEM, benchPEP-h} x 3 replicates  on hpc8a   = 18 jobs
 #   (1N, 2N, 4N) x {benchMEM, benchPEP-h} x 3 replicates  on hpc7a   = 18 jobs
@@ -20,7 +19,7 @@
 # (ec2-user@10.3.39.86, reached via bastion 3.128.184.207) AFTER all
 # prerequisites are green:
 #
-#   [ ] task 2  — build_gromacs_x86.sbatch has been submitted on hpc8a
+#   [ ] — build_gromacs_x86.sbatch has been submitted on hpc8a
 #                 and produced /fsx/gromacs/x86_64/<tag>/{tmpi,ompi}/bin/{gmx,gmx_mpi}
 #                 plus the two env scripts. Verify with:
 #
@@ -31,7 +30,7 @@
 #                 The version output for both must report
 #                 "Acceleration most likely to fit this hardware: AVX_512".
 #
-#   [ ] task 3.1 — Gromacs_Benchmarks table is ACTIVE in us-east-1.
+#   [ ] — Gromacs_Benchmarks table is ACTIVE in us-east-1.
 #                  Already verified from a developer laptop on 2026-05-26.
 #                  Re-verify before the sweep with:
 #
@@ -41,7 +40,7 @@
 #                      --output text
 #                  # Expected: ACTIVE
 #
-#   [ ] task 3.2 — dynamodb:PutItem is attached to the compute role.
+#   [ ] — dynamodb:PutItem is attached to the compute role.
 #                  Confirm with a put-item smoke test from a compute node:
 #
 #                    salloc -p hpc8a --nodes=1 --time=00:05:00 \
@@ -54,7 +53,7 @@
 #                        --key "{\"job_id\":{\"S\":\"smoke-test\"},\
 #                        \"config\":{\"S\":\"0N-0rpn-test\"}}"'
 #
-#   [ ] task 6  — gromacs-benchmark.sbatch has been smoke-tested on hpc8a
+#   [ ] — gromacs-benchmark.sbatch has been smoke-tested on hpc8a
 #                 with MODEL=RNAse and produced a parseable Performance: line.
 #                 Verify with a 1-node smoke run:
 #
@@ -110,7 +109,7 @@ if ! ls "${BASE_DIR}/x86_64/${GROMACS_TAG}"/gromacs-*-tmpi-env.sh \
         >/dev/null 2>&1; then
     echo "ERROR: no GROMACS env scripts found under" >&2
     echo "       ${BASE_DIR}/x86_64/${GROMACS_TAG}/" >&2
-    echo "       Run task 2 (build_gromacs_x86.sbatch) first." >&2
+    echo "       Run build_gromacs_x86.sbatch first." >&2
     exit 1
 fi
 

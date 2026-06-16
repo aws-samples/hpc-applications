@@ -1,7 +1,6 @@
-# Phase 2 GROMACS scaling sweep — runbook (task 14.2)
+# Phase 2 GROMACS scaling sweep — runbook
 
-This document is the operational checklist for spec task **14.2** in
-[`tasks.md`](../../../.kiro/specs/gromacs-support/tasks.md):
+This document is the operational checklist for the Arm (Graviton) scaling sweep:
 
 > Submit (1N, 2N, 4N) × {benchMEM, benchPEP-h} × 3 replicates on hpc7g and
 > m8g (24 jobs); pull means from DynamoDB; update
@@ -44,7 +43,7 @@ chart pipeline can't consume.
 | 4 | `dynamodb:PutItem` on `Gromacs_Benchmarks` is attached to the **Arm cluster** compute role | `salloc -p hpc7g -N1 -t 5:00 bash -lc 'aws dynamodb put-item --table-name Gromacs_Benchmarks --region us-east-1 --item ''{"job_id":{"S":"smoke-arm"},"config":{"S":"0N-0rpn-test"}}'''` succeeds, then a follow-up `delete-item` cleans up. **The Phase 1 IAM policy attached the permission to the x86 cluster role only — re-attach the same scoped policy to the Arm cluster role.** | 3.2 |
 | 5 | Cluster copy of the launcher exists with the DynamoDB call site **uncommented** | `grep -c '^aws dynamodb put-item' /fsx/gromacs/scripts/Arm/gromacs-benchmark.sbatch` is at least 1 (the public-repo copy is `0`) — see [`apps/Gromacs/dynamodb/README.md`](../dynamodb/README.md) for the deploy-time uncomment recipe | 12.1, 13 |
 
-If you can tick (1) but not (2), do the smoke runs as task 13 specifies
+If you can tick (1) but not (2), do the smoke runs as specified in the prerequisites
 before launching the sweep. If you can't tick (4), attach the inline
 policy from [`apps/Gromacs/dynamodb/README.md`](../dynamodb/README.md) to
 the Arm compute role and re-test. The 24-job sweep is meant to run with
@@ -69,7 +68,7 @@ steps 1-5 all green.
 | **Total** | | | | | **24** |
 
 The spec text says "3 replicates" but tallies "24 jobs" — same wording
-discrepancy as task 8.1. `3 × 2 × 3 × 2 = 36`, not 24, so we honour the
+discrepancy noted for the x86 sweep. `3 × 2 × 3 × 2 = 36`, not 24, so we honour the
 **24-job** tally: 2 replicates per cell × 6 cells × 2 partitions. If
 during analysis any cell shows replica-to-replica spread greater than
 ~3 % we'll add a third replicate to that cell only. Set `REPLICATES=3`
@@ -177,7 +176,7 @@ ns_hpc7g_1n_benchPEPh = [1.420, 1.428]
 # ... and so on for the other five cells
 ```
 
-The `# TODO(14.2)` comment markers in `generate_charts.py` show every
+The empty data lists in `generate_charts.py` show every
 cell that needs filling. Then flip the gate near the top of the script:
 
 ```python

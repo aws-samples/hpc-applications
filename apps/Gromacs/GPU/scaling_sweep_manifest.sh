@@ -1,8 +1,7 @@
 #!/bin/bash
-# Phase 3 GROMACS scaling sweep manifest — task 19
+# Phase 3 GROMACS scaling sweep manifest
 # ---------------------------------------------------------------------------
-# Submits the 32-job GPU scaling sweep required by spec task 19
-# (.kiro/specs/gromacs-support/tasks.md, requirement 12.7):
+# Submits the 32-job GPU scaling sweep:
 #
 #   (1, 2, 4, 8 GPUs) x {benchMEM, benchPEP-h} x N replicates  on g6e = 16 jobs
 #   (1, 2, 4, 8 GPUs) x {benchMEM, benchPEP-h} x N replicates  on p5  = 16 jobs
@@ -17,7 +16,7 @@
 # All jobs are SINGLE NODE on g6e and p5 — both instance families ship up to
 # 8 GPUs in one chassis, and the launcher's GPU_COUNT validation tops out at
 # min(8, nvidia-smi -L count). Multi-node GPU runs (Library_MPI under
-# mpirun) are out of Phase 3 scope per Requirement 6.2 and are not part of
+# mpirun) are out of Phase 3 scope and are not part of
 # this manifest. The launcher still supports them when GPU_COUNT exceeds
 # GPUs/node — see apps/Gromacs/GPU/gromacs-benchmark.sbatch for the path.
 #
@@ -25,7 +24,7 @@
 # (reached via the same bastion as the CPU clusters) AFTER all
 # prerequisites are green:
 #
-#   [ ] task 17  — build_gromacs_gpu.sbatch has been submitted on g6e (L40S)
+#   [ ] — build_gromacs_gpu.sbatch has been submitted on g6e (L40S)
 #                  AND p5 (H100) and produced the matching tmpi + ompi
 #                  install trees:
 #
@@ -40,7 +39,7 @@
 #                  If the H100 build is missing, jobs on the p5 half of
 #                  this manifest will fail at GROMACS_ENV auto-discovery.
 #
-#   [ ] task 3.1 — Gromacs_Benchmarks table is ACTIVE in us-east-1 (already
+#   [ ] — Gromacs_Benchmarks table is ACTIVE in us-east-1 (already
 #                  provisioned during Phase 1; verify before re-running):
 #
 #                    aws dynamodb describe-table \
@@ -49,7 +48,7 @@
 #                      --output text
 #                    # Expected: ACTIVE
 #
-#   [ ] task 3.2 — dynamodb:PutItem is attached to the GPU cluster compute
+#   [ ] — dynamodb:PutItem is attached to the GPU cluster compute
 #                  role. The Phase 1 IAM policy targeted the x86 cluster
 #                  role and Phase 2 added the Arm cluster role; Phase 3
 #                  needs the same scoped inline policy on the GPU
@@ -66,7 +65,7 @@
 #                        --key "{\"job_id\":{\"S\":\"smoke-test-gpu\"},\
 #                        \"config\":{\"S\":\"0N-0rpn-test\"}}"'
 #
-#   [ ] task 18  — gromacs-benchmark.sbatch has been smoke-tested on g6e
+#   [ ] — gromacs-benchmark.sbatch has been smoke-tested on g6e
 #                  (1 GPU, MODEL=RNAse) AND p5 (1 GPU, MODEL=benchMEM) AND
 #                  multi-GPU (4-GPU benchMEM on g6e and 8-GPU benchMEM on
 #                  p5) and each produced a parseable Performance: line.
@@ -91,7 +90,7 @@
 #                       line of the trailing block prefixed with `# `).
 #                       Phase 3 records additionally export GPU_COUNT and
 #                       CUDA_VERSION so the recorder appends those fields
-#                       to the DynamoDB record (Requirement 11.5, 11.6).
+#                       to the DynamoDB record.
 #
 # Until all five boxes are checked, DO NOT run this manifest. Submitting
 # the full 32 jobs blindly burns g6e/p5 hours (p5 in particular is
@@ -144,7 +143,7 @@ for ARCH_DIR in \
     if ! ls "${ARCH_DIR}"/gromacs-*-tmpi-env.sh >/dev/null 2>&1; then
         echo "ERROR: no GROMACS Thread_MPI env scripts found under" >&2
         echo "       ${ARCH_DIR}/" >&2
-        echo "       Run task 17 (build_gromacs_gpu.sbatch) first on the" >&2
+        echo "       Run build_gromacs_gpu.sbatch first on the" >&2
         echo "       matching partition." >&2
         exit 1
     fi

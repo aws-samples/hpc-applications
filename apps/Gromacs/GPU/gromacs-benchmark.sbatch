@@ -57,7 +57,7 @@
 # follow the instructions in apps/Gromacs/dynamodb/README.md and uncomment
 # the marked block at the bottom of this file. The GPU launcher additionally
 # exports GPU_COUNT and CUDA_VERSION so the recorder appends those fields to
-# the DynamoDB record (Requirement 11.5, 11.6 — Phase 3 extension).
+# the DynamoDB record (11.6 — Phase 3 extension).
 #
 # Override via --export=ALL,...:
 #   GROMACS_ENV         path to env script. Default: auto-selected per
@@ -118,7 +118,7 @@ BASE_DIR="${BASE_DIR:-/fsx/gromacs}"
 DYNAMODB_RECORDER="${DYNAMODB_RECORDER:-/fsx/gromacs/scripts/dynamodb/record_to_dynamodb.sh}"
 
 # ---------------------------------------------------------------------------
-# Per-model config (Requirement 7.1, design.md section 4 model table).
+# Per-model config (design.md section 4 model table).
 #   .tpr filename, default nsteps, MPINAT URL.
 # Pages serve .tpr.gz archives — fetched, gunzipped, validated non-empty,
 # then cached at /fsx/gromacs/benchmarks/<MODEL>/<MODEL>.tpr.
@@ -177,7 +177,7 @@ if [[ "${BASE_DIR}" != /* ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# GPU detection + GPU_COUNT validation (Requirement 6.2).
+# GPU detection + GPU_COUNT validation.
 # Requires nvidia-smi on the compute node — present on g6e and p5 by
 # default. The supported range is 1..min(8, detected GPUs/node).
 # ---------------------------------------------------------------------------
@@ -193,7 +193,7 @@ if [ -z "${GPUS_PER_NODE}" ] || [ "${GPUS_PER_NODE}" = "0" ]; then
 fi
 
 # Effective max is min(8, GPUs/node). The hard ceiling at 8 mirrors
-# Requirement 6.2 — single-node L40S / H100 SKUs ship up to 8 GPUs and we
+# single-node L40S / H100 SKUs ship up to 8 GPUs and we
 # do not validate >8 multi-node configurations as part of Phase 3.
 GPU_MAX=8
 if (( GPUS_PER_NODE < GPU_MAX )); then
@@ -231,8 +231,7 @@ if (( GPU_COUNT > GPUS_PER_NODE )); then
 fi
 
 # ---------------------------------------------------------------------------
-# Auto-pick GROMACS_ENV if the user didn't supply one (Requirement 6.3,
-# 6.4, 6.5). Strategy:
+# Auto-pick GROMACS_ENV if the user didn't supply one (# 6.4, 6.5). Strategy:
 #   GPU_COUNT <= GPUs/node  -> tmpi env (single-node multi-GPU Thread_MPI)
 #   GPU_COUNT > GPUs/node   -> ompi env (multi-node Library_MPI)
 # Search both x86_64-cuda*-l40s and x86_64-cuda*-h100 install roots and
@@ -372,7 +371,7 @@ echo "GROMACS_ENV:   ${GROMACS_ENV}"
 echo "Workdir:       ${WORKDIR}"
 
 # ---------------------------------------------------------------------------
-# nvidia-smi topo -m at job start (Requirement 6.8). Captured here so the
+# nvidia-smi topo -m at job start. Captured here so the
 # topology is in the slurm log even if the benchmark fails downstream.
 # Also write a one-line summary into the run log so log scrapers can match
 # `GPU topology:` literally without parsing the full nvidia-smi table.
@@ -382,7 +381,7 @@ echo "=== nvidia-smi topo -m ==="
 TOPO_FILE="${WORKDIR}/nvidia-smi-topo.txt"
 nvidia-smi topo -m 2>&1 | tee "${TOPO_FILE}"
 
-# Classify the inter-GPU fabric (Requirement 6.5) by scanning the upper
+# Classify the inter-GPU fabric by scanning the upper
 # triangle of the nvidia-smi topo matrix. The matrix uses tokens like NV#
 # (NVLink generation #), NVS (NVSwitch), PXB / PIX / NODE / SYS (PCIe of
 # decreasing locality). We classify in priority order:
@@ -413,7 +412,7 @@ set -u
 # Constrain CUDA_VISIBLE_DEVICES to the first GPU_COUNT GPUs so a job that
 # requested --gres=gpu:4 doesn't accidentally touch GPUs 4..7. The env
 # script already sets a default covering 0..N-1 of the build host; we
-# tighten that to 0..GPU_COUNT-1 here per Requirement 6.3 / 6.4.
+# tighten that to 0..GPU_COUNT-1 here
 if (( GPU_COUNT == 1 )); then
     CUDA_VISIBLE_DEVICES="0"
 else
@@ -436,7 +435,7 @@ echo "${GMX_BIN_NAME} binary:  ${GMX_BIN}"
 echo "GROMACS tag:    ${GROMACS_TAG:-unknown}"
 
 # Capture the CUDA toolkit version on the running node for the DynamoDB
-# record (Requirement 6.7's GPU extension to the schema). nvcc may not be
+# record (the GPU extension to the schema). nvcc may not be
 # on PATH at run time even when the build had it; fall back to the
 # nvidia-smi driver-side CUDA version line.
 # shellcheck disable=SC2034
@@ -601,7 +600,7 @@ X_ENV="${X_ENV} -x FI_PROVIDER -x FI_EFA_USE_DEVICE_RDMA -x RDMAV_FORK_SAFE"
 X_ENV="${X_ENV} -x PATH -x LD_LIBRARY_PATH -x GMXLIB"
 X_ENV="${X_ENV} -x CUDA_VISIBLE_DEVICES"
 
-# Three-line MCA selection block (Requirement 10.6) printed on its own
+# Three-line MCA selection block printed on its own
 # lines so log-scrapers can match each token literally. Always emitted —
 # the tokens are constants and cheap to log even on single-GPU runs.
 echo "pml=cm"
@@ -609,7 +608,7 @@ echo "mtl=ofi"
 echo "provider=efa"
 
 # ---------------------------------------------------------------------------
-# Build mdrun args (Requirement 6.6).
+# Build mdrun args.
 #
 # `-nb gpu -pme gpu` always offload non-bonded and PME to the GPU. `-bonded`
 # and `-update` are overridable knobs (GPU_BONDED / GPU_UPDATE, gpu|cpu|auto)
@@ -695,7 +694,7 @@ fi
 WALL_TIME_TOTAL=$(awk "BEGIN{printf \"%.2f\", ${T_END} - ${T_START}}")
 
 # ---------------------------------------------------------------------------
-# Extract performance metrics (Requirement 6.7; design Property 3).
+# Extract performance metrics (design Property 3).
 # Same extraction logic as the CPU phases — GROMACS prints near the end of
 # md.log:
 #                  (ns/day)    (hour/ns)
@@ -868,12 +867,12 @@ REPORT
 #
 # Phase 3 GPU runs additionally export GPU_COUNT and CUDA_VERSION; the
 # recorder appends `gpu_count` and `cuda_version` attributes to the
-# DynamoDB record only when both are set (Requirement 11.5, 11.6).
+# DynamoDB record only when both are set.
 #
 # Note: this public-repo committed file ships with the call site
 # DISABLED. The cluster copy under /fsx/gromacs/scripts/GPU/ ships with
 # the call site ENABLED so internal benchmark sweeps record to
-# Gromacs_Benchmarks in us-east-1 (Requirement 11.9).
+# Gromacs_Benchmarks in us-east-1.
 # ---------------------------------------------------------------------------
 # export SLURM_JOB_ID SLURM_JOB_NUM_NODES SLURM_CLUSTER_NAME
 # export MODEL

@@ -237,7 +237,7 @@ build_variant() {
     # Flip the TOUCHED flag at the last moment — only here does this run
     # start clobbering the install prefix. If configure or compile failed
     # above, ${prefix} still holds whatever a prior successful run left
-    # there, and the trap leaves it alone (Requirement 1.7 / 1.8 intent).
+    # there, and the trap leaves it alone (by design).
     case "${variant}" in
         tmpi) TMPI_TOUCHED=1 ;;
         ompi) OMPI_TOUCHED=1 ;;

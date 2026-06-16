@@ -1,15 +1,14 @@
-# Phase 1 GROMACS scaling sweep — runbook (task 8.1)
+# Phase 1 GROMACS scaling sweep — runbook
 
-This document is the operational checklist for spec task **8.1** in
-[`tasks.md`](../../../.kiro/specs/gromacs-support/tasks.md):
+This document is the operational checklist for the x86 scaling sweep:
 
 > Submit (1N, 2N, 4N) × {benchMEM, benchPEP-h} × 3 replicates on hpc8a and
 > on hpc7a (24 jobs); confirm DynamoDB has every record for the sweep;
 > pull the means via the same scan helper used for LAMMPS.
 
 The sweep is the data feed for the x86 chart in
-[`Doc/img/Gromacs/generate_charts.py`](../../../Doc/img/Gromacs/) (task 8.2)
-and the embedded PNG in [`apps/Gromacs/README.md`](../README.md) (task 8.3).
+[`Doc/img/Gromacs/generate_charts.py`](../../../Doc/img/Gromacs/)
+and the embedded PNG in [`apps/Gromacs/README.md`](../README.md).
 
 It is **not** runnable from a developer laptop — it must run on the head
 node of the x86 cluster (`ec2-user@10.3.39.86`, reached via bastion
@@ -32,7 +31,7 @@ The Phase 1 build is identical for hpc8a (Zen5) and hpc7a.96xlarge (Zen4):
 both are AVX-512 x86_64 and consume the same
 `/fsx/gromacs/x86_64/<tag>/{tmpi,ompi}` install tree. **If hpc8a is
 unavailable in the cluster** (capacity, maintenance, etc.), the smoke runs
-in task 6 and the full sweep in task 8.1 can be executed on hpc7a alone
+the smoke test and the full sweep can be executed on hpc7a alone
 without any code changes:
 
 - `scaling_sweep_manifest.sh` already iterates `PARTITIONS=(hpc8a hpc7a)`
@@ -60,7 +59,7 @@ without any code changes:
 - The DynamoDB record's `instance_type` field is read from IMDSv2 at run
   time, so hpc7a runs land in `Gromacs_Benchmarks` with
   `instance_type=hpc7a.96xlarge` automatically; the chart pipeline
-  (task 8.2) keys on `instance_type` and renders hpc8a vs hpc7a, so
+  keys on `instance_type` and renders hpc8a vs hpc7a, so
   partial-only-hpc7a data is consumed cleanly when hpc8a backfill arrives.
 
 The `--constraint=hpc7a-96xlarge` clause is required only on clusters where
@@ -81,7 +80,7 @@ pipeline can't consume.
 | 4 | `dynamodb:PutItem` on `Gromacs_Benchmarks` is attached to the compute role | `salloc -p hpc8a -N1 -t 5:00 bash -lc 'aws dynamodb put-item --table-name Gromacs_Benchmarks --region us-east-1 --item ''{"job_id":{"S":"smoke"},"config":{"S":"0N-0rpn-test"}}'''` succeeds, then a follow-up `delete-item` cleans up | 3.2 |
 | 5 | Cluster copy of the launcher exists with the DynamoDB call site **uncommented** | `grep -cE '^[[:space:]]*if \[ -x "\$\{DYNAMODB_RECORDER\}"' /fsx/gromacs/scripts/x86/gromacs-benchmark.sbatch` is at least 1 (the public-repo copy is `0`). The launcher invokes the recorder helper at `${DYNAMODB_RECORDER}` rather than calling `aws dynamodb put-item` directly, so grep on the recorder-call line — not on `aws dynamodb put-item` — to verify deployment | 5.1, 6 |
 
-If you can tick (1) but not (2), do the smoke run as task 6 specifies before
+If you can tick (1) but not (2), do the smoke run as specified in the prerequisites before
 launching the sweep. If you can't tick (4), attach the inline policy from
 `apps/Gromacs/dynamodb/README.md` to the compute role and re-test. The 24-job
 sweep is meant to run with steps 1-5 all green.
@@ -181,7 +180,7 @@ hpc8a.96xlarge           4   benchPEP-h     [ 10.250,  10.298]                  
 (Numbers above are illustrative — they are **not** measured GROMACS
 performance on hpc8a/hpc7a, just placeholders showing the table shape.)
 
-## Hand-off to the chart pipeline (task 8.2)
+## Hand-off to the chart pipeline
 
 Copy the per-replicate `ns_per_day_replicates` lists from `scan_sweep.sh`
 output into `Doc/img/Gromacs/generate_charts.py` as numeric Python literals,
@@ -203,7 +202,7 @@ ns_hpc7a_1n_benchMEM = [144.598, 144.812]
 
 Then run `python3 Doc/img/Gromacs/generate_charts.py` to produce
 `Gromacs-benchMEM-Hpc8aVsHpc7a.png` and the equivalent benchPEP-h chart, and
-embed them in `apps/Gromacs/README.md` (task 8.3) using the GitHub
+embed them in `apps/Gromacs/README.md` using the GitHub
 `raw=true` URL pattern documented in
 [`apps/LAMMPS/README.md`](../../LAMMPS/README.md).
 

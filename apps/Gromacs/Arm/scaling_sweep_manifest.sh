@@ -1,14 +1,13 @@
 #!/bin/bash
-# Phase 2 GROMACS scaling sweep manifest — task 14.2
+# Phase 2 GROMACS scaling sweep manifest
 # ---------------------------------------------------------------------------
-# Submits the 24-job aarch64 scaling sweep required by spec task 14.2
-# (.kiro/specs/gromacs-support/tasks.md, requirement 12.7):
+# Submits the 24-job aarch64 scaling sweep:
 #
 #   (1N, 2N, 4N) x {benchMEM, benchPEP-h} x N replicates  on hpc7g  = 12 jobs
 #   (1N, 2N, 4N) x {benchMEM, benchPEP-h} x N replicates  on m8g    = 12 jobs
 #                                                                     ----
 # The spec text reads "3 replicates" and "24 jobs" — the same wording-vs-math
-# discrepancy as task 8.1. We honour the explicit "24 jobs" tally:
+# discrepancy noted for the x86 sweep. We honour the explicit "24 jobs" tally:
 #   3 node counts x 2 models x 2 replicates per partition x 2 partitions = 24
 # REPLICATES defaults to 2 to land on the spec's 24 figure; pass
 # REPLICATES=3 if you want 36 jobs for tighter error bars (the chart
@@ -18,7 +17,7 @@
 # (ec2-user@10.3.51.188, reached via bastion 3.128.184.207) AFTER all
 # prerequisites are green:
 #
-#   [ ] task 11  — build_gromacs_arm.sbatch has been submitted on hpc7g
+#   [ ] — build_gromacs_arm.sbatch has been submitted on hpc7g
 #                  (default OpenMPI 5) AND m8g (OpenMPI 5 forced) and
 #                  produced the matching tmpi + ompi5 install trees:
 #
@@ -32,7 +31,7 @@
 #                  If the Graviton4 build is missing, jobs on the m8g half
 #                  of this manifest will fail at GROMACS_ENV auto-discovery.
 #
-#   [ ] task 3.1 — Gromacs_Benchmarks table is ACTIVE in us-east-1 (already
+#   [ ] — Gromacs_Benchmarks table is ACTIVE in us-east-1 (already
 #                  provisioned during Phase 1; verify before re-running):
 #
 #                    aws dynamodb describe-table \
@@ -41,7 +40,7 @@
 #                      --output text
 #                    # Expected: ACTIVE
 #
-#   [ ] task 3.2 — dynamodb:PutItem is attached to the Arm cluster compute
+#   [ ] — dynamodb:PutItem is attached to the Arm cluster compute
 #                  role. The Phase 1 IAM policy targeted the x86 cluster
 #                  role; re-confirm the Arm role has the same scoped
 #                  inline policy attached. Smoke-test with a put-item
@@ -57,7 +56,7 @@
 #                        --key "{\"job_id\":{\"S\":\"smoke-test-arm\"},\
 #                        \"config\":{\"S\":\"0N-0rpn-test\"}}"'
 #
-#   [ ] task 13  — gromacs-benchmark.sbatch has been smoke-tested on hpc7g
+#   [ ] — gromacs-benchmark.sbatch has been smoke-tested on hpc7g
 #                  (1N, MODEL=RNAse) AND m8g (1N, MODEL=benchMEM) and a
 #                  4N benchPEP-h job on m8g at --ntasks-per-node=192 has
 #                  produced a parseable Performance: line. Verify with:
@@ -132,7 +131,7 @@ for ARCH_DIR in \
     if ! ls "${ARCH_DIR}"/gromacs-*-ompi5-env.sh >/dev/null 2>&1; then
         echo "ERROR: no GROMACS OpenMPI 5 env scripts found under" >&2
         echo "       ${ARCH_DIR}/" >&2
-        echo "       Run task 11 (build_gromacs_arm.sbatch) first on the" >&2
+        echo "       Run build_gromacs_arm.sbatch first on the" >&2
         echo "       matching partition." >&2
         exit 1
     fi

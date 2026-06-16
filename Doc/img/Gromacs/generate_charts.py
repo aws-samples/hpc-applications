@@ -19,7 +19,7 @@ Speedups are normalised to a single-node baseline of the same architecture
 (1N hpc7a for x86, 1N hpc7g for Arm, 1-GPU g6e for GPU), matching the
 LAMMPS / OpenRadioss / WRF convention used elsewhere in this repo. Only
 speedups are rendered — absolute ``ns/day`` values do not appear on any chart
-(see Requirement 12.2 in the spec).
+.
 
 Usage:
     python3 generate_charts.py
@@ -72,12 +72,10 @@ GPU_COUNTS = [1, 2, 4, 8]  # g6e / p5 — single-node multi-GPU
 # ---------------------------------------------------------------------------
 # Measured data — Performance: <ns/day> per replicate.
 #
-# Pulled from DynamoDB table Gromacs_Benchmarks (us-east-1) once task 8.1 has
-# completed. Each list is the per-replicate ``ns/day`` for a single
-# (instance, node-count, model) cell. Use ``[]`` for cells that were not
-# measured. Use sentinel zeros only as placeholders pending the live sweep.
-#
-# TODO(8.1): fill in from scan_sweep.sh output once task 8.1 has run live.
+# Pulled from the Gromacs_Benchmarks DynamoDB table (us-east-1) via
+# ``apps/Gromacs/dynamodb/scan_sweep.sh``. Each list is the per-replicate
+# ``ns/day`` for a single (instance, node-count, model) cell. Use ``[]`` for
+# cells that were not measured.
 # ---------------------------------------------------------------------------
 
 # x86 — benchMEM ----------------------------------------------------------
@@ -185,7 +183,7 @@ ns_p5_8g_benchPEPh  = [0.410, 0.409]
 # GPU instance on-demand pricing — us-east-2, retrieved 2026-06-01.
 # Used only for the price/performance chart (ns/day per dollar-hour). The
 # .48xlarge SKU is the one swept (8 GPUs/node) for all three families.
-# Keep prices out of matplotlib calls (Requirement 12.10).
+# Keep prices out of matplotlib calls.
 # ---------------------------------------------------------------------------
 GPU_PRICE_USD_PER_HR = {
     "g6e": 30.13,   # g6e.48xlarge (8x L40S)
@@ -411,7 +409,7 @@ def render_three_family_gpu_chart(
     """Render a grouped-bar speedup chart across up to three GPU families.
 
     Speedup is normalised to the slowest family's 1-GPU mean so all three
-    families share one baseline (Requirement 12.5). Families/cells with no
+    families share one baseline. Families/cells with no
     data are skipped without raising. Returns ``True`` if at least one bar
     was drawn.
     """
@@ -489,7 +487,7 @@ def render_gpu_price_perf_chart(
     """Render a price/performance chart: ns/day per US dollar-hour.
 
     For each family and GPU count, the metric is
-    ``mean(ns/day) / hourly_price`` (Requirement 12.9). Absolute ns/day is
+    ``mean(ns/day) / hourly_price``. Absolute ns/day is
     never rendered. Skips cells/families with no data or no price without
     raising. Returns ``True`` if at least one bar was drawn.
     """
@@ -656,7 +654,7 @@ for model_id, subtitle in WORKLOADS:
 
 if x86_rendered == 0:
     print("  no x86 charts rendered — fill in the per-replicate lists at the "
-          "top of this script (TODO(8.1)) and re-run.")
+          "top of this script and re-run.")
 
 # ---------------------------------------------------------------------------
 # Chart 2 — Arm Graviton3E (hpc7g) vs Graviton4 (m8g) — Phase 2
@@ -681,8 +679,8 @@ if data_available_arm:
                      "[GCC + OpenMPI 4/5 + EFA]",
         )
 else:
-    print("\nArm charts: skipped — set data_available_arm=True once Phase 2 "
-          "sweep data has been pulled from DynamoDB (see task 14.2).")
+    print("\nArm charts: skipped — set data_available_arm=True once the Arm "
+          "sweep data has been pulled from DynamoDB.")
 
 # ---------------------------------------------------------------------------
 # Chart 3 — GPU three-family comparison (g6e / g7e / p5) — Phase 3
@@ -714,8 +712,8 @@ if data_available_gpu:
                      "[us-east-2 on-demand, 8-GPU .48xlarge SKUs]",
         )
 else:
-    print("\nGPU charts: skipped — set data_available_gpu=True once the Phase 3 "
-          "sweep results have been filled into the ns_* lists (see task 20.1).")
+    print("\nGPU charts: skipped — set data_available_gpu=True once the GPU "
+          "sweep results have been filled into the ns_* lists.")
 
 # ---------------------------------------------------------------------------
 # Chart 4 — GPU MPS GPU-sharing (Phase 3, redone)

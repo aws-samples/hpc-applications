@@ -222,7 +222,7 @@ The Arm launcher auto-discovers the most recently modified env script under `aar
 
 ### GPU examples — single-simulation launcher (reference only)
 
-> **For throughput workloads, use the MPS GPU-sharing benchmark ([`GPU/gromacs-mps-benchmark.sbatch`](GPU/gromacs-mps-benchmark.sbatch)), not this launcher.** The single-simulation launcher below scales *one* GROMACS simulation across multiple GPUs, which **anti-scales over PCIe** on these instances (see Performance → GPU). It is kept as a single-GPU reference and for the rare large system that genuinely needs multi-GPU; do not use its multi-GPU scaling numbers for customer recommendations.
+> **For throughput workloads, use the MPS GPU-sharing benchmark ([`GPU/gromacs-mps-benchmark.sbatch`](GPU/gromacs-mps-benchmark.sbatch)), not this launcher.** The single-simulation launcher below scales *one* GROMACS simulation across multiple GPUs. **Based on our benchmarking, this is generally not the best approach for these instances**: a single simulation under-utilizes a modern GPU, and spreading it across GPUs **anti-scales over PCIe** (throughput *drops* as GPUs are added — see Performance → GPU). We keep this launcher as a single-GPU reference and for the rare large system that genuinely needs multi-GPU, but for most GROMACS GPU workloads MPS GPU-sharing gives far higher aggregate throughput. Do not use this launcher's multi-GPU scaling numbers for customer recommendations.
 
 The GPU launcher dispatches to one of three execution paths based on `GPU_COUNT` vs detected GPUs/node:
 
