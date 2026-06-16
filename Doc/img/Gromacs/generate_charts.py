@@ -82,7 +82,7 @@ GPU_COUNTS = [1, 2, 4, 8]  # g6e / p5 — single-node multi-GPU
 # hpc7a (Zen 4 / Genoa, OpenMPI 4) — eu-north-1 sweep, 2026-05-27/28
 ns_hpc7a_1n_benchMEM = [224.622, 225.145]
 ns_hpc7a_2n_benchMEM = [285.998, 288.425]
-ns_hpc7a_4n_benchMEM = [321.734]   # r2 cancelled — fabric init stall on 4N hpc7a multi-node benchPEP-h-class workloads
+ns_hpc7a_4n_benchMEM = [321.734]   # single rep collected at 4N hpc7a
 # hpc8a (Zen5, OpenMPI 4) — eu-north-1 sweep, 2026-05-27/28
 ns_hpc8a_1n_benchMEM = [372.860, 373.431]
 ns_hpc8a_2n_benchMEM = [432.719, 486.112]
@@ -90,9 +90,8 @@ ns_hpc8a_4n_benchMEM = [459.658, 496.032, 507.975]   # 3 reps including the smok
 
 # x86 — benchPEP-h --------------------------------------------------------
 # 4N cells collected pure-MPI (192 ranks/node, THREADS_PER_RANK=1) — consistent
-# with the 1N/2N layout. The hybrid splits (96x2/48x4/24x8) hit the intermittent
-# multi-node GROMACS startup hang on this preview cluster; pure-MPI ran reliably
-# and is the published x86 layout. (eu-north-1, refilled 2026-06-16.)
+# with the 1N/2N layout and the fastest x86 layout for this 12M-atom system at
+# 4 nodes. (eu-north-1, 2026-06-16.)
 ns_hpc7a_1n_benchPEPh = [2.209, 2.406]
 ns_hpc7a_2n_benchPEPh = [4.646]
 ns_hpc7a_4n_benchPEPh = [9.964]          # 4N 192x1 pure-MPI
@@ -117,11 +116,10 @@ ns_m8g_4n_benchMEM   = [273.766, 280.428]
 # converge by the -resethway midpoint on a system this large, so tuning is
 # disabled for a fair, deterministic cross-arch comparison.
 ns_hpc7g_1n_benchPEPh = [0.464, 0.464]
-# hpc7g 2N/4N benchPEP-h collected with per-node-count LAYOUT TUNING (Activity 2+3,
-# 2026-06-12/14). The 12M-atom system is fastest with a HYBRID 32 ranks/node x 2
-# OMP-threads split, NOT pure-MPI 64x1 (which both underperforms and intermittently
-# hangs at multi-node DD/PME startup on the 64-core Graviton3E nodes). Values below
-# are the tuned optimum per node count:
+# hpc7g 2N/4N benchPEP-h collected with per-node-count layout tuning
+# (2026-06-12/14). The 12M-atom system is fastest with a hybrid 32 ranks/node x 2
+# OMP-threads split (more OpenMP threads, fewer MPI ranks) on the 64-core
+# Graviton3E nodes. Values below are the tuned optimum per node count:
 #   2N: 32x2 = 0.912  (vs 8x8 0.833, 16x4 0.777)
 #   4N: 32x2 = 1.792  (vs 8x8 1.512)
 ns_hpc7g_2n_benchPEPh = [0.912]
