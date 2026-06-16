@@ -91,12 +91,16 @@ ns_hpc8a_2n_benchMEM = [432.719, 486.112]
 ns_hpc8a_4n_benchMEM = [459.658, 496.032, 507.975]   # 3 reps including the smoke-test run
 
 # x86 — benchPEP-h --------------------------------------------------------
+# 4N cells collected pure-MPI (192 ranks/node, THREADS_PER_RANK=1) — consistent
+# with the 1N/2N layout. The hybrid splits (96x2/48x4/24x8) hit the intermittent
+# multi-node GROMACS startup hang on this preview cluster; pure-MPI ran reliably
+# and is the published x86 layout. (eu-north-1, refilled 2026-06-16.)
 ns_hpc7a_1n_benchPEPh = [2.209, 2.406]
-ns_hpc7a_2n_benchPEPh = [4.646]    # r2 cancelled — same 4N hpc7a multi-node hang
-ns_hpc7a_4n_benchPEPh = []          # both replicates hit the 4N hpc7a multi-node startup hang
+ns_hpc7a_2n_benchPEPh = [4.646]
+ns_hpc7a_4n_benchPEPh = [9.964]          # 4N 192x1 pure-MPI
 ns_hpc8a_1n_benchPEPh = [3.329, 3.438]
 ns_hpc8a_2n_benchPEPh = [6.762, 6.838]
-ns_hpc8a_4n_benchPEPh = []          # both reps + 2 retries cancelled — 4N hpc8a benchPEP-h hangs at multi-node startup
+ns_hpc8a_4n_benchPEPh = [13.735, 13.967, 14.105]   # 4N 192x1 pure-MPI, 3 reps
 
 # Arm — benchMEM ----------------------------------------------------------
 # hpc7g (Graviton3E / Neoverse V1, c7gn.16xlarge 64 c/n, OpenMPI 5) — us-east-2 sweep 2026-05-29

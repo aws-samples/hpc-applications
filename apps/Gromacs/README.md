@@ -304,7 +304,7 @@ x86 charts below come from the live 24-job chart sweep that ran in eu-north-1: (
 
 ![GROMACS benchPEP-h hpc8a vs hpc7a](../../Doc/img/Gromacs/Gromacs-benchPEP-h-Hpc8aVsHpc7a.png)
 
-The benchPEP-h 4-node cells are absent on this chart: the 12 M-atom system hung at multi-node startup on the eu-north-1 cluster (both replicates plus retries cancelled at the 2-hour wall-time limit). The 1N and 2N data points already establish the AMD Zen 4 vs Zen 5 trend; investigation of the 4N benchPEP-h startup hang is deferred to a follow-up.
+The benchPEP-h 4-node cells are collected with the **pure-MPI 192 ranks/node** layout (matching the 1N/2N runs), giving clean scaling on both instances (≈4.1× at 4N vs 1N). On this preview cluster the *hybrid* layouts (96×2 / 48×4 / 24×8) intermittently hung at multi-node GROMACS startup, while pure-MPI ran reliably — the opposite of Graviton3E, where the large system prefers a hybrid split (see the Arm notes below). Net guidance: tune the MPI×OpenMP layout per architecture *and* system size.
 
 ### Arm — Graviton3E (hpc7g) vs Graviton4 (m8g)
 
