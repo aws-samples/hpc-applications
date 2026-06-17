@@ -22,6 +22,7 @@ This repo is maintained by AWS HPC Solution Architects, who will take care of up
 2. [OSU Micro-Benchmarks](https://github.com/aws-samples/hpc-applications/tree/main/Utils/OSU-Benchmarks) - MPI latency, bandwidth, and collective performance benchmarks
 3. [HPL (High Performance Linpack)](https://github.com/aws-samples/hpc-applications/tree/main/Utils/HPL) - Floating-point compute benchmark (TOP500), optimised for hpc8a with AOCC and AOCL BLIS
 4. [GPU Microbenchmarks](https://github.com/aws-samples/hpc-applications/tree/main/Utils/GPU-Benchmarks) - NCCL, NVSHMEM, and OSU MPI benchmarks for GPU clusters (p5/p5en) using the NVIDIA HPC Benchmarks container over EFA
+5. [IOR](https://github.com/aws-samples/hpc-applications/tree/main/Utils/IOR) - Parallel filesystem / storage I/O benchmark (aggregate throughput and metadata), with Amazon FSx for Lustre tuning
 
 ## HPC tuning and configuration guides:
 1. [Flexible Cores Configuration](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores) - Examples for configuring flexible core counts on Hpc7a and Hpc8a instances using Intel MPI and OpenMPI, including explicit core pinning strategies
