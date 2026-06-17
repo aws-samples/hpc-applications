@@ -84,4 +84,4 @@ The launcher extracts the **`days/ns`** value and converts it to the canonical *
 | File | Description |
 |------|-------------|
 | `build_namd_x86.sbatch` | Build Charm++ (OFI/EFA SMP + multicore) and NAMD with AVX-512 tile lists; installs `namd3` and an env script |
-| `namd-benchmark.sbatch` | Run ApoA1 / STMV over EFA; parses `Benchmark time: days/ns` → ns/day *(lands with Phase 1 validation)* |
+| `namd-benchmark.sbatch` | Run ApoA1 / STMV over EFA (Charm++ OFI/SMP via Slurm PMI); auto-fetches and caches the deck; parses `Benchmark time: days/ns` → ns/day. *(Performance data + charts land with Phase 1 cluster validation.)* |
