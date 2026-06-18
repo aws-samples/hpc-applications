@@ -1,6 +1,6 @@
 # NAMD
 
-This directory contains scripts for building and benchmarking [NAMD](https://www.ks.uiuc.edu/Research/namd/) on AWS HPC instances. NAMD is a parallel molecular dynamics code from the University of Illinois, designed for high-performance simulation of large biomolecular systems. Unlike the MPI-based codes in this repository, NAMD is built on the [Charm++](https://charm.cs.illinois.edu/) parallel runtime; on AWS the high-performance multi-node path is the Charm++ **OFI (libfabric) backend over EFA**.
+This directory contains scripts for building and benchmarking [NAMD](https://www.ks.uiuc.edu/Research/namd/) on AWS HPC instances. NAMD is a parallel molecular dynamics code from the University of Illinois, designed for high-performance simulation of large biomolecular systems. Unlike the MPI-based codes in this repository, NAMD is built on the [Charm++](https://charm.cs.illinois.edu/) parallel runtime; on AWS the high-performance multi-node path is the Charm++ **MPI backend layered on the system OpenMPI**, which rides EFA through its libfabric provider.
 
 The scripts are organised by architecture / accelerator:
 
@@ -12,35 +12,33 @@ The scripts are organised by architecture / accelerator:
 
 | Phase | Target | Approach | Status |
 |-------|--------|----------|--------|
-| **Phase 1** | x86 (hpc8a, hpc7a) | Build from source: Charm++ (OFI/EFA, SMP) + NAMD with AVX-512 tile lists | In Progress |
-| **Phase 2** | Arm (hpc7g, m8g) | Build from source: Charm++ (OFI/EFA, SMP) + NAMD for aarch64 | Future-Scope |
+| **Phase 1** | x86 (hpc8a, hpc7a) | Build from source: Charm++ (MPI/SMP over OpenMPI/EFA) + NAMD | Validated (x86 build + single/multi-node run) |
+| **Phase 2** | Arm (hpc7g, m8g) | Build from source: Charm++ (MPI/SMP over OpenMPI/EFA) + NAMD for aarch64 | Future-Scope |
 | **Phase 3** | GPU (g6e, g7e, p5) | NAMD 3.0 GPU-resident mode via the NVIDIA NGC `namd:3.0.1` container | Future-Scope |
 
-## Why Charm++ OFI over EFA
+## Why the Charm++ MPI backend over EFA
 
-NAMD does not use MPI directly — it runs on the Charm++ parallel runtime, whose network backend determines how nodes communicate. On AWS the recommended multi-node backend is **OFI**, which targets libfabric directly and therefore uses the EFA provider for RDMA. The **SMP** variant (`ofi-linux-x86_64-smp`) runs one process per node with several worker threads (PEs) plus a communication thread, minimising the number of EFA endpoints per node — the best fit for NAMD's communication pattern. Single-node runs use the `multicore` backend (no network layer).
+NAMD does not use MPI directly — it runs on the Charm++ parallel runtime, whose network backend determines how nodes communicate. Charm++ ships several backends (`netlrts`, `mpi`, `ucx`, `ofi`, `verbs`, `multicore`). We build the **`mpi` backend on top of the system OpenMPI**: OpenMPI uses EFA underneath via its libfabric provider, so inter-node Charm++ traffic still rides EFA RDMA, while avoiding the native `ofi` backend (Charm++ 8.0.0's OFI machine layer does not compile against the recent libfabric shipped on current AWS HPC AMIs). The **SMP** variant (`mpi-linux-x86_64-smp`) runs one process per node with several worker threads (PEs) plus a communication thread, minimising per-node endpoints — the best fit for NAMD's communication pattern. Single-node runs use the same SMP binary with one process.
 
 ## Build (Phase 1 — x86)
 
 > **NAMD source requires accepting a license.** The NAMD source tarball is distributed from the [NAMD download page](https://www.ks.uiuc.edu/Research/namd/) behind a license click-through, so it cannot be fetched non-interactively. Download `NAMD_<version>_Source.tar.gz` once (accepting the license) and place it at `${BASE_DIR}/src/` (default `/fsx/namd/src/`); the build script picks it up from there.
 
 ```bash
-# After staging /fsx/namd/src/NAMD_3.0.1_Source.tar.gz
+# After staging /fsx/namd/src/NAMD_3.0.2_Source.tar.gz
 sbatch x86/build_namd_x86.sbatch
 ```
 
-The build script builds Charm++ (`ofi-linux-x86_64-smp` for multi-node EFA, plus `multicore` for single-node), then configures and compiles NAMD with AVX-512 tile lists, installing `namd3` under `/fsx/namd/x86_64/<version>/` with a generated env script.
+The build script builds a static single-precision FFTW into the install prefix, builds Charm++ (`mpi-linux-x86_64-smp` over the system OpenMPI/EFA), then configures and compiles NAMD, installing a self-contained `namd3` under `/fsx/namd/x86_64/<version>/` with a generated env script. AVX-512 vectorisation comes from the host architecture flags (`-march=x86-64-v4`); FFTW is linked statically so the binary carries no external FFTW `.so` on ephemeral compute nodes, and TCL is linked against the runtime that ships in the base AMI.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NAMD_VERSION` | `3.0.1` | NAMD release (and bundled Charm++) |
+| `NAMD_VERSION` | `3.0.2` | NAMD release (and bundled Charm++) |
 | `TARGET_CPU` | `hpc8a` | `hpc8a` / `hpc7a` |
 | `BASE_DIR` | `/fsx/namd` | Install root |
 | `COMPILE_CORES` | `48` | Parallel build threads |
 
 ## Run (Phase 1 — x86)
-
-*(Benchmark launcher and performance data land with Phase 1 validation.)*
 
 ```bash
 # ApoA1 (~92K atoms) on a single node
@@ -49,6 +47,8 @@ sbatch --nodes=1 x86/namd-benchmark.sbatch
 # STMV (~1.06M atoms) multi-node scaling over EFA
 sbatch --nodes=4 --export=ALL,MODEL=STMV x86/namd-benchmark.sbatch
 ```
+
+The launcher sources the build's env script, verifies EFA on multi-node runs (`fi_info -p efa`), auto-fetches and caches the deck, then launches `namd3` with `mpirun` (one process per node + `PPN` worker threads). On multi-node runs OpenMPI carries the traffic over EFA (`--mca pml cm --mca mtl ofi`, `FI_PROVIDER=efa`).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -83,5 +83,5 @@ The launcher extracts the **`days/ns`** value and converts it to the canonical *
 
 | File | Description |
 |------|-------------|
-| `build_namd_x86.sbatch` | Build Charm++ (OFI/EFA SMP + multicore) and NAMD with AVX-512 tile lists; installs `namd3` and an env script |
-| `namd-benchmark.sbatch` | Run ApoA1 / STMV over EFA (Charm++ OFI/SMP via Slurm PMI); auto-fetches and caches the deck; parses `Benchmark time: days/ns` → ns/day. *(Performance data + charts land with Phase 1 cluster validation.)* |
+| `build_namd_x86.sbatch` | Build static FFTW + Charm++ (`mpi-linux-x86_64-smp` over OpenMPI/EFA) and NAMD; installs a self-contained `namd3` and an env script |
+| `namd-benchmark.sbatch` | Run ApoA1 / STMV over EFA (Charm++ MPI/SMP via `mpirun`); auto-fetches and caches the deck; parses `Benchmark time: days/ns` → ns/day |

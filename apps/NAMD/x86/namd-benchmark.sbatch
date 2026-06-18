@@ -8,9 +8,10 @@
 #
 # Run a standard NAMD benchmark (ApoA1 / STMV) on x86 HPC instances over EFA.
 #
-# NAMD is built on Charm++; this launcher uses the OFI/SMP build (one process
-# per node + worker threads) launched through Slurm PMI, so inter-node traffic
-# goes over EFA. Single-node runs use the same SMP binary with one process.
+# NAMD is built on Charm++ (MPI/SMP backend over the system OpenMPI). This
+# launcher uses mpirun to start one process per node + worker threads, so
+# inter-node traffic rides EFA through OpenMPI's libfabric provider. Single-node
+# runs use the same binary with a single process.
 #
 # Performance metric: NAMD prints `Info: Benchmark time: ... <days/ns> days/ns`.
 # The launcher extracts days/ns from the LAST such line and reports
@@ -60,13 +61,19 @@ fi
 source "${NAMD_ENV}"
 NAMD3="$(command -v namd3 || true)"
 [ -x "${NAMD3}" ] || fail "namd3 not on PATH after sourcing ${NAMD_ENV}"
+command -v mpirun >/dev/null 2>&1 || fail "mpirun not on PATH after sourcing ${NAMD_ENV} (env script should load the OpenMPI module)"
 
 NODES="${SLURM_JOB_NUM_NODES:-1}"
 CORES_PER_NODE="${SLURM_CPUS_ON_NODE:-$(nproc)}"
 # SMP: one process per node, 1 comm thread + PPN worker threads. Reserve a core
 # for the communication thread by default.
 [ -n "${PPN}" ] || PPN=$(( CORES_PER_NODE > 1 ? CORES_PER_NODE - 1 : 1 ))
-INSTANCE_TYPE="$(curl -s --max-time 2 http://169.254.169.254/latest/meta-data/instance-type 2>/dev/null || echo unknown)"
+# Instance type via IMDSv2 (token-authenticated), falling back to "unknown".
+IMDS_TOKEN="$(curl -s --max-time 2 -X PUT "http://169.254.169.254/latest/api/token" \
+  -H "X-aws-ec2-metadata-token-ttl-seconds: 60" 2>/dev/null || true)"
+INSTANCE_TYPE="$(curl -s --max-time 2 ${IMDS_TOKEN:+-H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}"} \
+  http://169.254.169.254/latest/meta-data/instance-type 2>/dev/null || echo unknown)"
+[ -n "${INSTANCE_TYPE}" ] || INSTANCE_TYPE="unknown"
 
 echo "================================================================================"
 echo "NAMD benchmark — $(date)"
@@ -84,7 +91,7 @@ if [ "${NODES}" -gt 1 ]; then
   [ "${rc}" -eq 0 ] || fail "fi_info -p efa failed (rc=${rc}); EFA unavailable for multi-node run"
   export FI_PROVIDER=efa FI_EFA_USE_DEVICE_RDMA=1 RDMAV_FORK_SAFE=1
 else
-  echo "single node — multicore/SMP local run, EFA not required"
+  echo "single node — local SMP run, EFA not required"
 fi
 
 # --- Fetch + cache the benchmark deck ------------------------------------
@@ -136,12 +143,16 @@ srun --ntasks="${NODES}" --ntasks-per-node=1 bash -c \
   'sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true; echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled >/dev/null 2>&1 || true'
 
 # --- Launch NAMD ---------------------------------------------------------
-# SMP build: one process per node (--ntasks-per-node=1), PPN worker threads.
-# Slurm PMI (pmi2) bootstraps the Charm++ OFI layer over EFA.
+# Charm++ MPI/SMP build: launch with mpirun, one process per node
+# (--map-by ppr:1:node), each spawning PPN worker threads (+ppn) plus a comm
+# thread. OpenMPI carries the traffic over EFA via its libfabric provider.
 echo "==> launching NAMD: ${NODES} node(s) x 1 process x ${PPN} PEs"
+MPI_ARGS=( -np "${NODES}" --map-by ppr:1:node --bind-to none )
+if [ "${NODES}" -gt 1 ]; then
+  MPI_ARGS+=( --mca pml cm --mca mtl ofi -x FI_PROVIDER -x FI_EFA_USE_DEVICE_RDMA -x RDMAV_FORK_SAFE )
+fi
 set -o pipefail
-srun --mpi=pmi2 --ntasks="${NODES}" --ntasks-per-node=1 \
-     --cpus-per-task="${CORES_PER_NODE}" \
+mpirun "${MPI_ARGS[@]}" \
      "${NAMD3}" +ppn "${PPN}" +setcpuaffinity "${RUNCONF}" 2>&1 | tee namd.out
 rc=${PIPESTATUS[0]}
 [ "${rc}" -eq 0 ] || fail "NAMD run exited non-zero (rc=${rc}); see ${WORK}/namd.out"

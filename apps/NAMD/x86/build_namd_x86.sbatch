@@ -6,13 +6,19 @@
 #SBATCH --exclusive
 #SBATCH --output=build-namd-x86-%j.out
 #
-# Build NAMD 3.0.1 from source on x86 HPC instances (hpc8a / hpc7a).
+# Build NAMD 3.0.2 from source on x86 HPC instances (hpc8a / hpc7a).
 #
-# NAMD runs on the Charm++ parallel runtime. This script builds Charm++ twice
-#   * ofi-linux-x86_64 ... smp   — multi-node, EFA via libfabric (OFI backend)
-#   * multicore-linux-x86_64     — single-node, no network layer
-# then configures and compiles NAMD against the OFI/SMP Charm++ with AVX-512
-# tile-list kernels (--with-avxtiles), producing the `namd3` binary.
+# NAMD runs on the Charm++ parallel runtime. This script builds Charm++ once,
+# using the MPI/SMP backend over the system OpenMPI (which uses EFA underneath
+# via its libfabric provider):
+#   * mpi-linux-x86_64 ... smp   — one process per node + worker threads
+# then configures and compiles NAMD against that Charm++, producing the `namd3`
+# binary. AVX-512 vectorisation comes from the host arch flags (-march=x86-64-v4).
+#
+# We deliberately use the Charm++ MPI backend (not the native OFI backend):
+# Charm++ 8.0.0's OFI machine layer does not compile against the recent
+# libfabric (2.4.x) shipped on AWS HPC AMIs, whereas the MPI backend layered
+# on OpenMPI is the robust, AWS-proven path and still rides EFA.
 #
 # NOTE: the NAMD source tarball is distributed behind a license click-through
 # (https://www.ks.uiuc.edu/Research/namd/) and CANNOT be fetched
@@ -21,7 +27,7 @@
 # NAMD_SRC to override the path, or NAMD_SRC_URL to fetch from a private mirror.
 #
 # Override via --export=ALL,...:
-#   NAMD_VERSION   NAMD release (default 3.0.1)
+#   NAMD_VERSION   NAMD release (default 3.0.2)
 #   BASE_DIR       install root (default /fsx/namd)
 #   TARGET_CPU     hpc8a | hpc7a (default hpc8a)
 #   COMPILE_CORES  parallel build threads (default 48)
@@ -30,16 +36,20 @@
 
 set -euo pipefail
 
-NAMD_VERSION="${NAMD_VERSION:-3.0.1}"
+NAMD_VERSION="${NAMD_VERSION:-3.0.2}"
 BASE_DIR="${BASE_DIR:-/fsx/namd}"
 TARGET_CPU="${TARGET_CPU:-hpc8a}"
 COMPILE_CORES="${COMPILE_CORES:-48}"
 NAMD_SRC="${NAMD_SRC:-${BASE_DIR}/src/NAMD_${NAMD_VERSION}_Source.tar.gz}"
 NAMD_SRC_URL="${NAMD_SRC_URL:-}"
 
-CHARM_NET="ofi-linux-x86_64"          # OFI (libfabric/EFA) backend, x86_64
+CHARM_NET="mpi-linux-x86_64"          # Charm++ MPI backend (rides EFA via OpenMPI)
+CHARM_ARCH="${CHARM_NET}-smp"         # SMP: one process/node + worker threads
 NAMD_ARCH="Linux-x86_64-g++"
+OPENMPI_MODULE="${OPENMPI_MODULE:-openmpi/4.1.7}"
 INSTALL_DIR="${BASE_DIR}/x86_64/${NAMD_VERSION}"
+FFTW_PREFIX="${INSTALL_DIR}/fftw"   # static single-precision FFTW (self-contained on FSx)
+FFTW_VERSION="${FFTW_VERSION:-3.3.10}"
 BUILD_DIR="${BASE_DIR}/build/x86_64-${NAMD_VERSION}-$$"
 ENV_SCRIPT="${INSTALL_DIR}/namd-${NAMD_VERSION}-x86-env.sh"
 
@@ -78,11 +88,16 @@ EOF
     fi
 fi
 
-# --- Toolchain / dependencies (TCL + FFTW from the distro) ---------------
+# --- Toolchain / dependencies --------------------------------------------
+# TCL (runtime libtcl8.6.so) ships in the base AMI on every node, so we link
+# it dynamically and only need its dev headers at build time. FFTW is built
+# from source as a STATIC single-precision library into the shared install
+# prefix so the namd3 binary carries no external FFTW .so dependency and runs
+# unchanged on every (ephemeral) compute node.
 STAGE="deps"
-log "installing build dependencies (gcc-c++, gfortran, fftw-devel, tcl-devel)"
+log "installing build dependencies (gcc-c++, gfortran, tcl-devel)"
 sudo dnf install -y gcc gcc-c++ gcc-gfortran make tar gzip \
-    fftw-devel tcl-devel >/dev/null 2>&1 \
+    tcl-devel >/dev/null 2>&1 \
     || fail "failed to install build dependencies via dnf"
 
 # --- Extract source ------------------------------------------------------
@@ -106,27 +121,53 @@ case "${TARGET_CPU}" in
     *) fail "unsupported TARGET_CPU '${TARGET_CPU}' (expected hpc8a or hpc7a)" ;;
 esac
 
-# --- Build Charm++ (OFI/SMP for multi-node, multicore for single-node) ---
+# --- Build static single-precision FFTW (self-contained on shared FSx) ----
+STAGE="fftw"
+if [ ! -f "${FFTW_PREFIX}/lib/libfftw3f.a" ]; then
+    FFTW_SRC="${BASE_DIR}/src/fftw-${FFTW_VERSION}.tar.gz"
+    if [ ! -f "${FFTW_SRC}" ]; then
+        log "fetching FFTW ${FFTW_VERSION}"
+        curl -fsSL --max-time 600 --retry 3 -o "${FFTW_SRC}" \
+            "https://www.fftw.org/fftw-${FFTW_VERSION}.tar.gz" \
+            || fail "failed to download FFTW ${FFTW_VERSION}"
+    fi
+    FFTW_BUILD="${BUILD_DIR}-fftw"
+    mkdir -p "${FFTW_BUILD}"
+    tar xzf "${FFTW_SRC}" -C "${FFTW_BUILD}" --strip-components=1 \
+        || fail "failed to extract FFTW source"
+    ( cd "${FFTW_BUILD}" \
+      && ./configure --prefix="${FFTW_PREFIX}" \
+            --enable-float --enable-static --disable-shared \
+            --enable-sse2 --enable-avx --enable-avx2 --enable-avx512 \
+            CFLAGS="-O3 -fPIC" >/dev/null \
+      && make -j"${COMPILE_CORES}" >/dev/null \
+      && make install >/dev/null ) \
+        || fail "FFTW build/install failed"
+    rm -rf "${FFTW_BUILD}"
+fi
+[ -f "${FFTW_PREFIX}/lib/libfftw3f.a" ] || fail "static libfftw3f.a missing under ${FFTW_PREFIX}"
+log "static FFTW ready: ${FFTW_PREFIX}/lib/libfftw3f.a"
+
+# --- Build Charm++ (MPI/SMP over system OpenMPI; rides EFA) ---------------
 STAGE="charm++"
 cd "${BUILD_DIR}/${CHARM_DIR}"
-log "building Charm++ ${CHARM_NET} smp (EFA/OFI)"
-./build charm++ "${CHARM_NET}" smp slurmpmi2 --with-production \
+# The MPI backend needs mpicxx/mpicc in PATH. The system OpenMPI uses EFA via
+# its libfabric provider, so inter-node Charm++ traffic still rides EFA.
+module load "${OPENMPI_MODULE}" libfabric-aws 2>/dev/null || true
+command -v mpicxx >/dev/null 2>&1 || fail "mpicxx not in PATH (load ${OPENMPI_MODULE})"
+log "building Charm++ ${CHARM_NET} smp (MPI backend over $(mpicxx --showme:version 2>/dev/null | head -1 || echo OpenMPI))"
+./build charm++ "${CHARM_NET}" smp --with-production \
     -j"${COMPILE_CORES}" "${HOST_OPT[@]}" \
-    || fail "Charm++ OFI/SMP build failed"
-log "building Charm++ multicore-linux-x86_64 (single-node)"
-./build charm++ multicore-linux-x86_64 --with-production \
-    -j"${COMPILE_CORES}" "${HOST_OPT[@]}" \
-    || fail "Charm++ multicore build failed"
+    || fail "Charm++ MPI/SMP build failed"
 
 # --- Configure + compile NAMD --------------------------------------------
 STAGE="namd-config"
 cd "${BUILD_DIR}"
-log "configuring NAMD (${NAMD_ARCH}, AVX-512 tiles, OFI/SMP Charm++)"
+log "configuring NAMD (${NAMD_ARCH}, MPI/SMP Charm++, static FFTW, AVX-512 via -march)"
 ./config "${NAMD_ARCH}" \
-    --charm-arch "${CHARM_NET}-smp-slurmpmi2" \
+    --charm-arch "${CHARM_ARCH}" \
     --with-tcl --tcl-prefix /usr \
-    --with-fftw3 --fftw-prefix /usr \
-    --with-avxtiles \
+    --with-fftw3 --fftw-prefix "${FFTW_PREFIX}" \
     --cc "gcc" --cxx "g++" \
     || fail "NAMD configure failed"
 
@@ -140,20 +181,19 @@ make -j"${COMPILE_CORES}" || fail "NAMD compile failed"
 STAGE="install"
 mkdir -p "${INSTALL_DIR}/bin"
 cp -a namd3 "${INSTALL_DIR}/bin/namd3"
-# Also keep the multicore binary if a separate build dir was produced.
 log "installed namd3 -> ${INSTALL_DIR}/bin/namd3"
 
 # --- Generate the env script ---------------------------------------------
 STAGE="env-script"
 cat > "${ENV_SCRIPT}" <<EOF
 #!/bin/bash
-# NAMD ${NAMD_VERSION} — x86_64 (Charm++ ${CHARM_NET}-smp over EFA, AVX-512 tiles)
-module load libfabric-aws 2>/dev/null || true
+# NAMD ${NAMD_VERSION} — x86_64 (Charm++ ${CHARM_ARCH} over OpenMPI/EFA, AVX-512 via -march)
+module load ${OPENMPI_MODULE} libfabric-aws 2>/dev/null || true
 export NAMD_ROOT="${INSTALL_DIR}"
 export PATH="\${NAMD_ROOT}/bin:\${PATH}"
 export LD_LIBRARY_PATH="\${NAMD_ROOT}/lib:\${LD_LIBRARY_PATH:-}"
 export NAMD_VERSION="${NAMD_VERSION}"
-export CHARM_ARCH="${CHARM_NET}-smp-slurmpmi2"
+export CHARM_ARCH="${CHARM_ARCH}"
 EOF
 chmod 0644 "${ENV_SCRIPT}"
 
