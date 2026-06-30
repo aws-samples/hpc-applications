@@ -1,0 +1,21 @@
+SIMULATION CONTROL:
+  EXECUTION CONTROL:
+    START METHOD LIBRARY:
+#
+#=======================================================================
+#     Direct start methods
+#=======================================================================
+#
+      START METHOD: Intel MPI SRUN from SBATCH
+              Option = Direct
+              Start Command = "/opt/slurm/bin/srun" --kill-on-bad-exit=1 --mpi=pmi2 %{executable} %{arguments}
+              Shared Library Path = %{mportlibdir}/intel:%{impidir}/lib/release
+              Executable Suffix = -mpi
+              Use Host List = No
+              Minimum Partition Count = 1
+              Maximum Partition Count = Any
+              Platform List = none
+      END
+    END
+  END
+END
