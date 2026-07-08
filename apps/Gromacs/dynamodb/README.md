@@ -139,3 +139,11 @@ To disable recording **after** you've enabled it, you have three equivalent opti
 1. Re-comment the `Optional: record the result to DynamoDB.` block at the bottom of the benchmark `.sbatch` file you submitted.
 2. Set `DYNAMODB_RECORDER=/path/that/does/not/exist` on the `sbatch` command line — the benchmark will log a one-line skip note and continue.
 3. Remove the `dynamodb:PutItem` permission from the compute role — the recorder will log a warning and exit successfully, the benchmark won't fail.
+
+---
+
+## Contributing your results to the shared dataset
+
+The `record-benchmark.sh` script in this same folder is a **separate**, self-contained recorder for the shared **AI-Powered HPC** dataset. It captures a single run into `External_<Source>_Gromacs` and is intended for colleagues and customers to contribute their own GROMACS benchmark results — distinct from the internal `record_to_dynamodb.sh` documented above (which records the maintainers' own runs to the `Gromacs_Benchmarks` table).
+
+See **[../../BENCHMARK-RECORDERS.md](../../BENCHMARK-RECORDERS.md)** for usage, parameters, the contribution workflow, and `.sbatch` integration.
