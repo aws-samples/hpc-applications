@@ -81,12 +81,16 @@ ENGINE_VERSION="${LAMMPS_VERSION:-}"
 
 # LAMMPS performance metrics.
 TIME_TO_SOLUTION="${TIME_TO_SOLUTION:-}"
-TIMESTEPS_PER_SEC=""
+TIMESTEPS_PER_SEC="${TIMESTEPS_PER_SEC:-}"
 
 # LAMMPS dataset characteristics.
 DISCIPLINE="MD"           # always true for LAMMPS; override if you must
-ANALYSIS_TYPE=""
-ATOMS_MILLION=""
+ANALYSIS_TYPE="${ANALYSIS_TYPE:-}"
+ATOMS_MILLION="${ATOMS_MILLION:-}"
+
+# Directory scanned for log.lammps to recover metrics in zero-arg use
+# (defaults to the current dir, which is the run dir when called from a job).
+RUN_DIR="${RUN_DIR:-$PWD}"
 
 # Generic extra metrics/characteristics (repeatable --metric/--char name=value).
 declare -a EXTRA_METRICS=()
@@ -128,6 +132,8 @@ OPTIONS
     --put                     Force the DynamoDB put-item (error out if it fails).
     --no-put                  Never call AWS; only write the JSON file.
     --dry-run                 Print the record to stdout; touch no file and no AWS.
+    --run-dir DIR             Dir to scan for log.lammps when metrics aren't
+                              supplied (default: current dir). Enables zero-arg use.
     --out DIR                 Directory for the saved JSON (default: current dir).
     -h, --help                Show this help.
 EOF
@@ -158,6 +164,7 @@ while [ $# -gt 0 ]; do
         --put)                DO_PUT="yes"; shift;;
         --no-put)             DO_PUT="no"; shift;;
         --dry-run)            DRY_RUN=1; shift;;
+        --run-dir)            RUN_DIR="$2"; shift 2;;
         --out)                OUTDIR="$2"; shift 2;;
         -h|--help)            usage; exit 0;;
         *) echo "ERROR: unknown option '$1' (try --help)" >&2; exit 2;;
@@ -219,6 +226,31 @@ fi
 MPI_VERSION="$(mpirun --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
 LIBFABRIC_VERSION="$(fi_info --version 2>/dev/null | awk '/libfabric:/ {print $2; exit}')"
 EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print $2; exit}')"
+
+# --- Zero-arg fallback: recover LAMMPS result metrics from log.lammps --------
+# When a value wasn't supplied (flag or env), parse it from LAMMPS's log.lammps
+# in RUN_DIR. LAMMPS prints near the end:
+#     Loop time of <t> on <P> procs for <N> steps with <A> atoms
+# (fields $4=loop time, $9=steps, $12=atoms). time_to_solution = loop time;
+# timesteps_per_sec = steps / loop time. The version banner "LAMMPS (<date>)"
+# supplies the version. This lets the recorder run with no arguments.
+_llog=""
+for _c in "$RUN_DIR"/log.lammps "$RUN_DIR"/log.run "$RUN_DIR"/*.log; do
+    [ -f "$_c" ] || continue
+    if grep -qE '^Loop time of' "$_c" 2>/dev/null; then _llog="$_c"; break; fi
+done
+if [ -n "$_llog" ]; then
+    _loop="$(grep -E '^Loop time of' "$_llog" 2>/dev/null | tail -1)"
+    _lt="$(printf '%s\n' "$_loop" | awk '{print $4}')"
+    _ls="$(printf '%s\n' "$_loop" | awk '{print $9}')"
+    _at="$(printf '%s\n' "$_loop" | awk '{print $12}')"
+    [ -n "$TIME_TO_SOLUTION" ]  || TIME_TO_SOLUTION="$_lt"
+    [ -n "$TIMESTEPS_PER_SEC" ] || TIMESTEPS_PER_SEC="$(awk -v a="$_lt" -v s="$_ls" 'BEGIN{if (a+0>0 && s!="") printf "%.4f", s/a}')"
+    [ -n "$ATOMS_MILLION" ]     || ATOMS_MILLION="$(awk -v x="$_at" 'BEGIN{if (x+0>0) printf "%.6g", x/1000000}')"
+fi
+if [ -z "$ENGINE_VERSION" ]; then
+    ENGINE_VERSION="$(grep -hoE 'LAMMPS \([^)]*\)' "$RUN_DIR"/log.lammps "$RUN_DIR"/log.run 2>/dev/null | head -1 | sed -E 's/^LAMMPS \(//; s/\)$//')"
+fi
 
 # --- Normalize source + table ------------------------------------------------
 SOURCE="$(printf '%s' "$SOURCE" | tr -cd '[:alnum:]')"

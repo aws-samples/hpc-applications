@@ -157,3 +157,29 @@ Total WRF time:   ${WRF_TIME}s
 Avg timestep:     ${AVG_STEP}s
 ================================================================================
 REPORT
+
+# ---------------------------------------------------------------------------
+# Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal).
+# The recorder self-collects host details from the environment and can also
+# parse WRF's rsl.error.0000 in this run dir, so no arguments are needed. A
+# recorder problem NEVER fails a good solve (the `|| echo` keeps it non-fatal,
+# even under `set -e`). Point DYNAMODB_RECORDER at the script if it isn't found
+# automatically, and set SOURCE=<YourOrg> to tag your contributions.
+# See apps/WRF/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
+# ---------------------------------------------------------------------------
+_wrf_version="$(basename "${WRF_ENV}" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
+_recorder="${DYNAMODB_RECORDER:-}"
+for _c in "${_recorder}" \
+          "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/dynamodb/record-benchmark.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/apps/WRF/dynamodb/record-benchmark.sh"; do
+    if [ -n "${_c}" ] && [ -x "${_c}" ]; then _recorder="${_c}"; break; fi
+done
+if [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
+    WRF_VERSION="${_wrf_version}" BENCHMARK_CASE="CONUS-2.5km" ANALYSIS_TYPE="forecast" \
+    TIME_TO_SOLUTION="${WRF_TIME}" RUN_DIR="${workdir}" "${_recorder}" \
+        --metric "avg_timestep_seconds=${AVG_STEP}" \
+        || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
+else
+    echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2
+fi

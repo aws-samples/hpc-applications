@@ -77,11 +77,15 @@ RECORD_ID="${RECORD_ID:-}"
 ENGINE_VERSION="${LSDYNA_VERSION:-}"
 TIME_TO_SOLUTION="${TIME_TO_SOLUTION:-}"
 
-# LS-DYNA dataset characteristics.
+# LS-DYNA dataset characteristics (env-overridable so a launch script can export them).
 DISCIPLINE="Structural"   # always true for LS-DYNA; override if you must
-ANALYSIS_TYPE=""
-ELEMENT_TYPE=""
-NUM_ELEMENTS_MILLION=""
+ANALYSIS_TYPE="${ANALYSIS_TYPE:-}"
+ELEMENT_TYPE="${ELEMENT_TYPE:-}"
+NUM_ELEMENTS_MILLION="${NUM_ELEMENTS_MILLION:-}"
+
+# Directory scanned for the solver output to recover metrics in zero-arg use
+# (defaults to the current dir, which is the run dir when called from a job).
+RUN_DIR="${RUN_DIR:-$PWD}"
 
 # Generic extra metrics/characteristics (repeatable --metric/--char name=value).
 declare -a EXTRA_METRICS=()
@@ -123,6 +127,8 @@ OPTIONS
     --put                     Force the DynamoDB put-item (error out if it fails).
     --no-put                  Never call AWS; only write the JSON file.
     --dry-run                 Print the record to stdout; touch no file and no AWS.
+    --run-dir DIR             Dir to scan for the solver output when metrics aren't
+                              supplied (default: current dir). Enables zero-arg use.
     --out DIR                 Directory for the saved JSON (default: current dir).
     -h, --help                Show this help.
 EOF
@@ -153,6 +159,7 @@ while [ $# -gt 0 ]; do
         --put)                  DO_PUT="yes"; shift;;
         --no-put)               DO_PUT="no"; shift;;
         --dry-run)              DRY_RUN=1; shift;;
+        --run-dir)              RUN_DIR="$2"; shift 2;;
         --out)                  OUTDIR="$2"; shift 2;;
         -h|--help)              usage; exit 0;;
         *) echo "ERROR: unknown option '$1' (try --help)" >&2; exit 2;;
@@ -214,6 +221,18 @@ fi
 MPI_VERSION="$(mpirun --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
 LIBFABRIC_VERSION="$(fi_info --version 2>/dev/null | awk '/libfabric:/ {print $2; exit}')"
 EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print $2; exit}')"
+
+# --- Zero-arg fallback: recover LS-DYNA result metrics from the run logs -----
+# Best-effort: LS-DYNA prints an "Elapsed time <N> seconds ( ... )" line in the
+# job output / d3hsp / messag near normal termination; the first number is the
+# elapsed seconds. Launch scripts that already time the solve should export
+# TIME_TO_SOLUTION instead of relying on this.
+if [ -z "$TIME_TO_SOLUTION" ]; then
+    _lsln="$(grep -rhiE 'Elapsed time' "$RUN_DIR"/output*.out "$RUN_DIR"/d3hsp* "$RUN_DIR"/messag* 2>/dev/null | tail -1)"
+    if [ -n "$_lsln" ]; then
+        TIME_TO_SOLUTION="$(printf '%s\n' "$_lsln" | grep -oE '[0-9]+(\.[0-9]+)?' | head -1)"
+    fi
+fi
 
 # --- Normalize source + table ------------------------------------------------
 SOURCE="$(printf '%s' "$SOURCE" | tr -cd '[:alnum:]')"

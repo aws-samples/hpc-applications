@@ -292,3 +292,39 @@ REPORT
 # else
 #     echo "DynamoDB recorder not found at ${DYNAMODB_RECORDER} — skipping result persistence"
 # fi
+
+# ---------------------------------------------------------------------------
+# Contribute this benchmark to the shared AI-Powered HPC dataset (best-effort,
+# non-fatal). This uses the *contribution* recorder
+# (apps/LAMMPS/dynamodb/record-benchmark.sh), SEPARATE from the optional
+# internal record_to_dynamodb.sh block above. It self-collects host details
+# from the environment and parses log.lammps in this run dir, so it needs no
+# arguments. A recorder problem NEVER fails a good solve (`|| echo` keeps it
+# non-fatal, even under `set -e`). Override the recorder path with
+# CONTRIB_RECORDER (NOT DYNAMODB_RECORDER, used by the internal block), and
+# set SOURCE=<YourOrg> to tag your contributions.
+# See apps/LAMMPS/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
+# ---------------------------------------------------------------------------
+_lt="${LOOP_TIME:-}";           [ "${_lt}" != "0" ]  || _lt=""
+_tps="${TIMESTEPS_PER_SEC:-}";  [ "${_tps}" != "0" ] || _tps=""
+_asp="${ATOM_STEPS_PER_SEC:-}"; [ "${_asp}" != "0" ] || _asp=""
+_atoms_m=""
+if [ -n "${ATOMS:-}" ] && [ "${ATOMS}" != "0" ]; then
+    _atoms_m="$(awk -v x="${ATOMS}" 'BEGIN{if (x+0>0) printf "%.6g", x/1000000}' 2>/dev/null || true)"
+fi
+_contrib_recorder="${CONTRIB_RECORDER:-}"
+for _c in "${_contrib_recorder}" \
+          "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/dynamodb/record-benchmark.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/apps/LAMMPS/dynamodb/record-benchmark.sh"; do
+    if [ -n "${_c}" ] && [ -x "${_c}" ]; then _contrib_recorder="${_c}"; break; fi
+done
+if [ -n "${_contrib_recorder}" ] && [ -x "${_contrib_recorder}" ]; then
+    LAMMPS_VERSION="${LAMMPS_TAG:-}" BENCHMARK_CASE="${MODEL}" \
+    TIME_TO_SOLUTION="${_lt}" TIMESTEPS_PER_SEC="${_tps}" ATOMS_MILLION="${_atoms_m}" \
+    ANALYSIS_TYPE="md" RUN_DIR="${WORKDIR}" "${_contrib_recorder}" \
+        --char "scale=${SCALE}" --metric "atom_steps_per_sec=${_asp}" \
+        || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
+else
+    echo "NOTE: contribution recorder not found; set CONTRIB_RECORDER=/path/to/record-benchmark.sh to record." >&2
+fi

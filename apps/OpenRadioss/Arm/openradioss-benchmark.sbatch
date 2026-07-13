@@ -248,3 +248,38 @@ Total wall time:  ${TOTAL_TIME}s
 Radioss elapsed:  ${ELAPSED:-n/a}s
 ================================================================================
 REPORT
+
+# ---------------------------------------------------------------------------
+# Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal).
+# The recorder self-collects host details from the environment; this launch
+# script passes the engine (solver) wall time as time-to-solution, plus the
+# starter/total/Radioss-elapsed times as extra metrics. A recorder problem
+# NEVER fails a good solve (`|| echo`, and set -e already aborts a failed solve
+# before this point). Point DYNAMODB_RECORDER at the script if it isn't found
+# automatically; set SOURCE=<YourOrg> to tag your contributions.
+# See apps/OpenRadioss/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
+# ---------------------------------------------------------------------------
+_or_version="$(basename "${OPENRADIOSS_ENV}" 2>/dev/null | sed -E 's/^openradioss-//; s/-env\.sh$//' || true)"
+case "${MODEL}" in
+    neon1m)    _or_elems="1"  ;;
+    taurus10m) _or_elems="10" ;;
+    *)         _or_elems=""   ;;
+esac
+_or_elapsed="${ELAPSED:-}"; case "${_or_elapsed}" in ""|*[!0-9.]*) _or_elapsed="" ;; esac
+_recorder="${DYNAMODB_RECORDER:-}"
+for _c in "${_recorder}" \
+          "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/dynamodb/record-benchmark.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/apps/OpenRadioss/dynamodb/record-benchmark.sh"; do
+    if [ -n "${_c}" ] && [ -x "${_c}" ]; then _recorder="${_c}"; break; fi
+done
+if [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
+    OPENRADIOSS_VERSION="${_or_version}" BENCHMARK_CASE="${MODEL}" \
+    NUM_ELEMENTS_MILLION="${_or_elems}" ANALYSIS_TYPE="explicit" \
+    TIME_TO_SOLUTION="${ENGINE_TIME}" RUN_DIR="${WORKDIR}" "${_recorder}" \
+        --metric "starter_seconds=${STARTER_TIME}" --metric "total_seconds=${TOTAL_TIME}" \
+        --metric "radioss_elapsed_seconds=${_or_elapsed}" \
+        || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
+else
+    echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2
+fi

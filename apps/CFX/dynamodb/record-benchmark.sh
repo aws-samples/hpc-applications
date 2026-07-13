@@ -77,12 +77,16 @@ RECORD_ID="${RECORD_ID:-}"
 ENGINE_VERSION="${CFX_VERSION:-}"
 TIME_TO_SOLUTION="${TIME_TO_SOLUTION:-}"
 
-# CFX dataset characteristics.
+# CFX dataset characteristics (env-overridable so a launch script can export them).
 DISCIPLINE="CFD"          # always true for CFX; override if you must
-ANALYSIS_TYPE=""
-TURBULENCE_MODEL=""
-SOLVER_TYPE=""
-MESH_CELLS_MILLION=""
+ANALYSIS_TYPE="${ANALYSIS_TYPE:-}"
+TURBULENCE_MODEL="${TURBULENCE_MODEL:-}"
+SOLVER_TYPE="${SOLVER_TYPE:-}"
+MESH_CELLS_MILLION="${MESH_CELLS_MILLION:-}"
+
+# Directory scanned for the solver .out to recover metrics in zero-arg use
+# (defaults to the current dir, which is the run dir when called from a job).
+RUN_DIR="${RUN_DIR:-$PWD}"
 
 # Generic extra metrics/characteristics (repeatable --metric/--char name=value).
 declare -a EXTRA_METRICS=()
@@ -125,6 +129,8 @@ OPTIONS
     --put                     Force the DynamoDB put-item (error out if it fails).
     --no-put                  Never call AWS; only write the JSON file.
     --dry-run                 Print the record to stdout; touch no file and no AWS.
+    --run-dir DIR             Dir to scan for the solver .out when metrics aren't
+                              supplied (default: current dir). Enables zero-arg use.
     --out DIR                 Directory for the saved JSON (default: current dir).
     -h, --help                Show this help.
 EOF
@@ -156,6 +162,7 @@ while [ $# -gt 0 ]; do
         --put)                DO_PUT="yes"; shift;;
         --no-put)             DO_PUT="no"; shift;;
         --dry-run)            DRY_RUN=1; shift;;
+        --run-dir)            RUN_DIR="$2"; shift 2;;
         --out)                OUTDIR="$2"; shift 2;;
         -h|--help)            usage; exit 0;;
         *) echo "ERROR: unknown option '$1' (try --help)" >&2; exit 2;;
@@ -217,6 +224,19 @@ fi
 MPI_VERSION="$(mpirun --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
 LIBFABRIC_VERSION="$(fi_info --version 2>/dev/null | awk '/libfabric:/ {print $2; exit}')"
 EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print $2; exit}')"
+
+# --- Zero-arg fallback: recover CFX result metrics from the solver .out ------
+# Best-effort: CFX writes a solver .out in the run dir with a final
+# "Total wall clock time: <N> s" line. Values in scientific notation (e.g.
+# 6.79E+02) are normalised to a plain decimal. Launch scripts that already
+# time the solve should export TIME_TO_SOLUTION instead of relying on this.
+if [ -z "$TIME_TO_SOLUTION" ]; then
+    _cfxln="$(grep -rhiE 'wall clock time' "$RUN_DIR"/*.out "$RUN_DIR"/*.dir/*.out 2>/dev/null | tail -1)"
+    if [ -n "$_cfxln" ]; then
+        _cfxnum="$(printf '%s\n' "$_cfxln" | grep -oE '[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?' | tail -1)"
+        [ -n "$_cfxnum" ] && TIME_TO_SOLUTION="$(awk -v x="$_cfxnum" 'BEGIN{if (x+0>0) printf "%.4f", x+0}')"
+    fi
+fi
 
 # --- Normalize source + table ------------------------------------------------
 SOURCE="$(printf '%s' "$SOURCE" | tr -cd '[:alnum:]')"

@@ -148,3 +148,32 @@ echo "  Aggregate ns/day:  ${AGG}"
 echo "================================================================================"
 # Machine-readable line for sweep collectors:
 echo "MPSRESULT gpu='${GPU_NAME}' sys=$(basename "${TPR}" .tpr) nproc=${NPROC} omp=${OMP} nstlist=${NSTLIST} cuda_graph=${CUDA_GRAPH} agg_ns_per_day=${AGG} n_ok=${n_ok}"
+
+# ---------------------------------------------------------------------------
+# Contribute this MPS throughput result to the shared AI-Powered HPC dataset
+# (best-effort, non-fatal). Uses the contribution recorder
+# (apps/Gromacs/dynamodb/record-benchmark.sh). The headline MPS metric is the
+# AGGREGATE ns/day across the concurrent sims sharing the GPU; only recorded
+# when at least one sim produced a result. Override the recorder path with
+# CONTRIB_RECORDER; set SOURCE=<YourOrg> to tag your contributions.
+# See apps/Gromacs/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
+# ---------------------------------------------------------------------------
+_gmx_ver="$(grep -iE 'GROMACS version:' "${WORK}"/run_*/md.log 2>/dev/null | head -1 | awk '{print $NF}' || true)"
+_contrib_recorder="${CONTRIB_RECORDER:-}"
+for _c in "${_contrib_recorder}" \
+          "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/dynamodb/record-benchmark.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/apps/Gromacs/dynamodb/record-benchmark.sh"; do
+    if [ -n "${_c}" ] && [ -x "${_c}" ]; then _contrib_recorder="${_c}"; break; fi
+done
+if [ "${n_ok}" -gt 0 ] 2>/dev/null && [ "${AGG}" != "0" ] \
+        && [ -n "${_contrib_recorder}" ] && [ -x "${_contrib_recorder}" ]; then
+    GROMACS_VERSION="${_gmx_ver}" BENCHMARK_CASE="$(basename "${TPR}" .tpr)-mps" \
+    NS_PER_DAY="${AGG}" ANALYSIS_TYPE="MPS-throughput" RUN_DIR="${WORK}" \
+    "${_contrib_recorder}" \
+        --metric "mps_concurrent_sims=${NPROC}" --metric "mps_sims_ok=${n_ok}" \
+        --char "gpu_sharing=MPS" --char "gpu_model=${GPU_NAME}" \
+        || echo "NOTE: benchmark recorder failed (non-fatal); the run was unaffected." >&2
+elif [ -z "${_contrib_recorder}" ] || [ ! -x "${_contrib_recorder}" ]; then
+    echo "NOTE: contribution recorder not found; set CONTRIB_RECORDER=/path/to/record-benchmark.sh to record." >&2
+fi

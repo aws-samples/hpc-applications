@@ -113,6 +113,7 @@ for training:
 | `--put` | Force the DynamoDB write (error out if it fails). |
 | `--no-put` | Never call AWS; only write the JSON file. |
 | `--dry-run` | Print the record; touch no file and no AWS. |
+| `--run-dir DIR` | Directory scanned for the solver log to recover metrics in zero-argument use (default: current dir). |
 | `--out DIR` | Directory for the saved JSON (default: current dir). |
 | `-h`, `--help` | Full option list (authoritative for that app). |
 
@@ -171,10 +172,45 @@ Either way nothing fails and you keep the JSON.
 
 ---
 
-## Using it inside a SLURM `.sbatch`
+## Automatic recording (built into this repo's benchmark launch scripts)
 
-Add a recording step at the **end** of your job script, after the solver
-finishes and you've parsed the metric(s) you care about:
+**You normally don't need to do anything.** Every benchmark launch script in
+this repository now calls its app's `record-benchmark.sh` automatically, right
+after the solve. Just run the benchmark as usual — and set `SOURCE=<YourOrg>`
+if you want your rows tagged. The built-in call is:
+
+- **Zero-argument.** The launch script exports what it already knows (instance
+  type, cores, nodes, MPI, the app version, the benchmark case and the measured
+  solve time) to the recorder via the environment, and the recorder recovers
+  anything still missing by parsing the solver log in the run directory
+  (`--run-dir`, defaulting to the job's working directory). You pass nothing.
+- **Non-fatal, and it never changes your job's result.** A missing recorder,
+  missing AWS credentials or a parse miss only prints a `NOTE:`; the job's exit
+  status always stays exactly that of the solver.
+- **Successful solves only.** Launch scripts that don't use `set -e` capture the
+  solver's exit code and skip recording (and skip a zero/garbage time) when the
+  solve failed, so the dataset isn't polluted with failed runs.
+- **Local-first.** As always it writes a local JSON record every run and only
+  performs the DynamoDB `put-item` when write access is available.
+
+### Controlling the built-in call
+
+| Environment variable | Effect |
+|----------------------|--------|
+| `SOURCE=<YourOrg>` | Tag your contributions — rows go to `External_<YourOrg>_<App>`. |
+| `DYNAMODB_RECORDER=/path/to/record-benchmark.sh` | Override the recorder location if the launch script can't find it automatically. **GROMACS and LAMMPS use `CONTRIB_RECORDER` instead**, because their launch scripts already reserve `DYNAMODB_RECORDER` for a separate internal uploader. |
+| `DYNAMODB_REGION=<region>` | Destination table region (default `us-east-1`). |
+
+The launch script finds the recorder automatically relative to
+`SLURM_SUBMIT_DIR` (a plain `git clone` + `sbatch` just works); set the override
+only if you keep the recorder elsewhere, e.g. on shared storage.
+
+---
+
+## Adding the recorder to your own `.sbatch`
+
+If you maintain a custom job script, add a recording step at the **end**, after
+the solver finishes and you've parsed the metric(s) you care about:
 
 ```bash
 #!/bin/bash

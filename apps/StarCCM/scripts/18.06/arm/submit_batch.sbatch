@@ -53,6 +53,7 @@ LICENSEOPTS="-power -podkey ${PODKEY} -licpath 1999@flex.cd-adapco.com"
 echo "STAR-CCM+ ${APP_VERSION} — Arm (Graviton) batch"
 echo "Nodes: ${SLURM_JOB_NUM_NODES}, Sim: ${SIM_BASENAME}, Batch: ${BATCH_CMD}"
 echo "Start: $(date)"
+_rec_t0="$(date +%s)"
 
 /fsx/Siemens/${APP_VERSION}/STAR-CCM+${APP_VERSION}/star/bin/starccm+ \
     -pio \
@@ -61,5 +62,35 @@ echo "Start: $(date)"
     -mpi openmpi4 \
     -batch ${BATCH_CMD} \
     ${SIM_BASENAME} > "${SIM_BASENAME%.*}.log" 2>&1
+_rec_rc=$?
 
 echo "Finish: $(date)"
+
+# ---------------------------------------------------------------------------
+# Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal).
+# The recorder self-collects host details from the environment; this launch
+# script times the solve (wall clock) and passes it, so no arguments are
+# needed. Only a SUCCESSFUL solve is recorded, and the job's exit status is
+# preserved (a recorder problem never changes it). Point DYNAMODB_RECORDER at
+# the script if it isn't found automatically; set SOURCE=<YourOrg> to tag your
+# contributions. See apps/StarCCM/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
+# ---------------------------------------------------------------------------
+_rec_secs=$(( $(date +%s) - ${_rec_t0:-$(date +%s)} ))
+[ "${_rec_secs}" -gt 0 ] 2>/dev/null || _rec_secs=""
+_recorder="${DYNAMODB_RECORDER:-}"
+for _c in "${_recorder}" \
+          "${SLURM_SUBMIT_DIR:-.}/../../../dynamodb/record-benchmark.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/dynamodb/record-benchmark.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/apps/StarCCM/dynamodb/record-benchmark.sh"; do
+    if [ -n "${_c}" ] && [ -x "${_c}" ]; then _recorder="${_c}"; break; fi
+done
+if [ "${_rec_rc:-1}" -eq 0 ] && [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
+    STARCCM_VERSION="${APP_VERSION}" BENCHMARK_CASE="${SIM_BASENAME%.*}" \
+    TIME_TO_SOLUTION="${_rec_secs}" RUN_DIR="${PWD}" "${_recorder}" \
+        || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
+elif [ "${_rec_rc:-1}" -ne 0 ]; then
+    echo "NOTE: solver exited ${_rec_rc:-?}; skipping benchmark recording." >&2
+else
+    echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2
+fi
+exit ${_rec_rc:-0}

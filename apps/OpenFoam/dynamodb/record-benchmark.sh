@@ -78,13 +78,17 @@ RECORD_ID="${RECORD_ID:-}"
 ENGINE_VERSION="${OPENFOAM_VERSION:-}"
 TIME_TO_SOLUTION="${TIME_TO_SOLUTION:-}"
 
-# OpenFOAM dataset characteristics.
+# OpenFOAM dataset characteristics (env-overridable so a launch script can export them).
 DISCIPLINE="CFD"          # always true for OpenFOAM; override if you must
-SOLVER=""
-SOLVER_TYPE=""
-ANALYSIS_TYPE=""
-TURBULENCE_MODEL=""
-MESH_CELLS_MILLION=""
+SOLVER="${SOLVER:-}"
+SOLVER_TYPE="${SOLVER_TYPE:-}"
+ANALYSIS_TYPE="${ANALYSIS_TYPE:-}"
+TURBULENCE_MODEL="${TURBULENCE_MODEL:-}"
+MESH_CELLS_MILLION="${MESH_CELLS_MILLION:-}"
+
+# Directory scanned for the solver log to recover metrics in zero-arg use
+# (defaults to the current dir, which is the run dir when called from a job).
+RUN_DIR="${RUN_DIR:-$PWD}"
 
 # Generic extra metrics/characteristics (repeatable --metric/--char name=value).
 declare -a EXTRA_METRICS=()
@@ -128,6 +132,8 @@ OPTIONS
     --put                     Force the DynamoDB put-item (error out if it fails).
     --no-put                  Never call AWS; only write the JSON file.
     --dry-run                 Print the record to stdout; touch no file and no AWS.
+    --run-dir DIR             Dir to scan for the solver log when metrics aren't
+                              supplied (default: current dir). Enables zero-arg use.
     --out DIR                 Directory for the saved JSON (default: current dir).
     -h, --help                Show this help.
 EOF
@@ -160,6 +166,7 @@ while [ $# -gt 0 ]; do
         --put)                DO_PUT="yes"; shift;;
         --no-put)             DO_PUT="no"; shift;;
         --dry-run)            DRY_RUN=1; shift;;
+        --run-dir)            RUN_DIR="$2"; shift 2;;
         --out)                OUTDIR="$2"; shift 2;;
         -h|--help)            usage; exit 0;;
         *) echo "ERROR: unknown option '$1' (try --help)" >&2; exit 2;;
@@ -221,6 +228,27 @@ fi
 MPI_VERSION="$(mpirun --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
 LIBFABRIC_VERSION="$(fi_info --version 2>/dev/null | awk '/libfabric:/ {print $2; exit}')"
 EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print $2; exit}')"
+
+# --- Zero-arg fallback: recover OpenFOAM result metrics from the solver log --
+# When a value wasn't supplied (flag or env), parse it from the OpenFOAM solver
+# log in RUN_DIR. OpenFOAM prints a cumulative "ExecutionTime = <s> s" line on
+# every time step; the last one is the total solver wall-clock time. This lets
+# the recorder run with no arguments at the end of a benchmark job.
+if [ -z "$TIME_TO_SOLUTION" ]; then
+    for _log in "$RUN_DIR"/log.solver "$RUN_DIR"/log.simpleFoam "$RUN_DIR"/log.*Foam; do
+        [ -f "$_log" ] || continue
+        TIME_TO_SOLUTION="$(grep -h 'ExecutionTime = ' "$_log" 2>/dev/null | tail -1 | awk '{print $3}')"
+        [ -n "$TIME_TO_SOLUTION" ] && break
+    done
+fi
+if [ -z "$SOLVER" ]; then
+    if [ -f "$RUN_DIR/log.solver" ]; then
+        SOLVER="simpleFoam"
+    else
+        _slog="$(ls -1 "$RUN_DIR"/log.*Foam 2>/dev/null | head -1)"
+        [ -n "${_slog:-}" ] && SOLVER="$(basename "$_slog" | sed 's/^log\.//')"
+    fi
+fi
 
 # --- Normalize source + table ------------------------------------------------
 SOURCE="$(printf '%s' "$SOURCE" | tr -cd '[:alnum:]')"

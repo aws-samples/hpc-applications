@@ -159,3 +159,29 @@ simpleFoam:       ${SOLVE_TIME}s
 Total:            ${TOTAL_TIME}s
 ================================================================================
 REPORT
+
+# ---------------------------------------------------------------------------
+# Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal).
+# The recorder self-collects host details from the environment and can also
+# parse the OpenFOAM solver log (log.solver) in this run dir, so no arguments
+# are needed. A recorder problem NEVER fails a good solve (the `|| echo` keeps
+# it non-fatal, even under `set -e`). Point DYNAMODB_RECORDER at the script if
+# it isn't found automatically, and set SOURCE=<YourOrg> to tag contributions.
+# See apps/OpenFoam/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
+# ---------------------------------------------------------------------------
+_of_version="$(basename "${OPENFOAM_ENV}" 2>/dev/null | grep -oE 'v[0-9]+' | head -1 || true)"
+_recorder="${DYNAMODB_RECORDER:-}"
+for _c in "${_recorder}" \
+          "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/dynamodb/record-benchmark.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/apps/OpenFoam/dynamodb/record-benchmark.sh"; do
+    if [ -n "${_c}" ] && [ -x "${_c}" ]; then _recorder="${_c}"; break; fi
+done
+if [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
+    OPENFOAM_VERSION="${_of_version}" BENCHMARK_CASE="occDrivAer-236M" \
+    MESH_CELLS_MILLION="236" SOLVER="simpleFoam" \
+    TIME_TO_SOLUTION="${SOLVE_TIME}" RUN_DIR="${workdir}" "${_recorder}" \
+        || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
+else
+    echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2
+fi

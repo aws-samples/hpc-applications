@@ -74,9 +74,13 @@ ENGINE_VERSION="${OPENRADIOSS_VERSION:-}"
 TIME_TO_SOLUTION="${TIME_TO_SOLUTION:-}"
 
 DISCIPLINE="Structural"   # OpenRadioss is an explicit structural/crash solver
-NUM_ELEMENTS_MILLION=""
-ANALYSIS_TYPE=""
-ELEMENT_TYPE=""
+NUM_ELEMENTS_MILLION="${NUM_ELEMENTS_MILLION:-}"
+ANALYSIS_TYPE="${ANALYSIS_TYPE:-}"
+ELEMENT_TYPE="${ELEMENT_TYPE:-}"
+
+# Directory scanned for the engine log to recover metrics in zero-arg use
+# (defaults to the current dir, which is the run dir when called from a job).
+RUN_DIR="${RUN_DIR:-$PWD}"
 
 declare -a EXTRA_METRICS=()
 declare -a EXTRA_CHARS=()
@@ -116,6 +120,8 @@ OPTIONS
     --put                     Force the DynamoDB put-item (error out if it fails).
     --no-put                  Never call AWS; only write the JSON file.
     --dry-run                 Print the record to stdout; touch no file and no AWS.
+    --run-dir DIR             Dir to scan for the engine log when metrics aren't
+                              supplied (default: current dir). Enables zero-arg use.
     --out DIR                 Directory for the saved JSON (default: current dir).
     -h, --help                Show this help.
 EOF
@@ -145,6 +151,7 @@ while [ $# -gt 0 ]; do
         --put)                  DO_PUT="yes"; shift;;
         --no-put)               DO_PUT="no"; shift;;
         --dry-run)              DRY_RUN=1; shift;;
+        --run-dir)              RUN_DIR="$2"; shift 2;;
         --out)                  OUTDIR="$2"; shift 2;;
         -h|--help)              usage; exit 0;;
         *) echo "ERROR: unknown option '$1' (try --help)" >&2; exit 2;;
@@ -194,6 +201,18 @@ fi
 MPI_VERSION="$(mpirun --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
 LIBFABRIC_VERSION="$(fi_info --version 2>/dev/null | awk '/libfabric:/ {print $2; exit}')"
 EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print $2; exit}')"
+
+# --- Zero-arg fallback: recover OpenRadioss result metrics from the engine log
+# When a value wasn't supplied (flag or env), parse the OpenRadioss engine log
+# in RUN_DIR. OpenRadioss prints an "ELAPSED TIME : <N>" (or "= <N>") line near
+# the end of the engine run; that is its own solver wall time. This lets the
+# recorder run with no arguments at the end of a benchmark job.
+if [ -z "$TIME_TO_SOLUTION" ]; then
+    _orln="$(grep -rhiE 'ELAPSED TIME[[:space:]]*[:=]' "$RUN_DIR"/engine.log "$RUN_DIR"/*0001*.out 2>/dev/null | tail -1)"
+    if [ -n "$_orln" ]; then
+        TIME_TO_SOLUTION="$(printf '%s\n' "$_orln" | grep -oE '[0-9]+(\.[0-9]+)?' | tail -1)"
+    fi
+fi
 
 SOURCE="$(printf '%s' "$SOURCE" | tr -cd '[:alnum:]')"
 [ -n "$SOURCE" ] || SOURCE="Community"

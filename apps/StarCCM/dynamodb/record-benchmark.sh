@@ -77,12 +77,16 @@ RECORD_ID="${RECORD_ID:-}"
 ENGINE_VERSION="${STARCCM_VERSION:-}"
 TIME_TO_SOLUTION="${TIME_TO_SOLUTION:-}"
 
-# STAR-CCM+ dataset characteristics.
+# STAR-CCM+ dataset characteristics (env-overridable so a launch script can export them).
 DISCIPLINE="CFD"          # always true for STAR-CCM+; override if you must
-ANALYSIS_TYPE=""
-TURBULENCE_MODEL=""
-SOLVER_TYPE=""
-MESH_CELLS_MILLION=""
+ANALYSIS_TYPE="${ANALYSIS_TYPE:-}"
+TURBULENCE_MODEL="${TURBULENCE_MODEL:-}"
+SOLVER_TYPE="${SOLVER_TYPE:-}"
+MESH_CELLS_MILLION="${MESH_CELLS_MILLION:-}"
+
+# Directory scanned for the solver .log to recover metrics in zero-arg use
+# (defaults to the current dir, which is the run dir when called from a job).
+RUN_DIR="${RUN_DIR:-$PWD}"
 
 # Generic extra metrics/characteristics (repeatable --metric/--char name=value).
 declare -a EXTRA_METRICS=()
@@ -125,6 +129,8 @@ OPTIONS
     --put                     Force the DynamoDB put-item (error out if it fails).
     --no-put                  Never call AWS; only write the JSON file.
     --dry-run                 Print the record to stdout; touch no file and no AWS.
+    --run-dir DIR             Dir to scan for the solver .log when metrics aren't
+                              supplied (default: current dir). Enables zero-arg use.
     --out DIR                 Directory for the saved JSON (default: current dir).
     -h, --help                Show this help.
 EOF
@@ -156,6 +162,7 @@ while [ $# -gt 0 ]; do
         --put)                DO_PUT="yes"; shift;;
         --no-put)             DO_PUT="no"; shift;;
         --dry-run)            DRY_RUN=1; shift;;
+        --run-dir)            RUN_DIR="$2"; shift 2;;
         --out)                OUTDIR="$2"; shift 2;;
         -h|--help)            usage; exit 0;;
         *) echo "ERROR: unknown option '$1' (try --help)" >&2; exit 2;;
@@ -217,6 +224,23 @@ fi
 MPI_VERSION="$(mpirun --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
 LIBFABRIC_VERSION="$(fi_info --version 2>/dev/null | awk '/libfabric:/ {print $2; exit}')"
 EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print $2; exit}')"
+
+# --- Zero-arg fallback: recover STAR-CCM+ result metrics from the solver .log
+# Conservative by design. STAR-CCM+ batch logs report elapsed time positionally
+# inside the residual table (a "Total Solver Elapsed Time (hr)" COLUMN whose
+# repeating header line lists column names, not a value), so a plain text match
+# would wrongly pick up a header token. We therefore only accept a genuine
+# labelled summary of the form "... Elapsed Time ... : <number>" and skip the
+# residual-table header/monitor lines. The launch script exports the wall-clock
+# TIME_TO_SOLUTION, which is authoritative; this fallback stays silent otherwise.
+if [ -z "$TIME_TO_SOLUTION" ]; then
+    _ccmln="$(grep -rhiE 'elapsed time' "$RUN_DIR"/*.log 2>/dev/null \
+             | grep -viE 'Iteration|Continuity|momentum|per Time Step|Monitor' \
+             | grep -E ':[[:space:]]*[0-9]' | tail -1)"
+    if [ -n "$_ccmln" ]; then
+        TIME_TO_SOLUTION="$(printf '%s\n' "$_ccmln" | grep -oE '[0-9]+(\.[0-9]+)?' | tail -1)"
+    fi
+fi
 
 # --- Normalize source + table ------------------------------------------------
 SOURCE="$(printf '%s' "$SOURCE" | tr -cd '[:alnum:]')"

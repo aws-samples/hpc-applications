@@ -71,8 +71,12 @@ ENGINE_VERSION="${WRF_VERSION:-}"
 TIME_TO_SOLUTION="${TIME_TO_SOLUTION:-}"
 
 DISCIPLINE="Weather"      # WRF is a weather/atmospheric model
-NUM_CELLS_MILLION=""
-ANALYSIS_TYPE=""
+NUM_CELLS_MILLION="${NUM_CELLS_MILLION:-}"
+ANALYSIS_TYPE="${ANALYSIS_TYPE:-}"
+
+# Directory scanned for the run logs to recover metrics in zero-arg use
+# (defaults to the current dir, which is the run dir when called from a job).
+RUN_DIR="${RUN_DIR:-$PWD}"
 
 declare -a EXTRA_METRICS=()
 declare -a EXTRA_CHARS=()
@@ -111,6 +115,8 @@ OPTIONS
     --put                     Force the DynamoDB put-item (error out if it fails).
     --no-put                  Never call AWS; only write the JSON file.
     --dry-run                 Print the record to stdout; touch no file and no AWS.
+    --run-dir DIR             Dir to scan for the run logs when metrics aren't
+                              supplied (default: current dir). Enables zero-arg use.
     --out DIR                 Directory for the saved JSON (default: current dir).
     -h, --help                Show this help.
 EOF
@@ -139,6 +145,7 @@ while [ $# -gt 0 ]; do
         --put)                DO_PUT="yes"; shift;;
         --no-put)             DO_PUT="no"; shift;;
         --dry-run)            DRY_RUN=1; shift;;
+        --run-dir)            RUN_DIR="$2"; shift 2;;
         --out)                OUTDIR="$2"; shift 2;;
         -h|--help)            usage; exit 0;;
         *) echo "ERROR: unknown option '$1' (try --help)" >&2; exit 2;;
@@ -188,6 +195,23 @@ fi
 MPI_VERSION="$(mpirun --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
 LIBFABRIC_VERSION="$(fi_info --version 2>/dev/null | awk '/libfabric:/ {print $2; exit}')"
 EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print $2; exit}')"
+
+# --- Zero-arg fallback: recover WRF result metrics from the run logs ---------
+# When a value wasn't supplied (flag or env), parse it from WRF's rsl.error.0000
+# (or any rsl.error.*) in RUN_DIR. WRF prints a per-timestep
+# "Timing for main: ... <N> elapsed seconds" line; summing the elapsed seconds
+# gives the total integration wall time. This lets the recorder run with no
+# arguments at the end of a benchmark job.
+if [ -z "$TIME_TO_SOLUTION" ]; then
+    for _rsl in "$RUN_DIR"/rsl.error.0000 "$RUN_DIR"/rsl.error.* "$RUN_DIR"/log.wrf; do
+        [ -f "$_rsl" ] || continue
+        _t="$(awk '/Timing for main/ {sum+=$9; n++} END {if (n>0) printf "%.2f", sum}' "$_rsl" 2>/dev/null)"
+        if [ -n "$_t" ] && [ "$_t" != "0.00" ]; then TIME_TO_SOLUTION="$_t"; break; fi
+    done
+fi
+if [ -z "$ENGINE_VERSION" ]; then
+    ENGINE_VERSION="$(grep -hoE 'WRF ?V[0-9]+(\.[0-9]+)+' "$RUN_DIR"/rsl.out.0000 "$RUN_DIR"/log.wrf 2>/dev/null | head -1 | grep -oE '[0-9]+(\.[0-9]+)+' | head -1)"
+fi
 
 SOURCE="$(printf '%s' "$SOURCE" | tr -cd '[:alnum:]')"
 [ -n "$SOURCE" ] || SOURCE="Community"

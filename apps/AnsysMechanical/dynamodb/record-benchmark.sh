@@ -75,18 +75,22 @@ BENCHMARK_CASE="${BENCHMARK_CASE:-}"
 RECORD_ID="${RECORD_ID:-}"
 ENGINE_VERSION="${MECHANICAL_VERSION:-}"
 
-# Mechanical performance metrics.
+# Mechanical performance metrics (env-overridable so a launch script can export them).
 TIME_TO_SOLUTION="${TIME_TO_SOLUTION:-}"
-CORE_SOLVER_RATING=""
-CORE_SOLVER_SPEEDUP=""
-CORE_SOLVER_EFFICIENCY=""
+CORE_SOLVER_RATING="${CORE_SOLVER_RATING:-}"
+CORE_SOLVER_SPEEDUP="${CORE_SOLVER_SPEEDUP:-}"
+CORE_SOLVER_EFFICIENCY="${CORE_SOLVER_EFFICIENCY:-}"
 
-# Mechanical dataset characteristics.
-ANALYSIS_TYPE=""
-MODEL_NAME=""
-MDOFS=""
-NUM_GPUS=""
-RELEASE=""
+# Mechanical dataset characteristics (also env-overridable).
+ANALYSIS_TYPE="${ANALYSIS_TYPE:-}"
+MODEL_NAME="${MODEL_NAME:-}"
+MDOFS="${MDOFS:-}"
+NUM_GPUS="${NUM_GPUS:-}"
+RELEASE="${RELEASE:-}"
+
+# Directory scanned for the solver output to recover metrics in zero-arg use
+# (defaults to the current dir, which is the run dir when called from a job).
+RUN_DIR="${RUN_DIR:-$PWD}"
 
 declare -a EXTRA_METRICS=()
 declare -a EXTRA_CHARS=()
@@ -130,6 +134,8 @@ OPTIONS
     --put                     Force the DynamoDB put-item (error out if it fails).
     --no-put                  Never call AWS; only write the JSON file.
     --dry-run                 Print the record to stdout; touch no file and no AWS.
+    --run-dir DIR             Dir to scan for the solver output when metrics aren't
+                              supplied (default: current dir). Enables zero-arg use.
     --out DIR                 Directory for the saved JSON (default: current dir).
     -h, --help                Show this help.
 EOF
@@ -163,6 +169,7 @@ while [ $# -gt 0 ]; do
         --put)                    DO_PUT="yes"; shift;;
         --no-put)                 DO_PUT="no"; shift;;
         --dry-run)                DRY_RUN=1; shift;;
+        --run-dir)                RUN_DIR="$2"; shift 2;;
         --out)                    OUTDIR="$2"; shift 2;;
         -h|--help)                usage; exit 0;;
         *) echo "ERROR: unknown option '$1' (try --help)" >&2; exit 2;;
@@ -212,6 +219,17 @@ fi
 MPI_VERSION="$(mpirun --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
 LIBFABRIC_VERSION="$(fi_info --version 2>/dev/null | awk '/libfabric:/ {print $2; exit}')"
 EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print $2; exit}')"
+
+# --- Zero-arg fallback: recover Mechanical result metrics from output.log ----
+# Best-effort: MAPDL writes an "Elapsed Time (sec) = <N>" line near the end of
+# its output. Launch scripts that already time the solve should export
+# TIME_TO_SOLUTION instead of relying on this.
+if [ -z "$TIME_TO_SOLUTION" ]; then
+    _mln="$(grep -rhiE 'Elapsed [Tt]ime *\(sec\)' "$RUN_DIR"/output.log "$RUN_DIR"/*.out 2>/dev/null | tail -1)"
+    if [ -n "$_mln" ]; then
+        TIME_TO_SOLUTION="$(printf '%s\n' "$_mln" | grep -oE '[0-9]+(\.[0-9]+)?' | tail -1)"
+    fi
+fi
 
 SOURCE="$(printf '%s' "$SOURCE" | tr -cd '[:alnum:]')"
 [ -n "$SOURCE" ] || SOURCE="Community"

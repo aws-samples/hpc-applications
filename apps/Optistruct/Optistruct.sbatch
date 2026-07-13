@@ -58,8 +58,40 @@ mpirun -np $SLURM_JOB_NUM_NODES -ppn 1 /bin/bash -c "sync && echo 3 | sudo tee /
 
 nprocs=$((SLURM_NTASKS / OMP_NUM_THREADS))
 nprocspernode=$((nprocs / SLURM_JOB_NUM_NODES))
+_rec_t0="$(date +%s)"
 mpirun -np $nprocs -ppn $nprocspernode -genvall $ALTAIR_OPTISTRUCT_EXEC -core=in -nt=${OMP_NUM_THREADS} -ddmmode $(basename "${INPUT_FILE}") -tmpdir="${SCRATCH_DIR}" -checkel=NO -out -outfile="${LOG_FILE}"
 # -genvall: export all environment variables to all procs
 # -core=in: tell Optistruct to use as much memory as possible, then overflow to disk
 # -ddmode: Domain Decomposition Method
 # -checkel=NO: Element quality checks are not performed, but mathematical validity checks are performed.
+
+# ---------------------------------------------------------------------------
+# Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal).
+# The recorder self-collects host details from the environment; this launch
+# script times the solve (wall clock) and passes it, so no arguments are
+# needed. Only a SUCCESSFUL solve is recorded, and the job's exit status is
+# preserved (a recorder problem never changes it). Point DYNAMODB_RECORDER at
+# the script if it isn't found automatically; set SOURCE=<YourOrg> to tag your
+# contributions. See apps/Optistruct/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
+# ---------------------------------------------------------------------------
+_rec_rc=$?
+_rec_secs=$(( $(date +%s) - ${_rec_t0:-$(date +%s)} ))
+[ "${_rec_secs}" -gt 0 ] 2>/dev/null || _rec_secs=""
+_osver="$(printf '%s' "${ALTAIR_OPTISTRUCT_EXEC:-}" | grep -oE '[0-9]{4}\.[0-9]+' | head -1)"
+_recorder="${DYNAMODB_RECORDER:-}"
+for _c in "${_recorder}" \
+          "${SLURM_SUBMIT_DIR:-.}/dynamodb/record-benchmark.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/apps/Optistruct/dynamodb/record-benchmark.sh"; do
+    if [ -n "${_c}" ] && [ -x "${_c}" ]; then _recorder="${_c}"; break; fi
+done
+if [ "${_rec_rc}" -eq 0 ] && [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
+    OPTISTRUCT_VERSION="${_osver}" BENCHMARK_CASE="$(basename "${INPUT_FILE%.*}")" \
+    TIME_TO_SOLUTION="${_rec_secs}" RUN_DIR="${PWD}" "${_recorder}" \
+        || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
+elif [ "${_rec_rc}" -ne 0 ]; then
+    echo "NOTE: solver exited ${_rec_rc}; skipping benchmark recording." >&2
+else
+    echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2
+fi
+exit ${_rec_rc}

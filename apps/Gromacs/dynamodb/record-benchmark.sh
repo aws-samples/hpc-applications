@@ -75,11 +75,15 @@ RECORD_ID="${RECORD_ID:-}"
 ENGINE_VERSION="${GROMACS_VERSION:-}"
 
 TIME_TO_SOLUTION="${TIME_TO_SOLUTION:-}"
-NS_PER_DAY=""
+NS_PER_DAY="${NS_PER_DAY:-}"
 
 DISCIPLINE="MD"           # GROMACS is a molecular-dynamics engine
-ATOMS_MILLION=""
-ANALYSIS_TYPE=""
+ATOMS_MILLION="${ATOMS_MILLION:-}"
+ANALYSIS_TYPE="${ANALYSIS_TYPE:-}"
+
+# Directory scanned for md.log to recover metrics in zero-arg use
+# (defaults to the current dir, which is the run dir when called from a job).
+RUN_DIR="${RUN_DIR:-$PWD}"
 
 declare -a EXTRA_METRICS=()
 declare -a EXTRA_CHARS=()
@@ -119,6 +123,8 @@ OPTIONS
     --put                     Force the DynamoDB put-item (error out if it fails).
     --no-put                  Never call AWS; only write the JSON file.
     --dry-run                 Print the record to stdout; touch no file and no AWS.
+    --run-dir DIR             Dir to scan for md.log when metrics aren't supplied
+                              (default: current dir). Enables zero-arg use.
     --out DIR                 Directory for the saved JSON (default: current dir).
     -h, --help                Show this help.
 EOF
@@ -148,6 +154,7 @@ while [ $# -gt 0 ]; do
         --put)                DO_PUT="yes"; shift;;
         --no-put)             DO_PUT="no"; shift;;
         --dry-run)            DRY_RUN=1; shift;;
+        --run-dir)            RUN_DIR="$2"; shift 2;;
         --out)                OUTDIR="$2"; shift 2;;
         -h|--help)            usage; exit 0;;
         *) echo "ERROR: unknown option '$1' (try --help)" >&2; exit 2;;
@@ -197,6 +204,24 @@ fi
 MPI_VERSION="$(mpirun --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
 LIBFABRIC_VERSION="$(fi_info --version 2>/dev/null | awk '/libfabric:/ {print $2; exit}')"
 EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print $2; exit}')"
+
+# --- Zero-arg fallback: recover GROMACS result metrics from md.log -----------
+# When a value wasn't supplied (flag or env), parse it from the GROMACS md.log
+# in RUN_DIR. GROMACS prints near the end:
+#     Performance:      <ns/day>   <hour/ns>
+#     ...    Time:    <core_t>   <wall_t>   ...   (Wall t (s) is field 3)
+#     GROMACS version:  <version>              (in the md.log header)
+# This lets the recorder run with no arguments at the end of a benchmark job.
+_mdlog=""
+for _c in "$RUN_DIR"/md.log "$RUN_DIR"/log.run "$RUN_DIR"/*.log; do
+    [ -f "$_c" ] || continue
+    if grep -qE '^Performance:' "$_c" 2>/dev/null; then _mdlog="$_c"; break; fi
+done
+if [ -n "$_mdlog" ]; then
+    [ -n "$NS_PER_DAY" ]       || NS_PER_DAY="$(grep -E '^Performance:' "$_mdlog" 2>/dev/null | tail -1 | awk '{print $2}')"
+    [ -n "$TIME_TO_SOLUTION" ] || TIME_TO_SOLUTION="$(awk '/^[[:space:]]*Time:/ {wall=$3} END {if (wall != "") print wall}' "$_mdlog" 2>/dev/null)"
+    [ -n "$ENGINE_VERSION" ]   || ENGINE_VERSION="$(grep -iE 'GROMACS version:' "$_mdlog" 2>/dev/null | head -1 | awk '{print $NF}')"
+fi
 
 SOURCE="$(printf '%s' "$SOURCE" | tr -cd '[:alnum:]')"
 [ -n "$SOURCE" ] || SOURCE="Community"

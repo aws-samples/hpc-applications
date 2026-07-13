@@ -86,4 +86,37 @@ echo "Enabling Transparent Huge Pages (THP)"
 mpirun -np ${SLURM_JOB_NUM_NODES} -ppn 1 /bin/bash -c "echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled"
 
 echo "Running: mpirun -hostfile ${HOSTFILE} -np ${SLURM_NPROCS} -bootstrap ssh -genvall ${SOLVER_PATH} i=${INPUT_FILE}"
+_rec_t0="$(date +%s)"
 mpirun -hostfile ${HOSTFILE} -np ${SLURM_NPROCS} -bootstrap ssh -genvall ${SOLVER_PATH} i=${INPUT_FILE} | tee output.${SLURM_JOBID}.out
+
+# ---------------------------------------------------------------------------
+# Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal).
+# The recorder self-collects host details from the environment; this launch
+# script times the solve (wall clock) and passes it, so no arguments are
+# needed. Only a SUCCESSFUL solve is recorded (LS-DYNA's own exit via
+# PIPESTATUS, not tee's), and the job's exit status is preserved (a recorder
+# problem never changes it). Point DYNAMODB_RECORDER at the script if it isn't
+# found automatically; set SOURCE=<YourOrg> to tag your contributions.
+# See apps/LS-Dyna/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
+# ---------------------------------------------------------------------------
+_rec_rc="${PIPESTATUS[0]}"
+_rec_secs=$(( $(date +%s) - ${_rec_t0:-$(date +%s)} ))
+[ "${_rec_secs}" -gt 0 ] 2>/dev/null || _rec_secs=""
+_lsver="$(basename "${SOLVER_PATH}" 2>/dev/null | grep -oE 'R[0-9]+([_.][0-9]+)+' | head -1 | tr '_' '.')"
+_recorder="${DYNAMODB_RECORDER:-}"
+for _c in "${_recorder}" \
+          "${SLURM_SUBMIT_DIR:-.}/dynamodb/record-benchmark.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/apps/LS-Dyna/dynamodb/record-benchmark.sh"; do
+    if [ -n "${_c}" ] && [ -x "${_c}" ]; then _recorder="${_c}"; break; fi
+done
+if [ "${_rec_rc}" -eq 0 ] && [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
+    LSDYNA_VERSION="${_lsver}" BENCHMARK_CASE="$(basename "${INPUT_FILE%.*}")" \
+    TIME_TO_SOLUTION="${_rec_secs}" RUN_DIR="${workdir}" "${_recorder}" \
+        || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
+elif [ "${_rec_rc}" -ne 0 ]; then
+    echo "NOTE: solver exited ${_rec_rc}; skipping benchmark recording." >&2
+else
+    echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2
+fi
+exit ${_rec_rc}
