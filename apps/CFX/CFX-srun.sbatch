@@ -1,22 +1,27 @@
 #!/bin/bash
-#SBATCH --exclusive
-#SBATCH --nodes=4
-#SBATCH --ntasks=192
-#SBATCH --constraint=hpc7a.24xlarge
 #SBATCH --partition=hpc7a
-#SBATCH --chdir=/fsx/slurm-out/cfx
+#SBATCH --constraint=hpc7a.96xlarge
+#SBATCH --ntasks=4
+#SBATCH --ntasks-per-socket=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem 28GB
+#SBATCH --job-name=scfx-static-mixer
+#SBATCH --output=%x-%j/main.out
+#SBATCH --error=%x-%j/main.err
 
-######################## EFA settings ######################## 
-#export I_MPI_DEBUG=5
+######################## MPI and EFA settings ######################## 
+export I_MPI_OFI_LIBRARY_INTERNAL=0
+module load intelmpi
+export I_MPI_DEBUG=5
 export I_MPI_FABRICS=shm:ofi
 export I_MPI_OFI_PROVIDER=efa
 export I_MPI_MULTIRAIL=1
-export I_MPI_ADJUST_REDUCE=2 
-export I_MPI_ADJUST_ALLREDUCE=2
-export I_MPI_ADJUST_BCAST=1
-######################## EFA settings ######################## 
+export FI_EFA_FORK_SAFE=1
+export I_MPI_PMI_LIBRARY=/opt/slurm/lib/libpmi2.so
+module load libfabric-aws
+######################## MPI and EFA settings ######################## 
 
-cfxversion=${cfxversion:-"v242"}
+cfxversion=${cfxversion:-"v252"}
 def_file=${def_file:-"/fsx/CFX/Dataset/perf_Airfoil_100M_R16.def"}
 basedir=${basedir:-"/fsx"}
 
@@ -30,10 +35,8 @@ workdir="$(readlink -m "${basedir}/${SLURM_JOB_NAME%.*}")/Run/${SLURM_JOB_ID}-${
 echo "Execution directory is: ${workdir}"
 mkdir -p "${workdir}" && cd "${workdir}"
 
-echo "building the MPI hostfile"
-HOST_LIST=$(scontrol show hostname $SLURM_NODELIST)
-
 cp $0 .
 ln -s "${def_file}" .
 
-"${CFX_DIR}/cfx5solve" -batch -def $def_file -parallel -start-method 'Intel MPI Distributed Parallel' -par-dist "$HOST_LIST" -part $SLURM_NPROCS -part-large
+
+"${CFX_DIR}/cfx5solve" -batch -def "${def_file}" -parallel -part $SLURM_NTASKS -start-method "Intel MPI SRUN from SBATCH"
