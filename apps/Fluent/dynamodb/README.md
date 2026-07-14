@@ -26,3 +26,15 @@ Fluent-specific fields include `--num-cells-million`, `--time-per-iteration` +
 `--solver-rating`, `--solver-speed`, `--turbulence-model`, `--solver-type`,
 `--analysis-type`, `--cell-type`. Preview with `--dry-run`; see every option
 with `./record-benchmark.sh --help`.
+
+### 2026 R1 method (MIUPS)
+
+The recorder also understands the **2026 R1** benchmark harness
+(`fluent_benchmark_gpu.py`, used for both CPU and GPU — see
+[../Fluent-Benchmark-2026R1.md](../Fluent-Benchmark-2026R1.md)). Run zero-arg at
+the end of a job (the launch scripts already do this) and it parses the
+`<case>-<cores>.trn` transcript to record **`miups`** (Million Cell Iterations
+per Wall Second), `case_read_seconds`, `data_read_seconds`, `benchmark_method`
+and `solver_mode`. With the mesh size it also derives `time_per_iteration_seconds`
+( = `num_cells_million` / `miups` ). New flags: `--miups`, `--case-read`,
+`--data-read`, `--benchmark-method`, `--solver-mode`.

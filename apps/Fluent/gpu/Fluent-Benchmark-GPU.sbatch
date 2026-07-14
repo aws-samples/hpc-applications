@@ -67,7 +67,9 @@ for _c in "${_recorder}" \
     if [ -n "${_c}" ] && [ -x "${_c}" ]; then _recorder="${_c}"; break; fi
 done
 if [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
-    FLUENT_VERSION="${fluentversion}" RUN_DIR="${workdir}" "${_recorder}" \
+    FLUENT_VERSION="${fluentversion}" RUN_DIR="${workdir}" \
+    BENCHMARK_CASE="${benchmark_file%.*}" BENCHMARK_METHOD="fluent_benchmark_harness" \
+    SOLVER_MODE="gpu" "${_recorder}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 else
     echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2

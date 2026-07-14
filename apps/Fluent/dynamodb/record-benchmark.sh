@@ -91,6 +91,12 @@ TIME_TO_SOLUTION="${TIME_TO_SOLUTION:-}"
 TIME_PER_ITERATION="${TIME_PER_ITERATION:-}"
 SOLVER_RATING="${SOLVER_RATING:-}"
 SOLVER_SPEED="${SOLVER_SPEED:-}"
+# New 2026R1 benchmark harness (fluent_benchmark_gpu.py) metrics.
+MIUPS="${MIUPS:-}"                       # Million Cell Iterations per Wall Second
+CASE_READ_SECONDS="${CASE_READ_SECONDS:-}"
+DATA_READ_SECONDS="${DATA_READ_SECONDS:-}"
+BENCHMARK_METHOD="${BENCHMARK_METHOD:-}" # fluent_benchmark_harness | fluentbench
+SOLVER_MODE="${SOLVER_MODE:-}"           # cpu | gpu
 
 # Fluent dataset characteristics (also env-overridable).
 DISCIPLINE="CFD"          # always true for Fluent; override if you must
@@ -136,8 +142,14 @@ OPTIONS
     --time-to-solution SEC    Total solver wall-clock seconds (the model target).
     --time-per-iteration SEC  Solver wall time per iteration (Fluent .out).
     --num-iterations N        Iterations run (computes total = per-iter x iters).
-    --solver-rating X         Fluent "Solver rating".
-    --solver-speed X          Fluent "Solver speed".
+    --solver-rating X         Fluent "Solver rating" (classic fluentbench.pl).
+    --solver-speed X          Fluent "Solver speed" (classic fluentbench.pl).
+    --miups X                 Million Cell Iterations per Wall Second (2026R1
+                              fluent_benchmark_gpu.py harness; higher is faster).
+    --case-read SEC           Avg wall-clock time to read the case (2026R1).
+    --data-read SEC           Avg wall-clock time to read the data (2026R1).
+    --benchmark-method M      fluent_benchmark_harness (2026R1) | fluentbench.
+    --solver-mode M           cpu | gpu (which Fluent solver was benchmarked).
     --num-cells-million X     Mesh size in millions of cells.
     --turbulence-model M      e.g. k-omega-sst, k-epsilon-realizable.
     --solver-type T           steady|transient; pressure-/density-based; coupled/segregated.
@@ -177,6 +189,11 @@ while [ $# -gt 0 ]; do
         --num-iterations)     NUM_ITERATIONS="$2"; shift 2;;
         --solver-rating)      SOLVER_RATING="$2"; shift 2;;
         --solver-speed)       SOLVER_SPEED="$2"; shift 2;;
+        --miups)              MIUPS="$2"; shift 2;;
+        --case-read)          CASE_READ_SECONDS="$2"; shift 2;;
+        --data-read)          DATA_READ_SECONDS="$2"; shift 2;;
+        --benchmark-method)   BENCHMARK_METHOD="$2"; shift 2;;
+        --solver-mode)        SOLVER_MODE="$2"; shift 2;;
         --num-cells-million)  NUM_CELLS_MILLION="$2"; shift 2;;
         --turbulence-model)   TURBULENCE_MODEL="$2"; shift 2;;
         --solver-type)        SOLVER_TYPE="$2"; shift 2;;
@@ -254,10 +271,32 @@ EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print 
 # When a value wasn't supplied (flag or env), parse it from the Fluent solver
 # output in RUN_DIR, using the same patterns as Utils/record-results. This lets
 # the recorder run with no arguments when called at the end of a benchmark job.
+# Classic harness (fluentbench.pl): per-iteration timing in the solver .out/.trn.
 if ls "$RUN_DIR"/*.out >/dev/null 2>&1; then
     [ -n "$TIME_PER_ITERATION" ] || TIME_PER_ITERATION="$(grep -h 'Solver wall time per iteration' "$RUN_DIR"/*.out 2>/dev/null | awk '{print $7}' | head -1)"
     [ -n "$SOLVER_SPEED" ]       || SOLVER_SPEED="$(grep -h 'Solver speed' "$RUN_DIR"/*.out 2>/dev/null | awk '{print $4}' | head -1)"
     [ -n "$SOLVER_RATING" ]      || SOLVER_RATING="$(grep -h 'Solver rating' "$RUN_DIR"/*.out 2>/dev/null | awk '{print $4}' | head -1)"
+fi
+
+# New 2026R1 harness (fluent_benchmark_gpu.py): the per-case transcript
+# <case>-<cores>.trn carries "Million Cell Iteration Per Wall Second = <MIUPS>"
+# plus the case/data read wall times. The transcript lives a few levels down
+# (working/<tag>/transcript/), so look there too.
+_trn="$(ls -1 "$RUN_DIR"/*.trn 2>/dev/null | head -1)"
+[ -n "$_trn" ] || _trn="$(find "$RUN_DIR" -maxdepth 6 -name '*.trn' 2>/dev/null | head -1)"
+if [ -n "$_trn" ]; then
+    [ -n "$MIUPS" ]             || MIUPS="$(grep -h 'Million Cell Iteration Per Wall Second' "$_trn" 2>/dev/null | tail -1 | sed -E 's/.*=[[:space:]]*//' | awk '{print $1}')"
+    [ -n "$CASE_READ_SECONDS" ] || CASE_READ_SECONDS="$(grep -h 'Average wall-clock time per case input' "$_trn" 2>/dev/null | tail -1 | sed -E 's/.*:[[:space:]]*//' | awk '{print $1}')"
+    [ -n "$DATA_READ_SECONDS" ] || DATA_READ_SECONDS="$(grep -h 'Average wall-clock time per data input' "$_trn" 2>/dev/null | tail -1 | sed -E 's/.*:[[:space:]]*//' | awk '{print $1}')"
+    [ -n "$BENCHMARK_METHOD" ]  || BENCHMARK_METHOD="fluent_benchmark_harness"
+    [ -n "$BENCHMARK_CASE" ]    || BENCHMARK_CASE="$(basename "$_trn" 2>/dev/null | sed -E 's/-[0-9]+\.trn$//')"
+    if [ -z "$SOLVER_MODE" ]; then
+        if find "$RUN_DIR" -maxdepth 6 -name '*.gpu' 2>/dev/null | grep -q .; then SOLVER_MODE="gpu"; else SOLVER_MODE="cpu"; fi
+    fi
+fi
+# If we only found classic metrics, label the method accordingly.
+if [ -z "$BENCHMARK_METHOD" ] && [ -n "${SOLVER_RATING}${TIME_PER_ITERATION}" ]; then
+    BENCHMARK_METHOD="fluentbench"
 fi
 if [ -z "$ENGINE_VERSION" ]; then
     ENGINE_VERSION="$(grep -hoE 'ANSYS Fluent [0-9]{4} R[0-9]+' "$RUN_DIR"/*.trn "$RUN_DIR"/*.out 2>/dev/null | head -1 | sed -E 's/.*([0-9]{4}) R([0-9]+)/\1R\2/')"
@@ -265,6 +304,18 @@ fi
 if [ -z "$BENCHMARK_CASE" ]; then
     _cas="$(ls -1 "$RUN_DIR"/*.cas.gz "$RUN_DIR"/*.cas.h5 "$RUN_DIR"/*.cas 2>/dev/null | head -1)"
     [ -n "${_cas:-}" ] && BENCHMARK_CASE="$(basename "$_cas" | sed -E 's/\.(cas\.gz|cas\.h5|cas)$//')"
+fi
+
+# Recover mesh size from a case name like "f1_racecar_140m" (=> 140) when not given.
+if [ -z "$NUM_CELLS_MILLION" ] && [ -n "$BENCHMARK_CASE" ]; then
+    _ncm="$(printf '%s' "$BENCHMARK_CASE" | grep -oiE '[0-9]+m' | head -1 | grep -oE '[0-9]+')"
+    [ -n "$_ncm" ] && NUM_CELLS_MILLION="$_ncm"
+fi
+# New harness: MIUPS = million-cell-iterations / wall-second. With the mesh size
+# this yields the per-iteration wall time (= cells_million / MIUPS).
+if [ -z "$TIME_PER_ITERATION" ] && is_number "${MIUPS:-}" && is_number "${NUM_CELLS_MILLION:-}" \
+        && awk "BEGIN{exit !(${MIUPS:-0} > 0)}"; then
+    TIME_PER_ITERATION="$(awk "BEGIN{printf \"%.6g\", ${NUM_CELLS_MILLION} / ${MIUPS}}")"
 fi
 
 # Fluent total solve time = per-iteration x iterations, when total not given directly.
@@ -334,6 +385,9 @@ add_n "time_to_solution_seconds" "$TIME_TO_SOLUTION"
 add_n "time_per_iteration_seconds" "$TIME_PER_ITERATION"
 add_n "solver_rating"        "$SOLVER_RATING"
 add_n "solver_speed"         "$SOLVER_SPEED"
+add_n "miups"                "$MIUPS"
+add_n "case_read_seconds"    "$CASE_READ_SECONDS"
+add_n "data_read_seconds"    "$DATA_READ_SECONDS"
 for pair in "${EXTRA_METRICS[@]:-}"; do [ -n "$pair" ] && add_kv add_n "$pair"; done
 # Dataset characteristics
 add_s "discipline"           "$DISCIPLINE"
@@ -343,6 +397,8 @@ add_s "turbulence_model"     "$TURBULENCE_MODEL"
 add_s "solver_type"          "$SOLVER_TYPE"
 add_s "analysis_type"        "$ANALYSIS_TYPE"
 add_s "cell_type"            "$CELL_TYPE"
+add_s "benchmark_method"     "$BENCHMARK_METHOD"
+add_s "solver_mode"          "$SOLVER_MODE"
 for pair in "${EXTRA_CHARS[@]:-}"; do [ -n "$pair" ] && add_kv add_s "$pair"; done
 # Application-specific setting (Fluent version is an ingested extra attribute)
 add_s "fluent_version"       "$ENGINE_VERSION"
