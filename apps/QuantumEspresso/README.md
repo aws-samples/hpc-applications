@@ -373,42 +373,54 @@ right-sizing target for new work, so no results are published for them here.
 
 ### How these were measured
 
-- **Graviton4** (`c8g`): `eu-north-1`.
+- **Graviton4** (`c8g`): `eu-north-1`. Compiled `-mcpu=neoverse-v2`.
 - **Graviton5** (`c9g`): 2026-07, `eu-central-1`, AWS PCS with Slurm 25.11, one
   MPI rank per physical core, `sbatch --exclusive`, 10 reps per point (median
   of QE's own `PWSCF ... WALL` timer; spread across reps ≤ 12 s at every
-  point).
+  point). Also compiled `-mcpu=neoverse-v2`, **not** `-mcpu=neoverse-v3` — see
+  the provenance note below.
 
 The two sets were measured in separate campaigns and regions, so treat the
 Graviton5 advantage as the headline and small absolute differences as
 measurement noise.
 
-**Provenance of the Graviton5 binary.** It was produced by the upstream
-benchmarking project's Spack-based build, not by the sbatch script in this
-directory, and the distinction is worth stating precisely because Spack's
-*target* label and the *actual codegen* are two different things there:
+**Provenance of the Graviton5 binary: it was _not_ V3-tuned.** The c9g runs used
+a binary compiled with `-mcpu=neoverse-v2`, not `-mcpu=neoverse-v3`. It came from
+the upstream benchmarking project's Spack-based build rather than the sbatch
+script in this directory, and the reason the target is V2 is a property of that
+toolchain:
 
 - Spack/archspec 0.23.1 knows no `neoverse_v3` microarch, so a Graviton5 spec
-  resolves to `target=neoverse_v2`. That label drives dependency and ABI
-  resolution only. A V2-tuned binary does run correctly on V3 (the ISA is
-  backward compatible), so `target=neoverse_v2` on its own yields a **correct
-  but not V3-tuned** build.
-- Real V3 codegen was forced separately, by propagating
-  `-mcpu=neoverse-v3` through `cflags==`/`cxxflags==`/`fflags==` across the
-  whole compiled DAG (QE plus Open MPI, ELPA, ScaLAPACK) on **gcc 14**, built
-  **on Graviton5 hardware** — configure-time test programs execute the code
-  they compile and would `SIGILL` on an older node. Those flags are part of the
-  Spack spec hash, so the V3 build coexists with the plain V2 one. Prebuilt
-  binary libraries such as ArmPL are unaffected by the flag.
+  resolves to `target=neoverse_v2`. A V2-tuned binary runs correctly on V3
+  because the ISA is backward compatible, so this yields a **correct but not
+  V3-tuned** build — which is what was benchmarked.
+- That project does have an opt-in for real V3 codegen (propagating
+  `-mcpu=neoverse-v3` through `cflags==`/`cxxflags==`/`fflags==` across the whole
+  compiled DAG), but it is off by default and was not used for these runs: the
+  runner resolves `pw.x` out of the `neoverse_v2` install tree, and no V3 variant
+  was staged.
 
-[`Arm/build_qe_arm.sbatch`](Arm/build_qe_arm.sbatch) reaches the same codegen by
-a shorter route: it passes `-O3 -mcpu=neoverse-v3` straight to CMake. On a stock
-Amazon Linux 2023 node the system gcc 11 accepts that flag, because
-`neoverse-v3` is back-ported there, so **no staged compiler is needed to
-reproduce these numbers on AL2023**. On a distribution without the back-ports
-the script probes, falls back along the Neoverse line, and records
-`mcpu_fallback: true` — see the
-[Graviton5 notes](#per-generation-optimization-flags).
+Two consequences worth being explicit about:
+
+1. **The measured 1.30–1.34× Graviton5 advantage is a pure hardware-generation
+   gain**, obtained while compiling for the previous microarchitecture. Whatever
+   `-mcpu=neoverse-v3` is worth on this workload is *not* included in these
+   numbers and remains unmeasured.
+2. **[`Arm/build_qe_arm.sbatch`](Arm/build_qe_arm.sbatch) does not reproduce the
+   measured binary — it produces a better-tuned one.** On a stock Amazon Linux
+   2023 node its probe accepts `-mcpu=neoverse-v3` (that flag is back-ported into
+   AL2023's gcc 11), so it emits V3 code where the benchmark used V2. Expect the
+   script's c9g wall times to be equal or better than the table above, not
+   identical to it. To reproduce the measured configuration exactly, pin the
+   target:
+
+   ```bash
+   sbatch -p <c9g-partition> --export=ALL,TARGET=graviton4 Arm/build_qe_arm.sbatch
+   ```
+
+   (`TARGET=graviton4` selects `-mcpu=neoverse-v2`; the resulting binary installs
+   under `gcc-graviton4/` and the launcher's candidate chain will pick it up on a
+   Graviton5 node.)
 
 ---
 
