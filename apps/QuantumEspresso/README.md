@@ -48,21 +48,39 @@ already-built (version, generation) exits immediately.
 The compiler is told exactly which core it is targeting. The build script
 auto-detects the generation from the Arm `CPU part` field in `/proc/cpuinfo`:
 
-| Generation | `CPU part` | Microarchitecture | Flags |
-|------------|-----------|-------------------|-------|
-| Graviton2 (`c6g`/`m6g`/`r6g`) | `0xd0c` | Neoverse N1 | `-O3 -mcpu=neoverse-n1` |
-| Graviton3 (`c7g`/`m7g`/`r7g`, `hpc7g`) | `0xd40` | Neoverse V1 | `-O3 -mcpu=neoverse-v1` |
-| Graviton4 (`c8g`/`m8g`/`r8g`/`x8g`) | `0xd4f` | Neoverse V2 | `-O3 -mcpu=neoverse-v2` |
-| Graviton5 (`c9g`/`m9g`) | `0xd84` | Neoverse V3 | `-O3 -mcpu=neoverse-v3` (gcc ≥ 13) |
+| Generation | `CPU part` | Microarchitecture | Flags | Upstream gcc |
+|------------|-----------|-------------------|-------|--------------|
+| Graviton2 (`c6g`/`m6g`/`r6g`) | `0xd0c` | Neoverse N1 | `-O3 -mcpu=neoverse-n1` | ≥ 9 |
+| Graviton3 (`c7g`/`m7g`/`r7g`, `hpc7g`) | `0xd40` | Neoverse V1 | `-O3 -mcpu=neoverse-v1` | ≥ 11 |
+| Graviton4 (`c8g`/`m8g`/`r8g`/`x8g`) | `0xd4f` | Neoverse V2 | `-O3 -mcpu=neoverse-v2` | ≥ 13 * |
+| Graviton5 (`c9g`/`m9g`) | `0xd84` | Neoverse V3 | `-O3 -mcpu=neoverse-v3` | ≥ 15 * |
 
 Build one binary per generation you plan to run on: `-mcpu=neoverse-v2` code
 does not run on Graviton2/3, and a generic build leaves SVE width and tuning
 on the table. The benchmark launcher picks the matching binary at run time
 from the same `CPU part` probe, so a mixed-generation fleet "just works".
 
-**Graviton5 notes.** `-mcpu=neoverse-v3` requires **gcc ≥ 13**, and the Amazon
-Linux 2023 system gcc is 11.x — so the default `dnf` toolchain cannot produce a
-native V3 binary. Stage a newer gcc and point the build at it:
+\* **On Amazon Linux 2023 the system compiler is enough.** Both
+`-mcpu=neoverse-v2` and `-mcpu=neoverse-v3` are back-ported into the gcc 11 that
+AL2023 ships, so a stock AL2023 node builds every target above natively — no
+newer gcc required, including for Graviton5. The upstream gcc versions are
+listed because they apply on other distributions. Source: the
+[AWS Graviton getting-started C/C++ guide](https://github.com/aws/aws-graviton-getting-started/blob/main/c-c%2B%2B.md).
+
+**Every target is probed, and falls back along the Neoverse line.** The build
+script asks the compiler whether it accepts each `-mcpu` value before using it,
+walking `neoverse-v3 → v2 → v1 → n1` until one is accepted. The ISA is backward
+compatible, so an older target produces correct code on newer silicon, just
+without the newer tuning — the same reasoning behind the AWS guide's advice to
+target the oldest generation you plan to deploy on. This matters on
+distributions without the AL2023 back-ports, where a vanilla gcc 11 rejects
+`neoverse-v2`: the probe turns what would otherwise be an obscure failure part
+way through the build into an explicit warning up front.
+
+Any fallback is recorded in `build-manifest.json` as `mcpu_fallback: true`, and
+because the resolved flags are part of the idempotence key, resubmitting later
+with a newer compiler rebuilds instead of silently reusing the fallback binary.
+To use a staged compiler:
 
 ```bash
 sudo dnf install -y gcc14 gcc14-c++ gcc14-gfortran
@@ -71,17 +89,9 @@ sbatch -p <c9g-partition> \
        Arm/build_qe_arm.sbatch
 ```
 
-Without that, the build script's `-mcpu` probe fails and it falls back to the
-`neoverse-v2` target, which runs correctly on Graviton5 but is not V3-tuned.
-The fallback is recorded in `build-manifest.json` as `mcpu_fallback: true`, and
-because the resolved flags are part of the idempotence key, resubmitting later
-with a capable compiler rebuilds instead of silently reusing the fallback
-binary.
-
 Configure-time feature probes (ELPA, MPI test programs) execute the code they
-compile, so **build the V3 binary on a Graviton5 node** (`c9g`/`m9g`), not on
-an older generation. Graviton5 availability is region-limited at the time of
-writing, so check your region.
+compile, so **build on the generation you intend to run on**. Graviton5
+availability is region-limited at the time of writing, so check your region.
 
 **`-ffast-math` is deliberately omitted.** QE is a DFT code: floating-point
 reassociation can break SCF convergence and perturb total energies. `-O3`
@@ -139,6 +149,7 @@ no x86 benchmark results are published in this directory.
 
 | CPU family | Instances | Toolchain | `OMPI_CC` / `OMPI_FC` | Flags | Math library |
 |------------|-----------|-----------|----------------------|-------|--------------|
+| AMD Zen 3 (Milan) | `c6a`/`m6a`/`r6a`, `hpc6a` | GCC | `gcc` / `gfortran` | `-O3 -march=znver3` | OpenBLAS + FFTW3 |
 | AMD Zen 4 (Genoa) | `c7a`/`m7a`/`r7a`, `hpc7a` | GCC | `gcc` / `gfortran` | `-O3 -march=znver4` | OpenBLAS + FFTW3 |
 | AMD Zen 4 (Genoa) | `c7a`/`m7a`/`r7a`, `hpc7a` | AOCC | `clang` / `flang` | `-O3 -march=znver4` | AOCL (BLIS + libFLAME) |
 | AMD Zen 5 (Turin) | `c8a`, `hpc8a` | GCC ≥ 14.1 | `gcc` / `gfortran` | `-O3 -march=znver5` | OpenBLAS + FFTW3 |
@@ -160,9 +171,31 @@ Key configuration details for these builds:
 - **LLVM-based compilers (AOCC, and ACfL on Graviton) need
   `--gcc-toolchain=<path>`** appended to both C and Fortran flags so they
   find libgcc/CRT objects on Amazon Linux 2023.
-- **Zen 5 / `-march=znver5` requires gcc ≥ 14.1.** A `znver4` binary runs
-  correctly on Zen 5 (AVX-512 is already emitted); `znver5` adds scheduling
-  for Zen 5's native 512-bit datapath.
+- **CPU family alone does not identify the microarchitecture on AMD.** Family 25
+  (`0x19`) covers **both Zen 3 and Zen 4**, and family 26 (`0x1a`) covers Zen 5
+  and Zen 6. Dispatching on family alone would hand Zen 3 silicon
+  (`c6a`/`m6a`/`r6a`/`hpc6a`, EPYC 7003 "Milan", family 25 **model 1**) an
+  AVX-512 `znver4` target: the build fails late with a misleading error, and a
+  `znver4` binary already present on shared storage `SIGILL`s at run time. Both
+  x86 scripts therefore dispatch on family **and** model, using the same ranges
+  GCC itself uses in `gcc/common/config/i386/cpuinfo.h`:
+
+  | Family | Model (decimal) | Target |
+  |--------|-----------------|--------|
+  | 25 | 0–15 | `znver3` |
+  | 25 | 16–31, 96–175 | `znver4` |
+  | 26 | 0–79, 96–119, 208–215 | `znver5` |
+
+  Anything outside these ranges — including Zen 6 family-26 models and Intel
+  models with no entry — exits with an explicit "unrecognised" error rather than
+  guessing a target.
+- **Minimum gcc per flag:** `znver3` 11, `znver4` 13, `znver5` 14.1,
+  `sapphirerapids` 11, `graniterapids` 14. `znver4` is back-ported into the
+  gcc 11 that Amazon Linux 2023 ships. As on Arm, each target is probed and
+  falls back one step along its line (`znver5 → znver4`,
+  `graniterapids → sapphirerapids`) with `march_fallback: true` recorded in the
+  manifest. A `znver4` binary runs correctly on Zen 5 because AVX-512 is already
+  emitted; `znver5` adds scheduling for Zen 5's native 512-bit datapath.
 - **Build on the target silicon.** Same rule as Graviton5: QE's dependency
   stack runs configure-time test programs, which SIGILL if you build a
   newer-ISA binary on an older node.
@@ -272,6 +305,10 @@ The launcher ([`Arm/qe-benchmark.sbatch`](Arm/qe-benchmark.sbatch)):
   benchmark repository on first run and caches them on the shared filesystem
 - puts the EFA Open MPI and libfabric directories on `PATH`/`LD_LIBRARY_PATH`,
   then checks `ldd pw.x` resolves cleanly before launching anything
+- refuses to run a `pw.x` with no `build-manifest.json` beside it. The build
+  writes that file only after the binary passes its startup-banner check, so
+  requiring it here means a half-installed binary cannot be benchmarked by
+  accident (override with `QE_SKIP_MANIFEST_CHECK=1`)
 - rewrites `outdir` to **node-local scratch** and sets `disk_io='none'`
   (see Runtime best practices below)
 - runs pure MPI, one rank per physical core, `srun --mpi=pmix
@@ -364,13 +401,14 @@ directory, and the distinction is worth stating precisely because Spack's
   Spack spec hash, so the V3 build coexists with the plain V2 one. Prebuilt
   binary libraries such as ArmPL are unaffected by the flag.
 
-[`Arm/build_qe_arm.sbatch`](Arm/build_qe_arm.sbatch) reaches the same codegen
-by a shorter route — it passes `-O3 -mcpu=neoverse-v3` straight to CMake — but
-only when it is given a compiler that supports the flag. With the Amazon Linux
-2023 system gcc (11.x) it falls back to `-mcpu=neoverse-v2` and records
-`mcpu_fallback: true`. See the
-[Graviton5 notes](#per-generation-optimization-flags) for how to stage gcc 14
-so the build matches what was measured.
+[`Arm/build_qe_arm.sbatch`](Arm/build_qe_arm.sbatch) reaches the same codegen by
+a shorter route: it passes `-O3 -mcpu=neoverse-v3` straight to CMake. On a stock
+Amazon Linux 2023 node the system gcc 11 accepts that flag, because
+`neoverse-v3` is back-ported there, so **no staged compiler is needed to
+reproduce these numbers on AL2023**. On a distribution without the back-ports
+the script probes, falls back along the Neoverse line, and records
+`mcpu_fallback: true` — see the
+[Graviton5 notes](#per-generation-optimization-flags).
 
 ---
 
@@ -412,6 +450,9 @@ all-to-alls leave the node.
    rather than fall back, so it is deliberately left unset there. An explicit
    `FI_PROVIDER` from the caller is always honoured. Single-node runs are
    unaffected either way; multi-node runs fall back to TCP without EFA.
+   Above 128 ranks per node -- which one rank per core reaches on any 192-core
+   instance -- `FI_EFA_SHM_AV_SIZE` is set to the rank count, matching the
+   other launchers in this repo.
 6. **`-npool` is the first QE-level knob to try.** AUSURF112's automatic grid
    reduces to 2 irreducible k-points (see above),
    so `-npool 2` halves the FFT communicator at the price of duplicating
@@ -432,20 +473,44 @@ all-to-alls leave the node.
 
 ---
 
+## Not yet here: the DynamoDB benchmark recorder
+
+Every other benchmarked application in this repository ships a contribution
+recorder at `apps/<App>/dynamodb/record-benchmark.sh`, and its launch scripts
+call it automatically after a successful solve — see
+[`apps/BENCHMARK-RECORDERS.md`](../BENCHMARK-RECORDERS.md). **Quantum ESPRESSO
+does not have one yet**, so QE runs contribute nothing to the shared benchmark
+dataset. This is a known gap, not an oversight in the launcher design.
+
+Wiring it up later is deliberately cheap, because the launchers already produce
+what the recorder contract needs:
+
+- the solver's exit status is preserved (`set -e` with an explicit `JOB DONE`
+  gate), so only successful solves would ever be recorded,
+- `WALL` is already an integer number of seconds, ready to pass as
+  `--time-to-solution`,
+- the run directory, instance type, rank count and `-npool` are all resolved and
+  logged in one place.
+
+Until then, treat the `build-manifest.json` written next to each `pw.x` as the
+provenance record for a build, and the printed result block as the record for a
+run. Note that "record" elsewhere in this document refers to that build
+manifest, not to the DynamoDB recorder.
+
 ## Files
 
 ### Arm ([`Arm/`](Arm/))
 
 | File | Description |
 |------|-------------|
-| `build_qe_arm.sbatch` | Build QE (`pw.x`, pure MPI) with GCC + EFA Open MPI + OpenBLAS/FFTW3. Auto-detects Graviton 2/3/4/5 and applies the matching `-mcpu` flags (V3 needs gcc ≥ 13, otherwise falls back to the V2 target and records `mcpu_fallback` in the manifest). Idempotent on (version, target, **flags**), so a fallback build is replaced once a capable compiler is staged; writes a provenance manifest; fails unless the binary prints its startup banner |
+| `build_qe_arm.sbatch` | Build QE (`pw.x`, pure MPI) with GCC + EFA Open MPI + OpenBLAS/FFTW3. Auto-detects Graviton 2/3/4/5 and probes the matching `-mcpu` flag, falling back along `v3 → v2 → v1 → n1` and recording `mcpu_fallback` in the manifest. Idempotent on (version, target, **flags**), so a fallback build is replaced once a capable compiler is staged; writes a provenance manifest; fails unless the binary prints its startup banner |
 | `qe-benchmark.sbatch` | Run the AUSURF112 SCF benchmark. Auto-selects the generation-matched `pw.x`, caches the input deck, keeps scratch node-local, pins ranks, requires the `JOB DONE` marker (not SCF convergence — see best practice 7), and reports wall times |
 
 ### x86 ([`x86/`](x86/))
 
 | File | Description |
 |------|-------------|
-| `build_qe_x86.sbatch` | Build QE (`pw.x`, pure MPI) with GCC + EFA Open MPI + OpenBLAS/FFTW3. Auto-detects AMD Zen 4/5 and Intel SPR/GNR and applies the matching `-march` flags (`znver5` needs gcc ≥ 14.1, `graniterapids` gcc ≥ 14; both fall back to the previous target, which runs correctly, and record `march_fallback`). Same flag-aware idempotence / banner-check / manifest machinery as the Arm build. **No x86 benchmark results are published in this directory** — this path provides the build recipe and launcher, not measured data |
+| `build_qe_x86.sbatch` | Build QE (`pw.x`, pure MPI) with GCC + EFA Open MPI + OpenBLAS/FFTW3. Detects AMD Zen 3/4/5 and Intel SPR/GNR from CPU **family and model** (see above) and probes the matching `-march` flag, falling back one step (`znver5 → znver4`, `graniterapids → sapphirerapids`) and recording `march_fallback`. Unrecognised silicon exits with an error rather than guessing. Same flag-aware idempotence / banner-check / manifest machinery as the Arm build. **No x86 benchmark results are published in this directory** — this path provides the build recipe and launcher, not measured data |
 | `qe-benchmark.sbatch` | Run the AUSURF112 SCF benchmark on AMD/Intel. Same methodology as the Arm launcher, plus SMT handling: one MPI rank per **physical** core derived from `lscpu` topology, pinned with `--threads-per-core=1 --cpu-bind=cores` so ranks are not packed onto sibling threads (Intel exposes 2 vCPUs/core; AMD and Graviton have no SMT, where the flag is a no-op) |
 
 ## Overrides
@@ -454,8 +519,9 @@ all-to-alls leave the node.
 |----------|---------|--------|-------------|
 | `QE_VERSION` | `7.5` | all | QE release tag (build) / installed version to select (benchmark) |
 | `BASE_DIR` | `/fsx/qe` | all | Shared-filesystem root for installs, benchmark cache, and run outputs |
-| `TARGET` | `auto` | build | Arm: `graviton2`–`graviton5`; x86: `znver4` / `znver5` / `sapphirerapids` / `graniterapids`; `auto` detects from `/proc/cpuinfo` |
+| `TARGET` | `auto` | build | Arm: `graviton2`–`graviton5`; x86: `znver3` / `znver4` / `znver5` / `sapphirerapids` / `graniterapids`; `auto` detects from `/proc/cpuinfo` |
 | `QE_CC` / `QE_CXX` / `QE_FC` | `gcc` / `g++` / `gfortran` | build | Compilers the MPI wrappers wrap. Point these at a staged newer gcc (e.g. `gcc-14`) to reach `-mcpu=neoverse-v3`, `-march=znver5`, or `-march=graniterapids` |
 | `QE_PW_PATH` | auto-discovered | benchmark | Absolute path to `pw.x` (skips CPU-based discovery) |
 | `NTASKS` | all physical cores | benchmark | MPI rank count (x86 launcher counts physical cores, not vCPUs) |
 | `NPOOL` | `1` | benchmark | k-point pools (`pw.x -npool`); must divide `NTASKS` |
+| `QE_SKIP_MANIFEST_CHECK` | `0` | benchmark | Set to `1` to run a `pw.x` that has no `build-manifest.json` beside it (i.e. one whose banner check never passed). Off by default so the build-time guarantee holds at run time |

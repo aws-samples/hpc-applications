@@ -15,6 +15,11 @@ enriches the dataset and improves those predictions.
 Recorders are available for: **Fluent, OpenFOAM, ANSYS Mechanical, CFX, LS-DYNA,
 OptiStruct, STAR-CCM+, WRF, GROMACS, OpenRadioss, LAMMPS**.
 
+> **Exception: Quantum ESPRESSO.** `apps/QuantumEspresso` does not ship a
+> recorder yet, and its launch scripts therefore do not call one. QE runs
+> contribute nothing to the dataset until that is added. See
+> [`apps/QuantumEspresso/README.md`](QuantumEspresso/README.md).
+
 ---
 
 ## Design principles
@@ -175,8 +180,8 @@ Either way nothing fails and you keep the JSON.
 ## Automatic recording (built into this repo's benchmark launch scripts)
 
 **You normally don't need to do anything.** Every benchmark launch script in
-this repository now calls its app's `record-benchmark.sh` automatically, right
-after the solve. Just run the benchmark as usual — and set `SOURCE=<YourOrg>`
+this repository — with the exception of Quantum ESPRESSO, noted above — calls
+its app's `record-benchmark.sh` automatically, right after the solve. Just run the benchmark as usual — and set `SOURCE=<YourOrg>`
 if you want your rows tagged. The built-in call is:
 
 - **Zero-argument.** The launch script exports what it already knows (instance

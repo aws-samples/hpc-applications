@@ -83,7 +83,7 @@ die() { log "ERROR: $*"; exit 1; }
 # flag -- which silently downgraded the target and defeated the idempotence
 # check on a node where gcc/jq were not preinstalled.
 # --------------------------------------------------------------------------- #
-sudo dnf install -y -q gcc gcc-gfortran make cmake \
+sudo dnf install -y -q gcc gcc-c++ gcc-gfortran make cmake \
     openblas-devel fftw-devel git wget xz tar jq
 
 for tool in "$QE_CC" "$QE_CXX" "$QE_FC" cmake jq; do
@@ -93,9 +93,32 @@ done
 log "compilers: CC=${QE_CC} ($("$QE_CC" --version | head -1)) FC=${QE_FC}"
 
 # --------------------------------------------------------------------------- #
-# Detect the CPU family. AMD: Zen 4 is family 25 (0x19), Zen 5 is family 26
-# (0x1a). Intel: Sapphire Rapids is family 6 model 143; Granite Rapids is
-# family 6 model 173/174.
+# Detect the CPU microarchitecture.
+#
+# CPU FAMILY ALONE IS NOT ENOUGH ON AMD. Family 25 (0x19) covers BOTH Zen 3
+# and Zen 4, so a family-only mapping sends Zen 3 silicon (c6a/m6a/r6a/hpc6a,
+# EPYC 7003 "Milan", family 25 model 1) down an AVX-512 znver4 path: the build
+# fails late with a misleading error, and any pre-existing znver4 binary on
+# shared storage SIGILLs at run time. Family 26 (0x1a) likewise covers Zen 5
+# and Zen 6.
+#
+# The model ranges below mirror GCC's own detection in
+# gcc/common/config/i386/cpuinfo.h, so this script classifies silicon exactly
+# the way the compiler does:
+#
+#   family 25 (0x19)  model 0-15    (0x00-0x0f)             -> znver3  (Zen 3)
+#                     model 16-31   (0x10-0x1f)             -> znver4  (Zen 4)
+#                     model 96-175  (0x60-0xaf)             -> znver4  (Zen 4)
+#   family 26 (0x1a)  model 0-79    (0x00-0x4f)             -> znver5  (Zen 5)
+#                     model 96-119  (0x60-0x77)             -> znver5  (Zen 5)
+#                     model 208-215 (0xd0-0xd7)             -> znver5  (Zen 5)
+#                     (other family 26 models are Zen 6; not supported here)
+#
+# Intel: family 6 model 143 (0x8f) = Sapphire Rapids; models 173/174
+# (0xad/0xae) = Granite Rapids / Granite Rapids-D.
+#
+# Anything not matched dies with an honest "unrecognised" error rather than
+# guessing a target.
 # --------------------------------------------------------------------------- #
 gcc_knows() { "$QE_CC" "-march=$1" -E -x c /dev/null >/dev/null 2>&1; }
 
@@ -103,43 +126,73 @@ if [[ "$TARGET" == auto ]]; then
     vendor=$(awk -F': ' '/vendor_id/{print $2; exit}' /proc/cpuinfo)
     family=$(awk -F': ' '/cpu family/{print $2; exit}' /proc/cpuinfo)
     model=$(awk -F': ' '/^model[^ ]*[[:space:]]*:/{print $2; exit}' /proc/cpuinfo)
+    [[ "$family" =~ ^[0-9]+$ && "$model" =~ ^[0-9]+$ ]] \
+        || die "could not parse CPU family/model from /proc/cpuinfo (family='${family}' model='${model}'); set TARGET explicitly"
+    log "cpu: vendor=${vendor} family=${family} model=${model}"
     case "$vendor" in
         AuthenticAMD)
             case "$family" in
-                25) TARGET=znver4 ;;
-                26) TARGET=znver5 ;;
+                25)
+                    if   (( model <= 15 ));                        then TARGET=znver3
+                    elif (( model >= 16  && model <= 31 ));        then TARGET=znver4
+                    elif (( model >= 96  && model <= 175 ));       then TARGET=znver4
+                    else die "unrecognised AMD family 25 model '${model}'; set TARGET explicitly"
+                    fi ;;
+                26)
+                    if   (( model <= 79 ));                        then TARGET=znver5
+                    elif (( model >= 96  && model <= 119 ));       then TARGET=znver5
+                    elif (( model >= 208 && model <= 215 ));       then TARGET=znver5
+                    else die "AMD family 26 model '${model}' is Zen 6, which this script has no validated target for; set TARGET explicitly"
+                    fi ;;
                 *) die "unrecognised AMD family '$family'; set TARGET explicitly" ;;
             esac ;;
         GenuineIntel)
+            [[ "$family" == 6 ]] \
+                || die "unrecognised Intel family '$family'; set TARGET explicitly"
             case "$model" in
                 143)     TARGET=sapphirerapids ;;
                 173|174) TARGET=graniterapids ;;
-                *) die "unrecognised Intel model '$model'; set TARGET explicitly" ;;
+                *) die "unrecognised Intel family 6 model '$model'; set TARGET explicitly" ;;
             esac ;;
         *) die "unrecognised vendor '$vendor'" ;;
     esac
 fi
 
+# Resolve TARGET to an -march value the compiler actually accepts.
+#
+# Each target has a short fallback chain: the ISA is backward compatible, so a
+# binary built for an older core in the same line runs correctly on the newer
+# one, just without the newer tuning. Minimum gcc for each flag:
+#   znver3 gcc 11 | znver4 gcc 13 (backported into Amazon Linux 2023's gcc 11)
+#   znver5 gcc 14.1 | sapphirerapids gcc 11 | graniterapids gcc 14
+# Probing rather than assuming means a too-old compiler produces an honest
+# warning here instead of an obscure failure part-way through the build.
 MARCH_FALLBACK=false
 case "$TARGET" in
-    znver4)         OPT="-O3 -march=znver4" ;;
-    znver5)
-        # -march=znver5 needs gcc >= 14.1; a znver4 binary runs correctly on
-        # Zen 5 (AVX-512 is already emitted) so fall back rather than fail.
-        if gcc_knows znver5; then OPT="-O3 -march=znver5"
-        else
-            log "WARNING: ${QE_CC} lacks -march=znver5 (needs gcc>=14.1); building the znver4 target, which runs correctly on Zen 5 but is not Zen 5-tuned. Pass QE_CC/QE_CXX/QE_FC pointing at gcc>=14.1 for a native build."
-            OPT="-O3 -march=znver4"; TARGET=znver4; MARCH_FALLBACK=true
-        fi ;;
-    sapphirerapids) OPT="-O3 -march=sapphirerapids" ;;
-    graniterapids)
-        if gcc_knows graniterapids; then OPT="-O3 -march=graniterapids"
-        else
-            log "WARNING: ${QE_CC} lacks -march=graniterapids (needs gcc>=14); building the sapphirerapids target, which runs correctly on Granite Rapids but is not GNR-tuned. Pass QE_CC/QE_CXX/QE_FC pointing at gcc>=14 for a native build."
-            OPT="-O3 -march=sapphirerapids"; TARGET=sapphirerapids; MARCH_FALLBACK=true
-        fi ;;
+    znver3)         MARCH_CHAIN=(znver3) ;;
+    znver4)         MARCH_CHAIN=(znver4 znver3) ;;
+    znver5)         MARCH_CHAIN=(znver5 znver4) ;;
+    sapphirerapids) MARCH_CHAIN=(sapphirerapids) ;;
+    graniterapids)  MARCH_CHAIN=(graniterapids sapphirerapids) ;;
     *) die "unknown TARGET '$TARGET'" ;;
 esac
+
+MARCH=""
+for m in "${MARCH_CHAIN[@]}"; do
+    if gcc_knows "$m"; then MARCH="$m"; break; fi
+    log "WARNING: ${QE_CC} does not accept -march=${m}"
+    MARCH_FALLBACK=true
+done
+[[ -n "$MARCH" ]] \
+    || die "${QE_CC} accepts none of: ${MARCH_CHAIN[*]}. Stage a newer gcc and pass QE_CC/QE_CXX/QE_FC (see header)."
+if [[ "$MARCH" != "${MARCH_CHAIN[0]}" ]]; then
+    log "WARNING: building the ${MARCH} target for ${TARGET} silicon. The code is correct but not ${MARCH_CHAIN[0]}-tuned; pass QE_CC/QE_CXX/QE_FC pointing at a newer gcc for a native build."
+fi
+OPT="-O3 -march=${MARCH}"
+# NOTE: TARGET is deliberately NOT reassigned on fallback. The install prefix
+# names the silicon it is for, so a fallback build cannot overwrite the
+# manifest of a genuine build for the older target. The actual flags and the
+# march_fallback flag in build-manifest.json record what was really compiled.
 log "target=${TARGET} flags='${OPT}' qe=${QE_VERSION} march_fallback=${MARCH_FALLBACK}"
 
 PREFIX="${BASE_DIR}/${QE_VERSION}/gcc-${TARGET}"
@@ -207,6 +260,12 @@ cmake -B build -S . \
     -DCMAKE_Fortran_FLAGS="${OPT}"
 log "cmake build (-j $(nproc))"
 cmake --build build -j "$(nproc)"
+# Drop any manifest from a previous build BEFORE overwriting the binary.
+# cmake --install replaces pw.x in place; if this build then fails its
+# banner check, an old manifest left in place would sit next to a new,
+# unverified binary -- exactly the state the banner check exists to
+# prevent, and one the launchers now trust.
+rm -f "${PREFIX}/build-manifest.json"
 log "cmake install -> ${PREFIX}"
 cmake --install build
 

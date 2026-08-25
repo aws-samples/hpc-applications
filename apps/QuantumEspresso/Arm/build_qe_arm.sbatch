@@ -13,11 +13,18 @@
 # and compiles QE with the matching -mcpu target, through the EFA-bundled
 # Open MPI compiler wrappers, against system OpenBLAS + FFTW3.
 #
-#   Graviton2 (Neoverse N1, 0xd0c) -> -O3 -mcpu=neoverse-n1
-#   Graviton3 (Neoverse V1, 0xd40) -> -O3 -mcpu=neoverse-v1
-#   Graviton4 (Neoverse V2, 0xd4f) -> -O3 -mcpu=neoverse-v2
-#   Graviton5 (Neoverse V3, 0xd84) -> -O3 -mcpu=neoverse-v3 (needs gcc >= 13;
-#                                     falls back to neoverse-v2 on older gcc)
+#   Graviton2 (Neoverse N1, 0xd0c) -> -O3 -mcpu=neoverse-n1   (gcc >= 9)
+#   Graviton3 (Neoverse V1, 0xd40) -> -O3 -mcpu=neoverse-v1   (gcc >= 11)
+#   Graviton4 (Neoverse V2, 0xd4f) -> -O3 -mcpu=neoverse-v2   (gcc >= 13 *)
+#   Graviton5 (Neoverse V3, 0xd84) -> -O3 -mcpu=neoverse-v3   (gcc >= 15 *)
+#
+# * Both neoverse-v2 and neoverse-v3 are back-ported into the gcc 11 that
+#   Amazon Linux 2023 ships, so on a stock AL2023 node the system compiler
+#   builds every target above natively -- no newer gcc needed. The upstream
+#   gcc versions are listed because they apply on other distributions, where
+#   the script probes each flag and falls back along the Neoverse line
+#   (v3 -> v2 -> v1 -> n1) rather than failing deep inside cmake.
+#   Reference: https://github.com/aws/aws-graviton-getting-started/blob/main/c-c%2B%2B.md
 #
 # NOTE: -ffast-math is deliberately NOT used. QE is a DFT code; floating-
 # point reassociation can break SCF convergence and perturb total energies.
@@ -33,24 +40,23 @@
 #                compilers the MPI wrappers should wrap
 #                (defaults: gcc / g++ / gfortran)
 #
-# Graviton5 note: -mcpu=neoverse-v3 needs gcc >= 13, and the Amazon Linux
-# 2023 system gcc is 11.x. To get a NATIVE V3 binary, stage a newer gcc and
-# point this script at it, e.g.
+# On a distribution whose gcc does not carry the AL2023 back-ports, stage a
+# newer gcc and point this script at it, e.g.
 #
 #   sudo dnf install -y gcc14 gcc14-c++ gcc14-gfortran
 #   sbatch -p <c9g-partition> --export=ALL,QE_CC=gcc-14,QE_CXX=g++-14,QE_FC=gfortran-14 \
 #          Arm/build_qe_arm.sbatch
 #
-# Without that, the -mcpu probe below fails and the build falls back to the
-# neoverse-v2 target (correct code on Graviton5, just not V3-tuned). The
-# fallback is recorded in build-manifest.json (mcpu_fallback=true) and the
-# resolved flags are part of the idempotence key, so a later resubmission
-# with a capable gcc rebuilds rather than silently reusing the fallback.
+# Otherwise the build falls back to the newest target the compiler does accept
+# (correct code, just less tuned). Any fallback is recorded in
+# build-manifest.json as mcpu_fallback=true, and the resolved flags are part of
+# the idempotence key, so a later resubmission with a capable gcc rebuilds
+# rather than silently reusing the fallback.
 #
 # The binary installs to ${BASE_DIR}/<qe-version>/gcc-<target>/bin/pw.x and
 # a build-manifest.json (compiler, flags, MPI, SHA-256 provenance) is written
 # next to it. The build is idempotent: re-submitting with an identical
-# (version, target) is a fast no-op.
+# (version, target, resolved flags) is a fast no-op.
 
 set -euo pipefail
 
@@ -78,7 +84,7 @@ die() { log "ERROR: $*"; exit 1; }
 # flag -- which silently downgraded the Graviton5 target and defeated the
 # idempotence check on a node where gcc/jq were not preinstalled.
 # --------------------------------------------------------------------------- #
-sudo dnf install -y -q gcc gcc-gfortran make cmake \
+sudo dnf install -y -q gcc gcc-c++ gcc-gfortran make cmake \
     openblas-devel fftw-devel git wget xz tar jq
 
 for tool in "$QE_CC" "$QE_CXX" "$QE_FC" cmake jq; do
@@ -103,26 +109,47 @@ fi
 # True when $QE_CC accepts the given -mcpu target.
 cc_knows_mcpu() { "$QE_CC" "-mcpu=$1" -E -x c /dev/null >/dev/null 2>&1; }
 
+# Resolve TARGET to an -mcpu value the compiler actually accepts.
+#
+# Each target has a fallback chain running newest-first. The Neoverse ISA is
+# backward compatible, so code built for an older core in the line runs
+# correctly on a newer one, just without the newer tuning -- which is also why
+# the AWS Graviton guide advises targeting the oldest generation you plan to
+# deploy on. Minimum upstream gcc per flag (per that guide):
+#
+#   neoverse-n1  gcc 9    neoverse-v1  gcc 11
+#   neoverse-v2  gcc 13   neoverse-v3  gcc 15
+#
+# BUT both neoverse-v2 and neoverse-v3 are back-ported into the gcc 11 shipped
+# with Amazon Linux 2023, so on a stock AL2023 node every target below resolves
+# natively on the system compiler. The probe matters on other distributions,
+# where a vanilla gcc 11 rejects v2/v3 -- without it, the flag would be handed
+# to cmake and the build would die much later with an obscure error.
 MCPU_FALLBACK=false
 case "$TARGET" in
-    graviton2) OPT="-O3 -mcpu=neoverse-n1" ;;
-    graviton3) OPT="-O3 -mcpu=neoverse-v1" ;;
-    graviton4) OPT="-O3 -mcpu=neoverse-v2" ;;
-    graviton5)
-        # -mcpu=neoverse-v3 needs gcc >= 13; AL2023's system gcc is 11.x.
-        # Fall back to the V2 target (correct code on Graviton5, still SVE-
-        # vectorised, just not V3-tuned). For a native V3 build, stage a
-        # newer gcc and pass QE_CC/QE_CXX/QE_FC (see header).
-        if cc_knows_mcpu neoverse-v3; then
-            OPT="-O3 -mcpu=neoverse-v3"
-        else
-            log "WARNING: ${QE_CC} lacks -mcpu=neoverse-v3 (needs gcc>=13); building the neoverse-v2 target, which runs correctly on Graviton5 but is not V3-tuned. Pass QE_CC/QE_CXX/QE_FC pointing at gcc>=13 for a native build."
-            OPT="-O3 -mcpu=neoverse-v2"
-            MCPU_FALLBACK=true
-        fi
-        ;;
+    graviton2) MCPU_CHAIN=(neoverse-n1) ;;
+    graviton3) MCPU_CHAIN=(neoverse-v1 neoverse-n1) ;;
+    graviton4) MCPU_CHAIN=(neoverse-v2 neoverse-v1 neoverse-n1) ;;
+    graviton5) MCPU_CHAIN=(neoverse-v3 neoverse-v2 neoverse-v1 neoverse-n1) ;;
     *) die "unknown TARGET '$TARGET'" ;;
 esac
+
+MCPU=""
+for c in "${MCPU_CHAIN[@]}"; do
+    if cc_knows_mcpu "$c"; then MCPU="$c"; break; fi
+    log "WARNING: ${QE_CC} does not accept -mcpu=${c}"
+    MCPU_FALLBACK=true
+done
+[[ -n "$MCPU" ]] \
+    || die "${QE_CC} accepts none of: ${MCPU_CHAIN[*]}. Stage a newer gcc and pass QE_CC/QE_CXX/QE_FC (see header)."
+if [[ "$MCPU" != "${MCPU_CHAIN[0]}" ]]; then
+    log "WARNING: building the ${MCPU} target for ${TARGET} silicon. The code is correct but not ${MCPU_CHAIN[0]}-tuned; pass QE_CC/QE_CXX/QE_FC pointing at a newer gcc for a native build."
+fi
+OPT="-O3 -mcpu=${MCPU}"
+# NOTE: TARGET is deliberately NOT reassigned on fallback. The install prefix
+# names the silicon it is for, so a fallback build cannot overwrite the
+# manifest of a genuine build for the older target. The actual flags and the
+# mcpu_fallback flag in build-manifest.json record what was really compiled.
 log "target=${TARGET} flags='${OPT}' qe=${QE_VERSION} mcpu_fallback=${MCPU_FALLBACK}"
 
 PREFIX="${BASE_DIR}/${QE_VERSION}/gcc-${TARGET}"
@@ -198,6 +225,12 @@ cmake -B build -S . \
     -DCMAKE_Fortran_FLAGS="${OPT}"
 log "cmake build (-j $(nproc))"
 cmake --build build -j "$(nproc)"
+# Drop any manifest from a previous build BEFORE overwriting the binary.
+# cmake --install replaces pw.x in place; if this build then fails its
+# banner check, an old manifest left in place would sit next to a new,
+# unverified binary -- exactly the state the banner check exists to
+# prevent, and one the launchers now trust.
+rm -f "${PREFIX}/build-manifest.json"
 log "cmake install -> ${PREFIX}"
 cmake --install build
 

@@ -79,18 +79,39 @@ if [[ -z "${QE_PW_PATH:-}" ]]; then
     vendor=$(awk -F': ' '/vendor_id/{print $2; exit}' /proc/cpuinfo)
     family=$(awk -F': ' '/cpu family/{print $2; exit}' /proc/cpuinfo)
     model=$(awk -F': ' '/^model[^ ]*[[:space:]]*:/{print $2; exit}' /proc/cpuinfo)
+    [[ "$family" =~ ^[0-9]+$ && "$model" =~ ^[0-9]+$ ]] \
+        || die "could not parse CPU family/model from /proc/cpuinfo (family='${family}' model='${model}'); set QE_PW_PATH explicitly"
+    log "cpu: vendor=${vendor} family=${family} model=${model}"
+    # Model ranges mirror build_qe_x86.sbatch (and GCC's own detection in
+    # gcc/common/config/i386/cpuinfo.h). Family 25 covers BOTH Zen 3 and Zen 4,
+    # so dispatching on family alone would hand a Zen 3 node (c6a/m6a/r6a/hpc6a
+    # "Milan", family 25 model 1) an AVX-512 znver4 binary that SIGILLs on the
+    # first vector instruction. Candidate lists run newest-first; an older
+    # in-line target is ISA-compatible, so it is a valid second choice.
     case "$vendor" in
         AuthenticAMD)
             case "$family" in
-                25) candidates=(znver4) ;;
-                26) candidates=(znver5 znver4) ;;          # znver4 runs on Zen 5
+                25)
+                    if   (( model <= 15 ));                  then candidates=(znver3)
+                    elif (( model >= 16  && model <= 31 ));  then candidates=(znver4 znver3)
+                    elif (( model >= 96  && model <= 175 )); then candidates=(znver4 znver3)
+                    else die "unrecognised AMD family 25 model '${model}'; set QE_PW_PATH explicitly"
+                    fi ;;
+                26)
+                    if   (( model <= 79 ));                  then candidates=(znver5 znver4 znver3)
+                    elif (( model >= 96  && model <= 119 )); then candidates=(znver5 znver4 znver3)
+                    elif (( model >= 208 && model <= 215 )); then candidates=(znver5 znver4 znver3)
+                    else die "AMD family 26 model '${model}' is Zen 6, which this launcher has no validated target for; set QE_PW_PATH explicitly"
+                    fi ;;
                 *) die "unrecognised AMD family '$family'; set QE_PW_PATH explicitly" ;;
             esac ;;
         GenuineIntel)
+            [[ "$family" == 6 ]] \
+                || die "unrecognised Intel family '$family'; set QE_PW_PATH explicitly"
             case "$model" in
                 143)     candidates=(sapphirerapids) ;;
                 173|174) candidates=(graniterapids sapphirerapids) ;;  # SPR build runs on GNR
-                *) die "unrecognised Intel model '$model'; set QE_PW_PATH explicitly" ;;
+                *) die "unrecognised Intel family 6 model '$model'; set QE_PW_PATH explicitly" ;;
             esac ;;
         *) die "unrecognised vendor '$vendor'" ;;
     esac
@@ -103,7 +124,23 @@ if [[ -z "${QE_PW_PATH:-}" ]]; then
 fi
 [[ -n "${QE_PW_PATH:-}" && -x "$QE_PW_PATH" ]] \
     || die "pw.x not found under ${BASE_DIR}/${QE_VERSION}/ for this CPU; run x86/build_qe_x86.sbatch first"
+
+# Require the build manifest next to the binary. The build script writes it
+# only AFTER pw.x passes its startup-banner check, so its presence is the
+# build's own attestation that the binary ran at least once. Without this
+# check, an install whose banner check failed -- binary present, manifest
+# deliberately absent -- would be benchmarked anyway.
+QE_MANIFEST="$(dirname "$(dirname "$QE_PW_PATH")")/build-manifest.json"
+if [[ "${QE_SKIP_MANIFEST_CHECK:-0}" == 1 ]]; then
+    log "WARNING: QE_SKIP_MANIFEST_CHECK=1 -- not requiring build-manifest.json beside pw.x"
+else
+    [[ -f "$QE_MANIFEST" ]] \
+        || die "no build-manifest.json beside ${QE_PW_PATH}. The build never passed its banner check, or the install is incomplete; rebuild with x86/build_qe_x86.sbatch. Set QE_SKIP_MANIFEST_CHECK=1 to run anyway."
+fi
 log "pw.x = ${QE_PW_PATH}"
+if [[ -f "$QE_MANIFEST" ]] && command -v jq >/dev/null 2>&1; then
+    log "build: $(jq -r '"target=\(.target) flags=\"\(.opt_flags)\" march_fallback=\(.march_fallback // "n/a") qe=\(.qe_version)"' "$QE_MANIFEST" 2>/dev/null || echo 'manifest unreadable')"
+fi
 
 # An executable bit is not enough: pw.x dynamically links FFTW3/OpenBLAS and
 # the EFA Open MPI. The build node had all of them; a fresh compute node may
@@ -132,41 +169,6 @@ for f in ausurf.in Au.pbe-nd-van.UPF; do
 done
 
 # --------------------------------------------------------------------------- #
-# Stage the run: results on shared storage, QE scratch on node-local /tmp.
-# --------------------------------------------------------------------------- #
-RUN_DIR="${BASE_DIR}/Run/${BENCH}-${SLURM_JOB_ID:-manual-$$}"
-[[ ! -e "${RUN_DIR}" ]] || die "run dir ${RUN_DIR} already exists; refusing to overwrite"
-mkdir -p "${RUN_DIR}"
-cd "${RUN_DIR}"
-SCRATCH=/tmp/qe-scratch-${SLURM_JOB_ID:-$$}
-mkdir -p "${SCRATCH}"
-
-sed -e "s|pseudo_dir *=.*|pseudo_dir = '${BENCH_DIR}'|" \
-    -e "s|outdir *=.*|outdir = '${SCRATCH}'|" \
-    -e "s|disk_io *=.*|disk_io = 'none'|" \
-    "${BENCH_DIR}/ausurf.in" > ausurf.in
-grep -q "disk_io" ausurf.in || sed -i "/&CONTROL/a\\  disk_io = 'none'" ausurf.in
-
-# --------------------------------------------------------------------------- #
-# Node preparation: EFA provider, fork safety, THP, page cache.
-# --------------------------------------------------------------------------- #
-export FI_EFA_FORK_SAFE=1
-if fi_info -p efa >/dev/null 2>&1; then
-    export FI_PROVIDER="${FI_PROVIDER:-efa}"
-    log "EFA libfabric provider present (FI_PROVIDER=${FI_PROVIDER})"
-elif [[ -n "${FI_PROVIDER:-}" ]]; then
-    log "WARNING: fi_info reports no EFA provider, but FI_PROVIDER=${FI_PROVIDER} was set explicitly; honouring it"
-else
-    # Deliberately leave FI_PROVIDER unset: pinning it to 'efa' on a node with
-    # no EFA device makes libfabric fail to find a provider instead of falling
-    # back. Single-node runs are unaffected either way.
-    log "WARNING: EFA provider not found; leaving FI_PROVIDER unset so libfabric can pick a fallback. Single-node runs are unaffected; multi-node runs will use TCP"
-fi
-
-echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled >/dev/null 2>&1 || true
-sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true
-
-# --------------------------------------------------------------------------- #
 # Rank layout: one MPI rank per PHYSICAL core (not per vCPU/hyper-thread).
 # --------------------------------------------------------------------------- #
 # Unique physical-core IDs from lscpu topology (counts cores once even
@@ -188,6 +190,70 @@ fi
 log "layout: ${NTASKS} MPI ranks x 1 thread on ${PHYS_CORES} physical cores ($(nproc) vCPUs, ${THREADS_PER_CORE} thread(s)/core), npool=${NPOOL}, --threads-per-core=1 --cpu-bind=cores"
 
 # --------------------------------------------------------------------------- #
+# Stage the run: results on shared storage, QE scratch on node-local /tmp.
+# --------------------------------------------------------------------------- #
+# Instance type for the run-directory name (matches the other apps in this repo).
+IMDS_TOKEN=$(curl -fsSL --max-time 3 -X PUT \
+    -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
+    http://169.254.169.254/latest/api/token 2>/dev/null || true)
+INSTANCE_TYPE=$(curl -fsSL --max-time 3 \
+    -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" \
+    http://169.254.169.254/latest/meta-data/instance-type 2>/dev/null || echo unknown)
+
+# Run-directory layout follows the other apps here:
+#   <base>/Run/<jobname>/<cluster>/<jobid>-<nodes>x<instance>-<ntasks>-<date>
+# The ${SLURM_RESTART_COUNT} suffix matters on Spot: a requeued job keeps its
+# JobId, so a bare jobid-keyed collision guard would refuse to start the very
+# retry the scheduler just granted.
+RUN_TAG="${SLURM_JOB_ID:-manual-$$}"
+[[ "${SLURM_RESTART_COUNT:-0}" == 0 ]] || RUN_TAG="${RUN_TAG}r${SLURM_RESTART_COUNT}"
+RUN_DIR="${BASE_DIR}/Run/${SLURM_JOB_NAME:-${BENCH}}/${SLURM_CLUSTER_NAME:-cluster}/${RUN_TAG}-${SLURM_JOB_NUM_NODES:-1}x${INSTANCE_TYPE}-${NTASKS}-$(date '+%d-%m-%Y-%H-%M')"
+[[ ! -e "${RUN_DIR}" ]] || die "run dir ${RUN_DIR} already exists; refusing to overwrite"
+mkdir -p "${RUN_DIR}"
+cd "${RUN_DIR}"
+# Keep a copy of the launch script beside its results (repo convention).
+cp "$0" . 2>/dev/null || true
+
+# Node-local QE scratch, removed on ANY exit (including failure) rather than
+# only on the success path.
+SCRATCH=/tmp/qe-scratch-${SLURM_JOB_ID:-$$}.${SLURM_RESTART_COUNT:-0}
+mkdir -p "${SCRATCH}"
+trap 'rm -rf "${SCRATCH}"' EXIT
+
+sed -e "s|pseudo_dir *=.*|pseudo_dir = '${BENCH_DIR}'|" \
+    -e "s|outdir *=.*|outdir = '${SCRATCH}'|" \
+    -e "s|disk_io *=.*|disk_io = 'none'|" \
+    "${BENCH_DIR}/ausurf.in" > ausurf.in
+grep -q "disk_io" ausurf.in || sed -i "/&CONTROL/a\\  disk_io = 'none'" ausurf.in
+
+# --------------------------------------------------------------------------- #
+# Node preparation: EFA provider, fork safety, THP, page cache.
+# --------------------------------------------------------------------------- #
+export FI_EFA_FORK_SAFE=1
+# libfabric's shared-memory address-vector must be sized for the rank count
+# when there are more than 128 ranks on a node -- which one-rank-per-core hits
+# on any 192-core instance (hpc7a/hpc8a, c8g/m8g/r8g.48xlarge, c9g.48xlarge).
+# Same guard the Fluent launchers in this repo use.
+if (( ${NTASKS:-0} > 128 )); then
+    export FI_EFA_SHM_AV_SIZE="${NTASKS}"
+    log "FI_EFA_SHM_AV_SIZE=${FI_EFA_SHM_AV_SIZE} (>128 ranks/node)"
+fi
+if fi_info -p efa >/dev/null 2>&1; then
+    export FI_PROVIDER="${FI_PROVIDER:-efa}"
+    log "EFA libfabric provider present (FI_PROVIDER=${FI_PROVIDER})"
+elif [[ -n "${FI_PROVIDER:-}" ]]; then
+    log "WARNING: fi_info reports no EFA provider, but FI_PROVIDER=${FI_PROVIDER} was set explicitly; honouring it"
+else
+    # Deliberately leave FI_PROVIDER unset: pinning it to 'efa' on a node with
+    # no EFA device makes libfabric fail to find a provider instead of falling
+    # back. Single-node runs are unaffected either way.
+    log "WARNING: EFA provider not found; leaving FI_PROVIDER unset so libfabric can pick a fallback. Single-node runs are unaffected; multi-node runs will use TCP"
+fi
+
+echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled >/dev/null 2>&1 || true
+sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true
+
+# --------------------------------------------------------------------------- #
 # Run.
 # --------------------------------------------------------------------------- #
 START=$(date +%s)
@@ -196,6 +262,13 @@ srun --mpi=pmix --ntasks="${NTASKS}" --cpus-per-task=1 \
     "${QE_PW_PATH}" -npool "${NPOOL}" -inp ausurf.in \
     > ausurf.out 2> ausurf.err
 WALL=$(( $(date +%s) - START ))
+
+# Other launchers in this repo tee the solver log to output.$SLURM_JOBID.out.
+# Piping srun through tee here would put tee in the pipeline's exit path and
+# merge the stderr stream that the JOB DONE / PWSCF-timer parsing below keeps
+# separate, so the run redirects instead and the conventional name is provided
+# as a link to the same bytes.
+ln -sf ausurf.out "output.${SLURM_JOB_ID:-manual}.out" 2>/dev/null || true
 
 # --------------------------------------------------------------------------- #
 # Results: require the final JOB DONE marker, then report QE's own PWSCF
@@ -216,11 +289,10 @@ PWSCF_WALL=$(grep -E "^ *PWSCF *:" ausurf.out | tail -1 | sed -E 's/.*CPU *//; s
 echo "==================== QE BENCHMARK RESULT ===================="
 echo " benchmark        : ${BENCH} (112-atom Au surface, SCF)"
 echo " pw.x             : ${QE_PW_PATH}"
-echo " instance         : $(curl -fsSL --max-time 3 -H "X-aws-ec2-metadata-token: $(curl -fsSL --max-time 3 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token 2>/dev/null)" http://169.254.169.254/latest/meta-data/instance-type 2>/dev/null || echo unknown)"
+echo " instance         : ${INSTANCE_TYPE}"   # resolved once, at run-dir staging
 echo " ranks x threads  : ${NTASKS} x 1 (npool=${NPOOL})"
 echo " job wall (s)     : ${WALL}"
 echo " PWSCF wall       : ${PWSCF_WALL:-unavailable}"
 echo " output           : ${RUN_DIR}/ausurf.out"
 echo "=============================================================="
 
-rm -rf "${SCRATCH}"
