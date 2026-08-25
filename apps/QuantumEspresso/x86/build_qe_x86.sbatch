@@ -1,0 +1,309 @@
+#!/usr/bin/env bash
+#SBATCH --job-name=build-qe-x86
+#SBATCH --nodes=1
+#SBATCH --exclusive
+#SBATCH --time=02:00:00
+#SBATCH --output=build-qe-x86-%j.out
+#SBATCH --error=build-qe-x86-%j.err
+#
+# build_qe_x86.sbatch: build an architecture-tuned Quantum ESPRESSO (pw.x)
+# for x86_64 (AMD + Intel) on an AWS PCS (Slurm) cluster.
+#
+# Auto-detects the CPU family from /proc/cpuinfo and compiles QE with the
+# matching -march target, through the EFA-bundled Open MPI compiler
+# wrappers, against system OpenBLAS + FFTW3:
+#
+#   AMD Zen 4 (Genoa, c7a/m7a/r7a/hpc7a)   -> -O3 -march=znver4
+#   AMD Zen 5 (Turin, c8a/hpc8a)           -> -O3 -march=znver5 (gcc >= 14.1;
+#                                             falls back to znver4)
+#   Intel Sapphire Rapids (c7i/m7i/r7i)    -> -O3 -march=sapphirerapids
+#   Intel Granite Rapids (c8i)             -> -O3 -march=graniterapids
+#                                             (gcc >= 14; falls back to
+#                                             sapphirerapids)
+#
+# NOTE: -ffast-math is deliberately NOT used. QE is a DFT code; floating-
+# point reassociation can break SCF convergence and perturb total energies.
+#
+# Vendor-toolchain variants (AOCC + AOCL on AMD, oneAPI + MKL on Intel) are
+# documented in the README; they need EULA-gated installers staged by an
+# operator and cannot be auto-fetched here. This script builds the GCC
+# reference, which is reproducible on a stock AL2023 PCS AMI.
+#
+# Usage (on an x86 partition of your PCS cluster):
+#   sbatch -p <x86-partition> x86/build_qe_x86.sbatch
+#
+# Overrides via --export=ALL,VAR=value:
+#   QE_VERSION   QE release tag to build          (default: 7.5)
+#   BASE_DIR     shared-filesystem install root   (default: /fsx/qe)
+#   TARGET       znver4|znver5|sapphirerapids|graniterapids|auto (default: auto)
+#   QE_CC/QE_CXX/QE_FC
+#                compilers the MPI wrappers should wrap
+#                (defaults: gcc / g++ / gfortran)
+#
+# znver5 needs gcc >= 14.1 and graniterapids needs gcc >= 14; the Amazon Linux
+# 2023 system gcc is 11.x. To target the newest silicon natively, stage a newer
+# gcc and point this script at it, e.g.
+#
+#   sudo dnf install -y gcc14 gcc14-c++ gcc14-gfortran
+#   sbatch -p <c8a-partition> --export=ALL,QE_CC=gcc-14,QE_CXX=g++-14,QE_FC=gfortran-14 \
+#          x86/build_qe_x86.sbatch
+#
+# Otherwise the -march probe falls back to the previous target (correct code,
+# just not tuned for the newer core). The fallback is recorded in
+# build-manifest.json (march_fallback=true) and the resolved flags are part of
+# the idempotence key, so a later resubmission with a capable gcc rebuilds
+# rather than silently reusing the fallback.
+#
+# Installs to ${BASE_DIR}/<qe-version>/gcc-<target>/bin/pw.x with a
+# build-manifest.json provenance record. Idempotent.
+
+set -euo pipefail
+
+QE_VERSION="${QE_VERSION:-7.5}"
+BASE_DIR="${BASE_DIR:-/fsx/qe}"
+TARGET="${TARGET:-auto}"
+# Compilers the MPI wrappers will wrap. Overridable so a staged newer gcc
+# (e.g. gcc-14 for -march=znver5 / -march=graniterapids) can be used without
+# editing this script.
+QE_CC="${QE_CC:-gcc}"
+QE_CXX="${QE_CXX:-g++}"
+QE_FC="${QE_FC:-gfortran}"
+
+log() { printf '[build-qe %s] %s\n' "$(date -Iseconds)" "$*"; }
+die() { log "ERROR: $*"; exit 1; }
+
+[[ "$(uname -m)" == x86_64 ]] || die "this script targets x86_64; host is $(uname -m). Submit to an x86 partition (see Arm/build_qe_arm.sbatch for Graviton)."
+
+# --------------------------------------------------------------------------- #
+# Prerequisites: compilers, math libraries (system OpenBLAS + FFTW3), tools.
+#
+# This runs FIRST, before anything that depends on it: the -march probe below
+# needs a working compiler, and the idempotence check needs jq. Probing before
+# installing would make a missing tool indistinguishable from an unsupported
+# flag -- which silently downgraded the target and defeated the idempotence
+# check on a node where gcc/jq were not preinstalled.
+# --------------------------------------------------------------------------- #
+sudo dnf install -y -q gcc gcc-c++ gcc-gfortran make cmake \
+    openblas-devel fftw-devel git wget xz tar jq
+
+for tool in "$QE_CC" "$QE_CXX" "$QE_FC" cmake jq; do
+    command -v "$tool" >/dev/null \
+        || die "required tool '$tool' not on PATH after installing prerequisites"
+done
+log "compilers: CC=${QE_CC} ($("$QE_CC" --version | head -1)) FC=${QE_FC}"
+
+# --------------------------------------------------------------------------- #
+# Detect the CPU microarchitecture.
+#
+# CPU FAMILY ALONE IS NOT ENOUGH ON AMD. Family 25 (0x19) covers BOTH Zen 3
+# and Zen 4, so a family-only mapping sends Zen 3 silicon (c6a/m6a/r6a/hpc6a,
+# EPYC 7003 "Milan", family 25 model 1) down an AVX-512 znver4 path: the build
+# fails late with a misleading error, and any pre-existing znver4 binary on
+# shared storage SIGILLs at run time. Family 26 (0x1a) likewise covers Zen 5
+# and Zen 6.
+#
+# The model ranges below mirror GCC's own detection in
+# gcc/common/config/i386/cpuinfo.h, so this script classifies silicon exactly
+# the way the compiler does:
+#
+#   family 25 (0x19)  model 0-15    (0x00-0x0f)             -> znver3  (Zen 3)
+#                     model 16-31   (0x10-0x1f)             -> znver4  (Zen 4)
+#                     model 96-175  (0x60-0xaf)             -> znver4  (Zen 4)
+#   family 26 (0x1a)  model 0-79    (0x00-0x4f)             -> znver5  (Zen 5)
+#                     model 96-119  (0x60-0x77)             -> znver5  (Zen 5)
+#                     model 208-215 (0xd0-0xd7)             -> znver5  (Zen 5)
+#                     (other family 26 models are Zen 6; not supported here)
+#
+# Intel: family 6 model 143 (0x8f) = Sapphire Rapids; models 173/174
+# (0xad/0xae) = Granite Rapids / Granite Rapids-D.
+#
+# Anything not matched dies with an honest "unrecognised" error rather than
+# guessing a target.
+# --------------------------------------------------------------------------- #
+gcc_knows() { "$QE_CC" "-march=$1" -E -x c /dev/null >/dev/null 2>&1; }
+
+if [[ "$TARGET" == auto ]]; then
+    vendor=$(awk -F': ' '/vendor_id/{print $2; exit}' /proc/cpuinfo)
+    family=$(awk -F': ' '/cpu family/{print $2; exit}' /proc/cpuinfo)
+    model=$(awk -F': ' '/^model[^ ]*[[:space:]]*:/{print $2; exit}' /proc/cpuinfo)
+    [[ "$family" =~ ^[0-9]+$ && "$model" =~ ^[0-9]+$ ]] \
+        || die "could not parse CPU family/model from /proc/cpuinfo (family='${family}' model='${model}'); set TARGET explicitly"
+    log "cpu: vendor=${vendor} family=${family} model=${model}"
+    case "$vendor" in
+        AuthenticAMD)
+            case "$family" in
+                25)
+                    if   (( model <= 15 ));                        then TARGET=znver3
+                    elif (( model >= 16  && model <= 31 ));        then TARGET=znver4
+                    elif (( model >= 96  && model <= 175 ));       then TARGET=znver4
+                    else die "unrecognised AMD family 25 model '${model}'; set TARGET explicitly"
+                    fi ;;
+                26)
+                    if   (( model <= 79 ));                        then TARGET=znver5
+                    elif (( model >= 96  && model <= 119 ));       then TARGET=znver5
+                    elif (( model >= 208 && model <= 215 ));       then TARGET=znver5
+                    else die "AMD family 26 model '${model}' is Zen 6, which this script has no validated target for; set TARGET explicitly"
+                    fi ;;
+                *) die "unrecognised AMD family '$family'; set TARGET explicitly" ;;
+            esac ;;
+        GenuineIntel)
+            [[ "$family" == 6 ]] \
+                || die "unrecognised Intel family '$family'; set TARGET explicitly"
+            case "$model" in
+                143)     TARGET=sapphirerapids ;;
+                173|174) TARGET=graniterapids ;;
+                *) die "unrecognised Intel family 6 model '$model'; set TARGET explicitly" ;;
+            esac ;;
+        *) die "unrecognised vendor '$vendor'" ;;
+    esac
+fi
+
+# Resolve TARGET to an -march value the compiler actually accepts.
+#
+# Each target has a short fallback chain: the ISA is backward compatible, so a
+# binary built for an older core in the same line runs correctly on the newer
+# one, just without the newer tuning. Minimum gcc for each flag:
+#   znver3 gcc 11 | znver4 gcc 13 (backported into Amazon Linux 2023's gcc 11)
+#   znver5 gcc 14.1 | sapphirerapids gcc 11 | graniterapids gcc 14
+# Probing rather than assuming means a too-old compiler produces an honest
+# warning here instead of an obscure failure part-way through the build.
+MARCH_FALLBACK=false
+case "$TARGET" in
+    znver3)         MARCH_CHAIN=(znver3) ;;
+    znver4)         MARCH_CHAIN=(znver4 znver3) ;;
+    znver5)         MARCH_CHAIN=(znver5 znver4) ;;
+    sapphirerapids) MARCH_CHAIN=(sapphirerapids) ;;
+    graniterapids)  MARCH_CHAIN=(graniterapids sapphirerapids) ;;
+    *) die "unknown TARGET '$TARGET'" ;;
+esac
+
+MARCH=""
+for m in "${MARCH_CHAIN[@]}"; do
+    if gcc_knows "$m"; then MARCH="$m"; break; fi
+    log "WARNING: ${QE_CC} does not accept -march=${m}"
+    MARCH_FALLBACK=true
+done
+[[ -n "$MARCH" ]] \
+    || die "${QE_CC} accepts none of: ${MARCH_CHAIN[*]}. Stage a newer gcc and pass QE_CC/QE_CXX/QE_FC (see header)."
+if [[ "$MARCH" != "${MARCH_CHAIN[0]}" ]]; then
+    log "WARNING: building the ${MARCH} target for ${TARGET} silicon. The code is correct but not ${MARCH_CHAIN[0]}-tuned; pass QE_CC/QE_CXX/QE_FC pointing at a newer gcc for a native build."
+fi
+OPT="-O3 -march=${MARCH}"
+# NOTE: TARGET is deliberately NOT reassigned on fallback. The install prefix
+# names the silicon it is for, so a fallback build cannot overwrite the
+# manifest of a genuine build for the older target. The actual flags and the
+# march_fallback flag in build-manifest.json record what was really compiled.
+log "target=${TARGET} flags='${OPT}' qe=${QE_VERSION} march_fallback=${MARCH_FALLBACK}"
+
+PREFIX="${BASE_DIR}/${QE_VERSION}/gcc-${TARGET}"
+SRC_DIR="${BASE_DIR}/${QE_VERSION}/source"
+
+# --------------------------------------------------------------------------- #
+# Idempotence: skip when the same (version, target, flags) is already
+# installed. The resolved flags are part of the key on purpose: a build that
+# fell back to an older -march (see above) must not be mistaken for the native
+# one, so resubmitting with a capable compiler rebuilds instead of no-opping.
+# --------------------------------------------------------------------------- #
+if [[ -x "${PREFIX}/bin/pw.x" && -f "${PREFIX}/build-manifest.json" ]] \
+   && jq -e --arg v "$QE_VERSION" --arg t "$TARGET" --arg o "$OPT" \
+        '.qe_version == $v and .target == $t and .opt_flags == $o' \
+        "${PREFIX}/build-manifest.json" >/dev/null 2>&1; then
+    log "QE ${QE_VERSION}/gcc-${TARGET} (${OPT}) already installed at ${PREFIX}; nothing to do"
+    exit 0
+fi
+
+# --------------------------------------------------------------------------- #
+# EFA Open MPI + wrapper overrides (see README).
+# --------------------------------------------------------------------------- #
+OMPI_ROOT=/opt/amazon/openmpi
+[[ -x "${OMPI_ROOT}/bin/mpirun" ]] \
+    || die "EFA Open MPI not found at ${OMPI_ROOT}; install the EFA package (efa_installer) on the compute AMI"
+export PATH="${OMPI_ROOT}/bin:${PATH}"
+export LD_LIBRARY_PATH="${OMPI_ROOT}/lib64:${OMPI_ROOT}/lib:${LD_LIBRARY_PATH:-}"
+log "MPI: $(mpirun --version 2>&1 | head -1)"
+
+export OMPI_CC="$QE_CC" OMPI_CXX="$QE_CXX" OMPI_FC="$QE_FC"
+
+# --------------------------------------------------------------------------- #
+# Fetch source + provenance hash.
+# --------------------------------------------------------------------------- #
+mkdir -p "${SRC_DIR}"
+TARBALL="${SRC_DIR}/q-e-qe-${QE_VERSION}.tar.gz"
+if [[ ! -f "$TARBALL" ]]; then
+    log "fetching QE ${QE_VERSION} source from GitLab"
+    curl -fsSL --retry 5 -o "$TARBALL" \
+        "https://gitlab.com/QEF/q-e/-/archive/qe-${QE_VERSION}/q-e-qe-${QE_VERSION}.tar.gz"
+fi
+SOURCE_SHA256=$(sha256sum "$TARBALL" | awk '{print $1}')
+
+# --------------------------------------------------------------------------- #
+# Configure + build (HDF5/libxc/ScaLAPACK pinned OFF; see README).
+# --------------------------------------------------------------------------- #
+BUILD_DIR=$(mktemp -d -p /tmp build-qe-XXXXXX)
+trap 'rm -rf "$BUILD_DIR"' EXIT
+cd "$BUILD_DIR"
+tar xzf "$TARBALL"
+cd q-e-qe-"${QE_VERSION}"
+
+log "cmake configure"
+cmake -B build -S . \
+    -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
+    -DQE_ENABLE_MPI=ON \
+    -DQE_ENABLE_OPENMP=OFF \
+    -DQE_ENABLE_HDF5=OFF \
+    -DQE_ENABLE_LIBXC=OFF \
+    -DQE_ENABLE_SCALAPACK=OFF \
+    -DQE_FFTW_VENDOR=FFTW3 \
+    -DCMAKE_C_COMPILER=mpicc \
+    -DCMAKE_Fortran_COMPILER=mpif90 \
+    -DCMAKE_C_FLAGS="${OPT}" \
+    -DCMAKE_Fortran_FLAGS="${OPT}"
+log "cmake build (-j $(nproc))"
+cmake --build build -j "$(nproc)"
+# Drop any manifest from a previous build BEFORE overwriting the binary.
+# cmake --install replaces pw.x in place; if this build then fails its
+# banner check, an old manifest left in place would sit next to a new,
+# unverified binary -- exactly the state the banner check exists to
+# prevent, and one the launchers now trust.
+rm -f "${PREFIX}/build-manifest.json"
+log "cmake install -> ${PREFIX}"
+cmake --install build
+
+# --------------------------------------------------------------------------- #
+# Banner check, then provenance manifest.
+# --------------------------------------------------------------------------- #
+SMOKE_DIR=$(mktemp -d -p /tmp smoke-XXXXXX)
+trap 'rm -rf "$BUILD_DIR" "$SMOKE_DIR"' EXIT
+# Open MPI refuses to run as root without an explicit override; jobs
+# submitted by automation (SSM, cron) often run as root, so allow it for
+# this single-rank probe only.
+ALLOW_ROOT=(); [[ $EUID -eq 0 ]] && ALLOW_ROOT=(--allow-run-as-root)
+( cd "$SMOKE_DIR" && mpirun -np 1 "${ALLOW_ROOT[@]}" "${PREFIX}/bin/pw.x" <<<q ) \
+    > "${SMOKE_DIR}/banner.out" 2> "${SMOKE_DIR}/banner.err" || true
+BANNER_LINE=$(grep -E '^[[:space:]]*Program PWSCF v\.' "${SMOKE_DIR}/banner.out" | head -1 || true)
+[[ -n "$BANNER_LINE" ]] || {
+    log "ERROR: pw.x printed no 'Program PWSCF v.' banner; build is broken"
+    head -20 "${SMOKE_DIR}/banner.err" >&2 || true
+    exit 4
+}
+log "banner check ok: ${BANNER_LINE}"
+
+jq -n \
+    --arg qe_version "$QE_VERSION" \
+    --arg target "$TARGET" \
+    --arg opt_flags "$OPT" \
+    --argjson march_fallback "$MARCH_FALLBACK" \
+    --arg compiler "$("$QE_CC" --version | head -1)" \
+    --arg mpi "$(mpirun --version 2>&1 | head -1)" \
+    --arg pw_x_sha256 "$(sha256sum "${PREFIX}/bin/pw.x" | awk '{print $1}')" \
+    --arg source_tarball_sha256 "$SOURCE_SHA256" \
+    --arg built_at "$(date -Iseconds)" \
+    --arg banner "$BANNER_LINE" \
+    '{qe_version:$qe_version, target:$target, opt_flags:$opt_flags,
+      march_fallback:$march_fallback,
+      compiler:$compiler, mpi:$mpi, pw_x_sha256:$pw_x_sha256,
+      source_tarball_sha256:$source_tarball_sha256,
+      built_at:$built_at, banner:$banner}' \
+    > "${PREFIX}/build-manifest.json"
+
+log "build complete: ${PREFIX}/bin/pw.x (${TARGET})"
