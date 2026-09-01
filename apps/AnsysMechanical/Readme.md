@@ -67,6 +67,17 @@ tar xzf libpng-1.2.59.tar.gz && cd libpng-1.2.59
 ln -sf /fsx/libpng12/lib/libpng12.so.0 $COMPAT/libpng12.so.0
 ```
 
+**Why not just install these with dnf?** Only `mesa-libGLU` is packaged for
+AL2023. The others are not available from the package manager: `libXp` and
+Motif (`libXm`) are not in the AL2023 repositories (`dnf provides` returns no
+match), `libpng12` is end-of-life and likewise absent, and the four `libxcb-*`
+sonames were removed from libxcb upstream years ago, so no current distribution
+packages them. AL2023 does not support EPEL, so there is no supported extra
+repository to add. Using the libraries Ansys ships also has an operational
+advantage on ParallelCluster: the compat directory lives on the shared
+filesystem, so ephemeral compute nodes need no per-node package installation —
+`mesa-libGLU` is the only per-node install required.
+
 Three traps worth knowing:
 
   * **Do not** satisfy `libGLU.so.1` from the copy Ansys bundles under
