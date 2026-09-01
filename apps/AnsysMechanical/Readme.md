@@ -161,13 +161,18 @@ and costs performance.
     model needs.
   * **Instance selection:**
       * [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6id/) — 16 GB/core,
-        the cost-effective way to buy memory capacity. Best choice for large
+        the cost-effective way to buy memory capacity, **plus 15.2 TB of local
+        NVMe** for solver scratch (see below). Best choice for large
         sparse-direct models, and the reference configuration in the sbatch.
       * [Hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/) /
         [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) — 4 GB/core but
         high memory bandwidth and core count; fastest once the model fits.
-      * R-family (r7i/r8i) only when a single node must hold a very large model;
-        per-unit cost is high and they are not faster when the model already fits.
+      * R-family ([r7i](https://aws.amazon.com/ec2/instance-types/r7i/) /
+        [r8i](https://aws.amazon.com/ec2/instance-types/r8i/), or
+        [r7id](https://aws.amazon.com/ec2/instance-types/r7i/) /
+        [i-family](https://aws.amazon.com/ec2/instance-types/i7ie/) for local
+        NVMe) only when a single node must hold a very large model; per-unit
+        cost is high and they are not faster when the model already fits.
   * **Under-population raises memory per core.** Running fewer cores per node
     gives each rank more memory *and* more bandwidth, which is often a better
     trade than filling the node. See
@@ -185,15 +190,32 @@ filesystem this is a hard planning constraint:
 
   * Size the filesystem for `concurrent_jobs x per_job_scratch`, not for the
     input data.
-  * **Cap how many out-of-core jobs run at once.** We exhausted a 9 TB FSx for
-    Lustre filesystem with ~24 concurrent jobs; the jobs did not fail cleanly,
-    they **hung** on I/O and had to be cancelled.
+  * **Cap how many out-of-core jobs run at once.** Running many out-of-core
+    solves concurrently can exhaust even a multi-terabyte shared filesystem in
+    hours. When that happens the jobs typically do **not** fail cleanly — they
+    hang on I/O and have to be cancelled, leaving their scratch behind to be
+    reclaimed manually.
   * Heavy sharing distorts timings. Watch **`MetadataOperations`** and burst
     throughput in CloudWatch rather than average throughput: a filesystem can
     look nearly idle on average bandwidth while elevated metadata rates and
     throughput bursts are significantly inflating individual run times.
     Benchmark numbers collected under that load are not trustworthy — validate
     any surprising result with an isolated re-run before acting on it.
+  * **Prefer local NVMe instance store for the solver scratch when the instance
+    has it.** [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6id/)
+    (15.2 TB per node), r7id/r8id and the i-family carry instance-store NVMe
+    that is both faster (local, no network round-trip) and effectively free
+    compared to shared-filesystem capacity and throughput. AWS ParallelCluster
+    formats and mounts the instance store at **`/scratch`** automatically. Run
+    the solve with its working directory on `/scratch` (MAPDL writes its
+    scratch files to the working directory; in DMP each rank writes to the same
+    path local to its own node), keep the input `.dat`/`.db` on the shared
+    filesystem, and copy the output file back at the end of the job. This
+    removes out-of-core I/O from the shared filesystem entirely — the
+    concurrency cap and contention concerns above then apply only to input
+    staging, and out-of-core solves stop competing with each other. Remember
+    instance store is ephemeral: anything not copied back is lost when the node
+    scales down.
 
 ## Exit codes: do not use them to decide success
 
@@ -211,6 +233,14 @@ post-processes the output files rather than checking exit status, and automation
 should do the same: treat the presence of `RUN COMPLETED` and a final
 `Elapsed Time (sec)` as the success signal. Gating on the exit code silently
 discards valid results.
+
+That said, do still scan the log for **genuine** errors rather than ignoring
+`*** ERROR ***` lines wholesale. The fixed-iteration termination above is
+expected on those models, but other errors — license checkout failures, MPI
+communication aborts, insufficient memory or disk — are real and must fail the
+run. A robust success test is therefore: `RUN COMPLETED` present, a final
+`Elapsed Time (sec)` present, **and** no `*** ERROR ***` entries other than the
+expected iteration-limit termination.
 
 When parsing that timing line, note the format —
 
@@ -240,6 +270,15 @@ of DOF and its memory requirement, which is what you need to size the job:
 The package's default core increments are **16, 32, 64, 128** — Mechanical is a
 comparatively low-core-count workload, so scaling studies should focus there
 rather than on the thousands of cores typical of CFD.
+
+Note that those default increments do **not** map well onto the CPU topology of
+the AWS HPC instances: Hpc7a/Hpc8a.96xlarge have **24 CCDs of 8 cores each**
+(192 physical cores, one L3 cache per CCD), and 16/32/64 spread unevenly across
+24 CCDs while 128 does not divide 192 at all. For even CCD loading — every L3
+cache carrying the same number of ranks — prefer increments of
+**24, 48, 96, 192** (1, 2, 4, 8 cores per CCD), set via the `INCREMENT LIST`
+line in `DMPJOBS.DAT`, combined with the explicit pinning from
+[Utils/flexible-cores](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores).
 
 Note that the bundled `runBench.py` is explicitly *not* intended for scheduler
 environments. Run the models under your scheduler using the command line it
