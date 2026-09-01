@@ -25,14 +25,44 @@
 #                       default ${BASE_DIR}/ansys_compat, used when it exists.
 #     ANSYSLMD_LICENSE_FILE, SOURCE, DYNAMODB_RECORDER    see recorder section.
 #
-# IMPORTANT: submit as a regular user, NEVER root. The -ssh start method needs
-# the user's inter-node SSH key (on ParallelCluster only the default user has
-# one) and Intel MPI refuses to run as root outright.
+# IMPORTANT: submit as a regular user, NEVER root. The -ssh start method
+# authenticates with the submitting user's inter-node SSH identity, and on
+# ParallelCluster only the default user (ec2-user) has one - root has no key to
+# offer, so the remote ranks never start. Least privilege applies regardless: a
+# solver has no need for root.
 # ---------------------------------------------------------------------------
 if [ "$(id -u)" -eq 0 ]; then
-    echo "ERROR: this job must not run as root (ssh remote launch + Intel MPI both fail)." >&2
+    echo "ERROR: run this job as a regular user, not root." >&2
+    echo "       The -ssh start method authenticates with the submitting user's inter-node" >&2
+    echo "       SSH identity, and on ParallelCluster only the default user (ec2-user)" >&2
+    echo "       has one; root has no key to offer, so the remote ranks never start." >&2
+    echo "       Running a solver as root also violates least privilege for no benefit." >&2
     exit 1
 fi
+
+# ---------------------------------------------------------------------------
+# Solve-verdict library. Sourced rather than inlined so the success/failure
+# boundary is unit-tested: see tests/test-mapdl-verdict.sh (no Slurm or licensed
+# solver needed). Located early so a missing library fails BEFORE burning
+# solver time and licence tokens.
+# ---------------------------------------------------------------------------
+_verdict_lib="${MAPDL_VERDICT_LIB:-}"
+_self_dir="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" 2>/dev/null && pwd)"
+for _c in "${_verdict_lib}" \
+          "${_self_dir}/lib/mapdl-verdict.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/lib/mapdl-verdict.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/apps/AnsysMechanical/lib/mapdl-verdict.sh"; do
+    if [ -n "${_c}" ] && [ -r "${_c}" ]; then _verdict_lib="${_c}"; break; fi
+done
+if [ -z "${_verdict_lib}" ] || [ ! -r "${_verdict_lib}" ]; then
+    echo "ERROR: cannot find lib/mapdl-verdict.sh, which decides whether the solve" >&2
+    echo "       succeeded. Keep it next to this script (apps/AnsysMechanical/lib/)" >&2
+    echo "       or point MAPDL_VERDICT_LIB at it. Refusing to run: without it this" >&2
+    echo "       job cannot tell a completed benchmark from a failed one." >&2
+    exit 1
+fi
+# shellcheck source=lib/mapdl-verdict.sh
+. "${_verdict_lib}"
 
 ######################## EFA settings ########################
 # `module` is undefined in non-login shells (cron/SSM/automation) - source it.
@@ -41,6 +71,10 @@ export I_MPI_OFI_LIBRARY_INTERNAL=0
 module load intelmpi
 export I_MPI_DEBUG=5
 export I_MPI_FABRICS=shm:ofi
+# Pinning the provider makes EFA selection FAIL-CLOSED: if EFA is unavailable the
+# job errors out instead of quietly falling back to TCP and reporting a slower
+# result as if it were an EFA number. Remove this line and the fallback becomes
+# silent again - keep it for benchmarking.
 export I_MPI_OFI_PROVIDER=efa
 export I_MPI_MULTIRAIL=1
 #export FI_EFA_RECVWIN_SIZE=65536
@@ -58,10 +92,31 @@ scratch_mode=${SCRATCH_MODE:-"auto"}
 
 APP_BIN_PATH="${basedir}/ansys_inc/${mechanicalversion}/ansys/bin/mapdl"
 
-# MAPDL needs a writable HOME (preferences + ~/.ssh for the remote launch).
+# ---------------------------------------------------------------------------
+# MAPDL needs a writable HOME, and with -dis/-ssh it must be the REAL home: the
+# remote launch reads the user's ~/.ssh identity from it. An empty scratch HOME
+# would satisfy "writable" and then break multi-node startup with a confusing
+# authentication error, so recover the account's actual home and only fall back
+# to a temporary one for a genuinely single-node run.
+# ---------------------------------------------------------------------------
 if [ -z "${HOME:-}" ] || [ ! -w "${HOME}" ]; then
-    export HOME="$(mktemp -d)"
-    echo "NOTE: HOME was unset/unwritable; using ${HOME}"
+    _real_home="$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6)"
+    if [ -n "${_real_home}" ] && [ -w "${_real_home}" ]; then
+        export HOME="${_real_home}"
+        echo "NOTE: HOME was unset/unwritable; recovered ${HOME} from the passwd database."
+    elif [ "${SLURM_JOB_NUM_NODES:-1}" -gt 1 ]; then
+        echo "ERROR: HOME is unset or not writable and the real home ('${_real_home:-unknown}')" >&2
+        echo "       is unavailable. A multi-node -ssh launch needs the user's ~/.ssh identity" >&2
+        echo "       from their real home, so a temporary HOME cannot work here." >&2
+        echo "       Fix: submit as the cluster's default user with their home mounted, or" >&2
+        echo "       export HOME=/path/to/that/home before sbatch." >&2
+        exit 1
+    else
+        export HOME="$(mktemp -d)"
+        echo "NOTE: HOME was unset/unwritable and the real home is unavailable; using the"
+        echo "      temporary ${HOME}. This is only safe because this is a single-node run"
+        echo "      (no ~/.ssh identity is needed)."
+    fi
 fi
 
 # Legacy X11/Motif libraries Amazon Linux 2023 does not ship (see Readme.md for
@@ -102,12 +157,66 @@ fi
 echo "Execution directory is: ${workdir} (scratch: ${scratch_mode}; logs: ${shared_dir})"
 cd "${workdir}"
 
-export cores_x_node=$(((SLURM_NPROCS / SLURM_JOB_NUM_NODES ) + ( SLURM_NPROCS % SLURM_JOB_NUM_NODES > 0 )))
+# ---------------------------------------------------------------------------
+# -machines host:cores list.
+#
+# Take the per-host task counts from Slurm itself (SLURM_TASKS_PER_NODE, e.g.
+# "64(x2)" or "43,42") instead of dividing --ntasks by --nodes. A plain division
+# only agrees with the real placement when the allocation is homogeneous and
+# divisible; ceiling division would hand MAPDL MORE cores than were allocated
+# (oversubscribing the nodes and over-drawing HPC licence tokens), while floor
+# division would silently drop ranks. The recommended layouts in Readme.md are
+# all homogeneous and divisible, so this normally reproduces the simple result -
+# it just stays correct when they are not.
+# ---------------------------------------------------------------------------
+expand_tasks_per_node() {   # "64(x2),32" -> "64 64 32"
+    local spec="$1" part count reps r out=""
+    [ -n "${spec}" ] || return 1
+    local IFS=','
+    for part in ${spec}; do
+        if   [[ "${part}" =~ ^([0-9]+)\(x([0-9]+)\)$ ]]; then
+            count="${BASH_REMATCH[1]}"; reps="${BASH_REMATCH[2]}"
+        elif [[ "${part}" =~ ^([0-9]+)$ ]]; then
+            count="${part}"; reps=1
+        else
+            return 1
+        fi
+        for (( r = 0; r < reps; r++ )); do out="${out} ${count}"; done
+    done
+    printf '%s\n' "${out# }"
+}
 
-for i in $(scontrol show hostnames=$SLURM_JOB_NODELIST); do
-  machines=$machines:$i:$cores_x_node
+mapfile -t _hosts < <(scontrol show hostnames="${SLURM_JOB_NODELIST}")
+read -r -a _tpn <<< "$(expand_tasks_per_node "${SLURM_TASKS_PER_NODE:-}" || true)"
+
+if [ "${#_tpn[@]}" -ne "${#_hosts[@]}" ]; then
+    # Slurm did not tell us (or told us something unparseable): distribute the
+    # tasks as evenly as possible and give the remainder to the first hosts, so
+    # the total always equals SLURM_NPROCS exactly.
+    echo "NOTE: SLURM_TASKS_PER_NODE ('${SLURM_TASKS_PER_NODE:-unset}') did not match ${#_hosts[@]} host(s); distributing ${SLURM_NPROCS} tasks evenly."
+    _tpn=()
+    _base=$(( SLURM_NPROCS / ${#_hosts[@]} ))
+    _rem=$((  SLURM_NPROCS % ${#_hosts[@]} ))
+    for _i in "${!_hosts[@]}"; do
+        if [ "${_i}" -lt "${_rem}" ]; then _tpn+=( $(( _base + 1 )) ); else _tpn+=( "${_base}" ); fi
+    done
+fi
+
+machines=""; _tpn_sum=0
+for _i in "${!_hosts[@]}"; do
+    machines="${machines}:${_hosts[$_i]}:${_tpn[$_i]}"
+    _tpn_sum=$(( _tpn_sum + _tpn[_i] ))
 done
-machines=${machines:1}
+machines="${machines:1}"
+
+if [ "${_tpn_sum}" -ne "${SLURM_NPROCS}" ]; then
+    echo "ERROR: -machines totals ${_tpn_sum} cores but Slurm allocated ${SLURM_NPROCS}." >&2
+    echo "       Refusing to run rather than over- or under-subscribing the allocation." >&2
+    exit 1
+fi
+# Representative per-node count for logging/recording (exact when homogeneous).
+export cores_x_node="${_tpn[0]}"
+echo "Task placement: ${machines} (total ${_tpn_sum} cores over ${#_hosts[@]} node(s))"
 
 cp "$0" "${shared_dir}/" 2>/dev/null
 # inputs are read only by the master rank; symlinks into the workdir suffice
@@ -135,40 +244,45 @@ _rec_rc=$?
 _rec_secs=$(( $(date +%s) - _rec_t0 ))
 
 # ---------------------------------------------------------------------------
-# Success detection — do NOT trust the exit code alone. Several official
+# Success detection — the OUTPUT decides, not the exit code. Several official
 # benchmark decks stop at a fixed iteration count, making MAPDL print
 # "*** ERROR *** The number of iterations exceeds N ... terminated at the
-# user's request" and exit NON-ZERO after a perfectly good run. Ansys's own
-# runBench.py judges the OUTPUT, and so do we:
-#   success = "RUN COMPLETED" present
-#             AND a final "Elapsed Time (sec)" present
-#             AND no *** ERROR *** other than the iteration-limit termination.
-# NB: parse the number right after the '=': the summary line ends with a Date
-# field, so taking the LAST number on the line yields the year, not seconds.
+# user's request" and exit NON-ZERO after a perfectly good run; a killed or
+# truncated run can conversely leave a zero status. Ansys's own runBench.py
+# judges the output, and so do we. The rules and their edge cases live in
+# lib/mapdl-verdict.sh and are covered by tests/test-mapdl-verdict.sh.
 # ---------------------------------------------------------------------------
-mapdl_elapsed="$(grep -hE 'Elapsed Time +\(sec\)' "${output_file}" 2>/dev/null | tail -1 \
-                 | sed -E 's/.*Elapsed Time *\(sec\) *= *([0-9]+(\.[0-9]+)?).*/\1/')"
-case "${mapdl_elapsed}" in ''|*[!0-9.]*) mapdl_elapsed="" ;; esac
-unexpected_errs=$(grep -A2 '^ \*\*\* ERROR' "${output_file}" 2>/dev/null \
-  | grep -v 'iterations exceeds' | grep -c '^ \*\*\* ERROR' || true)
-memory_mode="unknown"
-if   grep -qi 'Out-of-Core' "${output_file}" 2>/dev/null; then memory_mode="OutOfCore"
-elif grep -qiE 'In-Core|InCore' "${output_file}" 2>/dev/null; then memory_mode="InCore"; fi
-
-if grep -q "RUN COMPLETED" "${output_file}" 2>/dev/null && [ -n "${mapdl_elapsed}" ] \
-   && [ "${unexpected_errs:-0}" -eq 0 ]; then
-    solve_ok=1
-else
-    solve_ok=0
+mapdl_solve_verdict "${output_file}" "${_rec_rc}"
+mapdl_elapsed="${MAPDL_ELAPSED}"
+memory_mode="$(mapdl_memory_mode "${output_file}")"
+solve_ok="${MAPDL_SOLVE_OK}"
+final_rc="${MAPDL_FINAL_RC}"
+echo "rc=${_rec_rc} wall=${_rec_secs}s memory_mode=${memory_mode} $(mapdl_verdict_summary)"
+if [ "${MAPDL_UNEXPECTED}" -gt 0 ]; then
+    echo "Unexpected MAPDL error block(s) — first lines:" >&2
+    mapdl_error_blocks "${output_file}" | grep -viE "${MAPDL_BENIGN_ERROR_RE}" | head -5 >&2
 fi
-echo "solve_ok=${solve_ok} rc=${_rec_rc} wall=${_rec_secs}s mapdl_elapsed=${mapdl_elapsed:-n/a} memory_mode=${memory_mode} unexpected_errors=${unexpected_errs:-0}"
 
-# keep the log on the shared filesystem, then reclaim node-local scratch
-cp -f "${output_file}" "${shared_dir}/" 2>/dev/null
-if [ "${scratch_mode}" = "nvme" ]; then
-    cd "${shared_dir}"
-    srun --ntasks=${SLURM_JOB_NUM_NODES} --ntasks-per-node=1 \
-      /bin/bash -c "rm -rf '${workdir}' && echo \"\$(hostname): local scratch reclaimed\""
+# ---------------------------------------------------------------------------
+# Durable stage-out BEFORE reclaiming node-local scratch. When the solve ran on
+# /scratch, the copy on the shared filesystem is the ONLY lasting record of it,
+# so a failed copy must never be followed by `rm -rf`: keep the scratch, say
+# exactly where it is, and fail the job.
+# ---------------------------------------------------------------------------
+if mapdl_stage_out "${output_file}" "${shared_dir}"; then
+    if [ "${scratch_mode}" = "nvme" ]; then
+        cd "${shared_dir}"
+        srun --ntasks=${SLURM_JOB_NUM_NODES} --ntasks-per-node=1 \
+          /bin/bash -c "rm -rf '${workdir}' && echo \"\$(hostname): local scratch reclaimed\""
+    fi
+else
+    echo "ERROR: stage-out to '${shared_dir}' failed; NOT reclaiming node-local scratch." >&2
+    echo "ERROR: the only copy of the solver output is on node $(hostname) at:" >&2
+    echo "ERROR:   ${workdir}/${output_file}" >&2
+    echo "ERROR: recover it before that node is reused or terminated, then replay the" >&2
+    echo "ERROR: recorder with --run-dir <recovered dir>. Marking this job failed." >&2
+    solve_ok=0
+    [ "${final_rc}" -ne 0 ] || final_rc=4
 fi
 
 # ---------------------------------------------------------------------------
@@ -185,11 +299,13 @@ for _c in "${_recorder}" \
     if [ -n "${_c}" ] && [ -x "${_c}" ]; then _recorder="${_c}"; break; fi
 done
 if [ "${solve_ok}" -eq 1 ] && [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
+    _rec_args=( --char memory_mode="${memory_mode}" --char scratch_mode="${scratch_mode}" )
+    # Only pass the MAPDL-reported solver time when it is actually valid; the
+    # verdict above already guarantees it is positive when solve_ok=1.
+    [ -n "${mapdl_elapsed}" ] && _rec_args+=( --metric mapdl_elapsed_seconds="${mapdl_elapsed}" )
+    [ -n "${cores_x_node:-}" ] && _rec_args+=( --cores-per-node "${cores_x_node}" )
     MECHANICAL_VERSION="${mechanicalversion}" BENCHMARK_CASE="$(basename "${input_file%.*}")" \
-    TIME_TO_SOLUTION="${_rec_secs}" RUN_DIR="${shared_dir}" "${_recorder}" \
-        --metric mapdl_elapsed_seconds="${mapdl_elapsed:-0}" \
-        --char memory_mode="${memory_mode}" \
-        --char scratch_mode="${scratch_mode}" \
+    TIME_TO_SOLUTION="${_rec_secs}" RUN_DIR="${shared_dir}" "${_recorder}" "${_rec_args[@]}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 elif [ "${solve_ok}" -ne 1 ]; then
     echo "NOTE: solve not verified (rc=${_rec_rc}); skipping benchmark recording." >&2
@@ -197,6 +313,8 @@ else
     echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2
 fi
 
-# A verified-complete run is a success even when MAPDL's exit code is non-zero
-# (fixed-iteration decks); a failed run keeps the solver's exit code.
-[ "${solve_ok}" -eq 1 ] && exit 0 || exit ${_rec_rc}
+# Exit with the verdict's status: a verified-complete run is a success even when
+# MAPDL's exit code is non-zero (fixed-iteration decks), an unverified run is a
+# failure even when MAPDL returned 0, and an unrelated non-zero status is passed
+# through untouched. See lib/mapdl-verdict.sh for the full table.
+exit "${final_rc}"

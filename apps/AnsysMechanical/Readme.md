@@ -7,8 +7,15 @@ with the distributed-memory parallel (DMP) solver under a job scheduler.
 
 # Versions
 
-Best practices here are written against **2026 R1** (`v261`, `ansys261`) and apply
-to 2023 and newer.
+Everything here was tested on **2026 R1** (`v261`, `ansys261`). The general
+guidance — DMP invocation, EFA settings, memory sizing, scratch placement, output-
+based success detection — applies to 2023 and newer unchanged.
+
+The one part that is **release-specific is the library-path recipe** below: the
+paths embed both the version directory (`v261`) and the bundled component version
+(`polyflow26.1.0`), and those change with every release. Treat the paths as
+verified for 2026 R1 only and re-derive them for other releases (the
+[recipe](#required-os-libraries-on-amazon-linux-2023) shows how).
 
 # Installation
 
@@ -44,7 +51,15 @@ surfaces after you fix the previous one. Ansys bundles all of them except one:
 | `libpng12.so.0` | no | **not bundled and not in any AL2023 repo — must be built** |
 
 Link only the missing ones into a single directory and prepend it, so no system
-library is shadowed:
+library is shadowed. The paths below are the ones **verified on 2026 R1**; the
+component version in the `polyflow` path in particular moves with each release,
+so on another release locate the libraries first rather than assuming:
+
+```bash
+# Re-derive the bundled paths for your release before copying the block below:
+V=/fsx/ansys_inc/v261        # <- your version directory
+find $V -name 'libXm.so.4' -o -name 'libXp.so.6' -o -name 'libxcb-xlib.so.0' 2>/dev/null
+```
 
 ```bash
 COMPAT=/fsx/ansys_compat; mkdir -p $COMPAT; V=/fsx/ansys_inc/v261
@@ -57,14 +72,46 @@ done
 export LD_LIBRARY_PATH=$COMPAT:$LD_LIBRARY_PATH
 ```
 
-`libpng12` is required by the bundled Motif and has to be built once (libpng 1.2
-is end-of-life and absent from AL2023):
+### Building `libpng12` (the one library nobody ships)
+
+`libpng12.so.0` is required by the bundled Motif and has to be built once.
+
+> **Understand the trade-off before you do this.** libpng 1.2 reached
+> end-of-life in 2015 and receives **no security updates**. You are introducing
+> an unmaintained image-decoding library to satisfy a link-time dependency of
+> Ansys's bundled Motif. Keep it scoped: install it to its own prefix, expose it
+> only through the `LD_LIBRARY_PATH` used to launch MAPDL (as above — never
+> system-wide in `/usr/lib64` or via `ldconfig`), and do not let anything else on
+> the host resolve against it. On compute nodes that only run batch solves this
+> is a contained risk; on an interactive/multi-user host, weigh it accordingly.
+> If your policy forbids EOL libraries, run MAPDL from a container image where
+> this dependency is isolated instead.
+
+Verify what you downloaded before building it:
 
 ```bash
+# Prerequisites: sudo dnf -y install gcc make tar zlib-devel
+# Needs write permission on the install prefix (/fsx/... on a shared filesystem).
 curl -fsSLO https://download.sourceforge.net/libpng/libpng-1.2.59.tar.gz
+
+# Integrity check — do NOT build if this does not match.
+echo "4bd4b5ce04ce634c281ae76174714fa02b053b573ac2181c985db06aa57e1e9e  libpng-1.2.59.tar.gz" \
+    | sha256sum -c - || { echo "CHECKSUM MISMATCH - do not use this tarball"; exit 1; }
+
 tar xzf libpng-1.2.59.tar.gz && cd libpng-1.2.59
 ./configure --prefix=/fsx/libpng12 --disable-static && make -j && make install
 ln -sf /fsx/libpng12/lib/libpng12.so.0 $COMPAT/libpng12.so.0
+```
+
+That digest matches the value published in SourceForge's file metadata for
+`libpng-1.2.59.tar.gz`. Stronger still, the project publishes a detached GPG
+signature next to the tarball — prefer it if you have the maintainer's key, since
+a signature verifies authorship rather than just matching a hash copied into a
+document:
+
+```bash
+curl -fsSLO https://download.sourceforge.net/libpng/libpng-1.2.59.tar.gz.asc
+gpg --verify libpng-1.2.59.tar.gz.asc libpng-1.2.59.tar.gz
 ```
 
 **Why not just install these with dnf?** Only `mesa-libGLU` is packaged for
@@ -96,27 +143,49 @@ See [AnsysMechanical.sbatch](https://github.com/aws-samples/hpc-applications/blo
 for a complete example. The essentials:
 
 ```bash
-# MAPDL takes the total core count from the -machines list, NOT from -np
-cores_x_node=$(( SLURM_NPROCS / SLURM_JOB_NUM_NODES ))
-for i in $(scontrol show hostnames=$SLURM_JOB_NODELIST); do
-    machines=$machines:$i:$cores_x_node
-done
+# MAPDL takes the total core count from the -machines list, NOT from -np.
+# Take the per-host counts from Slurm instead of dividing --ntasks by --nodes:
+# SLURM_TASKS_PER_NODE reflects the placement Slurm actually made ("64(x2)",
+# "43,42", ...). Dividing only agrees with reality when the allocation is
+# homogeneous AND divisible — floor division silently drops ranks, ceiling
+# division oversubscribes the nodes and over-draws licence tokens.
+mapfile -t hosts < <(scontrol show hostnames=$SLURM_JOB_NODELIST)
+read -r -a tpn <<< "$(echo $SLURM_TASKS_PER_NODE | \
+    awk -F, '{for(i=1;i<=NF;i++){n=$i;r=1;if(match(n,/\(x[0-9]+\)/)){r=substr(n,RSTART+2,RLENGTH-3);n=substr(n,1,RSTART-1)};for(j=0;j<r;j++)printf "%s ",n}}')"
+
+machines=""
+for i in "${!hosts[@]}"; do machines="$machines:${hosts[$i]}:${tpn[$i]}"; done
 machines=${machines:1}
 
 mapdl -b -dis -mpi intelmpi -ssh -machines $machines -i input.dat -o output.log
 ```
 
+The recommended layouts further down are all homogeneous and divisible, so this
+reduces to the obvious `cores/nodes` result — it just stays correct when an
+allocation is not. If you would rather keep the simple division, then **require**
+divisible placement explicitly (`--nodes=N --ntasks-per-node=C` rather than a
+bare `--ntasks`), and fail the job when `ntasks % nodes != 0` instead of rounding
+in either direction.
+
   * `-dis` selects the distributed-memory (DMP) solver, `-mpi intelmpi` the MPI
-    implementation. **Intel MPI gives the best performance on AWS.**
-  * **Do not run the job as root.** `-ssh` launches the remote ranks over SSH,
-    and Intel MPI also refuses to start as root
-    (*"mpirun has detected an attempt to run as root"*). On AWS ParallelCluster
-    only the default user (`ec2-user`) holds the inter-node key pair — root has
-    an `authorized_keys` file but no private key. If you drive submission from
-    automation that runs as root (Systems Manager, cron), submit with
-    `sudo -u ec2-user`.
-  * **`HOME` must be set.** MAPDL writes preferences under `$HOME` and the SSH
-    start method needs `~/.ssh`; in a bare batch environment the job aborts.
+    implementation. Intel MPI was the faster of the two options in our testing on
+    AWS, and it is the one whose EFA path we verified — see
+    [EFA settings](#efa-settings).
+  * **Do not run the job as root.** `-ssh` launches the remote ranks over SSH
+    using the *submitting user's* SSH identity, and on AWS ParallelCluster only
+    the default user (`ec2-user`) holds the inter-node key pair — root has an
+    `authorized_keys` file but no private key, so the remote ranks never start.
+    Least privilege applies independently of that: a solver has no need for root.
+    If you drive submission from automation that runs as root (Systems Manager,
+    cron), submit with `sudo -u ec2-user`.
+  * **`HOME` must be set, and for multi-node runs it must be the user's real
+    home.** MAPDL writes preferences under `$HOME`, and the `-ssh` start method
+    reads the inter-node identity from `$HOME/.ssh`. Pointing `HOME` at a fresh
+    temporary directory therefore satisfies "writable" and *still* breaks
+    multi-node startup with a confusing authentication error. If `HOME` is unset
+    in a bare batch environment, recover the account's real home (e.g.
+    `getent passwd "$(id -un)" | cut -d: -f6`) rather than creating a scratch one;
+    a temporary `HOME` is only safe for a genuinely single-node run.
   * In a non-login shell, `module` is undefined, so `module load intelmpi` fails
     silently. Guard it with
     `command -v module >/dev/null || source /etc/profile.d/modules.sh`.
@@ -137,8 +206,24 @@ module load libfabric-aws
 ```
 
 Confirm EFA is actually in use — set `I_MPI_DEBUG=5` and look for
-`libfabric provider: efa` in the output. A silent fallback to TCP is easy to miss
-and costs performance.
+`libfabric provider: efa` in the output.
+
+Two distinct cases worth separating, because they fail in opposite ways:
+
+  * **With `I_MPI_OFI_PROVIDER=efa` set (as above), provider selection is
+    fail-closed.** If EFA is unavailable — missing interface, no security-group
+    rule for self-referencing traffic, a libfabric without the `efa` provider —
+    Intel MPI errors out rather than falling back. That is what you want while
+    benchmarking: a hard failure beats a quiet 10-20% slower number that looks
+    like a real EFA result.
+  * **Without that variable, the fallback is silent.** libfabric picks whatever
+    provider it can, typically `tcp`, and nothing in the normal output says so.
+    This is the case that quietly corrupts a comparison, and the reason to pin
+    the provider explicitly.
+
+If you deliberately want the fallback (e.g. a mixed fleet where some nodes lack
+EFA), leave the provider unpinned but then always check the `I_MPI_DEBUG=5` line
+before trusting a timing.
 
 # Key settings & tips (performance related ones)
 
@@ -156,23 +241,30 @@ and costs performance.
     (so it fits in aggregate RAM) can improve runtime by far more than the added
     parallelism alone would explain — the speedup is the memory mode changing,
     not parallel efficiency.
-  * **Once the model fits, extra memory buys nothing** — memory bandwidth and
-    clock speed take over. Do not pay for high-memory instances beyond what the
-    model needs.
-  * **Instance selection:**
+  * **Once the model fits in memory, adding more memory stopped helping** in the
+    configurations we measured — memory bandwidth and clock speed dominate from
+    there. Size for the documented requirement plus headroom rather than buying
+    the largest memory footprint available.
+  * **Instance selection.** The notes below reflect the V26 Cluster models on the
+    configurations we tested; treat them as a starting point and verify against
+    your own models rather than as a general ranking. Quantitative comparisons
+    will land in [Performance](#performance).
       * [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6id/) — 16 GB/core,
-        the cost-effective way to buy memory capacity, **plus 15.2 TB of local
-        NVMe** for solver scratch (see below). Best choice for large
+        a cost-effective way to buy memory capacity, **plus 15.2 TB of local
+        NVMe** for solver scratch (see below). A good fit for the large
         sparse-direct models, and the reference configuration in the sbatch.
       * [Hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/) /
         [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) — 4 GB/core but
-        high memory bandwidth and core count; fastest once the model fits.
+        high memory bandwidth and core count; these were the quickest of the
+        instances we tried on models that already fit in memory.
       * R-family ([r7i](https://aws.amazon.com/ec2/instance-types/r7i/) /
         [r8i](https://aws.amazon.com/ec2/instance-types/r8i/), or
-        [r7id](https://aws.amazon.com/ec2/instance-types/r7i/) /
-        [i-family](https://aws.amazon.com/ec2/instance-types/i7ie/) for local
-        NVMe) only when a single node must hold a very large model; per-unit
-        cost is high and they are not faster when the model already fits.
+        [r7id](https://aws.amazon.com/ec2/instance-types/r7id/) /
+        [r8id](https://aws.amazon.com/ec2/instance-types/r8id/) /
+        [i7ie](https://aws.amazon.com/ec2/instance-types/i7ie/) for local
+        NVMe) — worth it mainly when a single node must hold a very large model.
+        Per-unit cost is comparatively high, and in our runs they were not faster
+        than the HPC instances once the model already fit in memory.
   * **Under-population raises memory per core.** Running fewer cores per node
     gives each rank more memory *and* more bandwidth, which is often a better
     trade than filling the node. See
@@ -217,7 +309,16 @@ filesystem this is a hard planning constraint:
     the workdir suffice), and at the end copy the output file (written on the
     master node) back to the shared filesystem, then **reclaim** `/scratch` on
     every node (`srun --ntasks-per-node=1 rm -rf $workdir`) — warm nodes are
-    reused between jobs and leftover scratch accumulates. This removes
+    reused between jobs and leftover scratch accumulates.
+    **Check that the copy succeeded before you delete anything.** Once the solve
+    runs on instance store, that copy is the only lasting record of it, so a
+    `cp` whose result is discarded followed by an unconditional `rm -rf` destroys
+    the solver log outright whenever the shared filesystem is full, read-only or
+    briefly unavailable — precisely the situation the NVMe scratch was adopted to
+    avoid. Verify the destination exists and is non-empty (matching byte counts is
+    cheap), and on failure keep `/scratch`, print the node name and path so the
+    log can be recovered by hand, and fail the job. Instance store is ephemeral:
+    the recovery window closes when the node scales down. This removes
     out-of-core I/O from the shared filesystem entirely — the concurrency cap
     and contention concerns above then apply only to input staging, and
     out-of-core solves stop competing with each other. Remember instance store
@@ -247,8 +348,30 @@ That said, do still scan the log for **genuine** errors rather than ignoring
 expected on those models, but other errors — license checkout failures, MPI
 communication aborts, insufficient memory or disk — are real and must fail the
 run. A robust success test is therefore: `RUN COMPLETED` present, a final
-`Elapsed Time (sec)` present, **and** no `*** ERROR ***` entries other than the
-expected iteration-limit termination.
+`Elapsed Time (sec)` present **and positive**, **and** no `*** ERROR ***` block
+other than the expected iteration-limit termination.
+
+Getting that test right is fiddlier than it looks, and the failure modes are
+silent in both directions. Four traps we hit:
+
+  * **Match error *blocks*, not lines, and ignore indentation.** A MAPDL error is
+    a header line plus continuation lines. Filtering out the line that contains
+    `iterations exceeds` leaves the `*** ERROR ***` header behind, so a naive
+    "count the headers that survive the filter" test rejects the very run it was
+    meant to accept. Anchoring on `^ \*\*\* ERROR` (exactly one leading space) is
+    the mirror-image bug: a column-zero or differently-indented real error
+    becomes invisible and the failed run is accepted.
+  * **Whitelist one exact signature, not a substring.** Only the
+    iteration-limit/user-request termination is benign. Anything else — including
+    a benign block *and* a real error in the same log — must fail.
+  * **Normalise a non-zero status only when it is explained.** Forcing the exit
+    status to 0 whenever the output looks complete also swallows unrelated
+    failures (a rank that died with status 42 after the solve finished writing).
+    Only clear the status when the benign signature, `RUN COMPLETED` and a
+    positive elapsed time are *all* present.
+  * **A zero exit status is not proof of anything.** A truncated log with rc=0
+    must fail. If output verification does not pass, synthesise a non-zero job
+    status — otherwise the scheduler records success for a run nobody verified.
 
 When parsing that timing line, note the format —
 
@@ -257,7 +380,19 @@ When parsing that timing line, note the format —
 ```
 
 take the number immediately after the `=`; a trailing regex match will pick the
-year out of the `Date` field.
+year out of the `Date` field. Require the result to be **> 0**: an interrupted run
+can report `0.000`, and recording that as a solve time silently corrupts any
+dataset built from these runs.
+
+The implementation of all of the above lives in
+[lib/mapdl-verdict.sh](https://github.com/aws-samples/hpc-applications/blob/main/apps/AnsysMechanical/lib/mapdl-verdict.sh),
+sourced by the sbatch, with each trap pinned by a fixture in
+[tests/](https://github.com/aws-samples/hpc-applications/blob/main/apps/AnsysMechanical/tests/).
+The tests need no scheduler, no licensed solver and no AWS credentials:
+
+```bash
+apps/AnsysMechanical/tests/run-tests.sh
+```
 
 # Benchmarks
 

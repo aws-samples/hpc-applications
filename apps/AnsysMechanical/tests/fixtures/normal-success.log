@@ -1,0 +1,33 @@
+ Ansys Mechanical Enterprise
+
+ *** NOTE ***                            CP =       0.281   TIME= 09:31:02
+ The MPI processes will be distributed across 2 machines.
+
+ SOLVE FOR LS 1 OF 1
+
+ *** NOTE ***                            CP =      12.500   TIME= 09:31:44
+ Distributed sparse solver maximum pivot= 1.234567890E+12 at node 1234
+ UY.
+
+ Equation solver computational rate used = 1234.567 Mflops
+
+ Memory allocated for solver = 42.000 GB
+ Solver Memory Mode: In-Core
+
+ *---------------------------------------------------------------------------*
+ |                                                                           |
+ |                    DISTRIBUTED ANSYS RUN COMPLETED                        |
+ |                                                                           |
+ |---------------------------------------------------------------------------|
+ |                                                                           |
+ |  Ansys Mechanical Enterprise                                              |
+ |                                                                           |
+ |---------------------------------------------------------------------------|
+ |  Database Requested(-db)     1024 MB     Scratch Memory Requested   1024 MB|
+ |  Maximum Database Used         86 MB     Maximum Scratch Memory Used 512 MB|
+ |---------------------------------------------------------------------------|
+ |                                                                           |
+ |        CP Time      (sec) =      842.310       Time  =  09:45:12          |
+ |        Elapsed Time (sec) =      845.000       Date  =  08/29/2026        |
+ |                                                                           |
+ *---------------------------------------------------------------------------*

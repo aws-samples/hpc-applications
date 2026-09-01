@@ -220,19 +220,74 @@ MPI_VERSION="$(mpirun --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | he
 LIBFABRIC_VERSION="$(fi_info --version 2>/dev/null | awk '/libfabric:/ {print $2; exit}')"
 EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print $2; exit}')"
 
-# --- Zero-arg fallback: recover Mechanical result metrics from output.log ----
-# Best-effort: MAPDL writes an "Elapsed Time (sec) = <N>" line near the end of
-# its output. Launch scripts that already time the solve should export
-# TIME_TO_SOLUTION instead of relying on this.
+# --- Timing validity ---------------------------------------------------------
+# time_to_solution_seconds is the model's target metric, so it must be a finite
+# POSITIVE number. This applies to an explicitly supplied value exactly as much
+# as to a derived one: recording 0 or -5 quietly poisons the training set.
+is_positive_number() { is_number "$1" && awk -v x="$1" 'BEGIN { exit !(x + 0 > 0) }'; }
+
+if [ -n "$TIME_TO_SOLUTION" ] && ! is_positive_number "$TIME_TO_SOLUTION"; then
+    echo "WARN: ignoring --time-to-solution '$TIME_TO_SOLUTION' (must be a number > 0)." >&2
+    TIME_TO_SOLUTION=""
+fi
+
+# --- Zero-arg fallback: recover the solve time from the solver output --------
+# MAPDL writes an "Elapsed Time (sec) = <N>" line near the end of its output.
+# Launch scripts that already time the solve should export TIME_TO_SOLUTION
+# instead of relying on this.
+#
+# Timing is only derived from a solve this script can VERIFY completed, because
+# a truncated log still carries an intermediate elapsed value that looks
+# perfectly valid. The authoritative implementation of these rules is
+# ../lib/mapdl-verdict.sh (unit-tested in ../tests); the compact copy below
+# keeps this recorder self-contained, which is a deliberate property - it must
+# stay runnable as a single copied file.
+mapdl_unexpected_error_blocks() {   # <file> -> count of non-benign error blocks
+    awk '
+      function flush() {
+          if (inblk) { gsub(/[[:space:]]+/, " ", buf)
+              if (buf !~ /number of iterations exceeds [0-9]+.*terminated at the.*user.?s request/) n++ }
+          inblk = 0; buf = ""
+      }
+      /\*\*\* ERROR \*\*\*/                   { flush(); inblk = 1; next }
+      inblk && /^[[:space:]]*$/               { flush(); next }
+      inblk && /\*\*\* (WARNING|NOTE) \*\*\*/ { flush(); next }
+      inblk && /^[[:space:]]*\*-|^[[:space:]]*\|-/ { flush(); next }
+      inblk                                   { buf = buf " " $0; next }
+      END { flush(); print n + 0 }
+    ' "$1" 2>/dev/null
+}
+
 if [ -z "$TIME_TO_SOLUTION" ]; then
-    _mln="$(grep -rhiE 'Elapsed [Tt]ime *\(sec\)' "$RUN_DIR"/output.log "$RUN_DIR"/*.out 2>/dev/null | tail -1)"
-    if [ -n "$_mln" ]; then
-        # Take the number immediately AFTER the '='. MAPDL's summary line ends
-        # with a Date field (`... = 1327.590   Date = 08/29/2026 |`), so taking
-        # the LAST number on the line records the YEAR as the solve time.
-        TIME_TO_SOLUTION="$(printf '%s\n' "$_mln" \
-            | sed -E 's/.*[Ee]lapsed [Tt]ime *\(sec\) *= *([0-9]+(\.[0-9]+)?).*/\1/')"
-        case "$TIME_TO_SOLUTION" in ''|*[!0-9.]*) TIME_TO_SOLUTION="";; esac
+    # Include the launcher's own output-<jobid>.log naming, not just output.log.
+    _out=""
+    for _cand in "$RUN_DIR"/output.log "$RUN_DIR"/output-*.log "$RUN_DIR"/*.out; do
+        [ -r "$_cand" ] || continue
+        if [ -z "$_out" ] || [ "$_cand" -nt "$_out" ]; then _out="$_cand"; fi
+    done
+    if [ -n "$_out" ]; then
+        if ! grep -q 'RUN COMPLETED' "$_out" 2>/dev/null; then
+            echo "NOTE: '$_out' has no 'RUN COMPLETED' marker; not deriving a solve time from" >&2
+            echo "      an unverified run. Pass --time-to-solution explicitly if you trust it." >&2
+        elif [ "$(mapdl_unexpected_error_blocks "$_out")" -ne 0 ]; then
+            echo "NOTE: '$_out' contains unexpected MAPDL error block(s); not deriving a solve" >&2
+            echo "      time from a run that did not finish cleanly." >&2
+        else
+            # Take the number immediately AFTER the '='. MAPDL's summary line ends
+            # with a Date field (`... = 1327.590   Date = 08/29/2026 |`), so taking
+            # the LAST number on the line records the YEAR as the solve time.
+            _mln="$(grep -hiE 'Elapsed [Tt]ime *\(sec\)' "$_out" 2>/dev/null | tail -1)"
+            if [ -n "$_mln" ]; then
+                TIME_TO_SOLUTION="$(printf '%s\n' "$_mln" \
+                    | sed -E 's/.*[Ee]lapsed [Tt]ime *\(sec\) *= *(-?[0-9]+(\.[0-9]+)?).*/\1/')"
+                if ! is_positive_number "${TIME_TO_SOLUTION:-}"; then
+                    echo "NOTE: '$_out' reports a non-positive elapsed time ('${TIME_TO_SOLUTION:-none}'); ignoring it." >&2
+                    TIME_TO_SOLUTION=""
+                else
+                    echo "NOTE: derived time_to_solution_seconds=${TIME_TO_SOLUTION} from ${_out} (verified complete)." >&2
+                fi
+            fi
+        fi
     fi
 fi
 
@@ -308,7 +363,8 @@ done
 ITEM_JSON+="}"
 
 if [ "$DRY_RUN" -eq 1 ]; then
-    echo "# DRY RUN — would write to table '${TABLE}' (region ${REGION}); no file, no AWS."
+    # Banner on stderr so stdout stays pure JSON and can be piped to jq/python.
+    echo "# DRY RUN — would write to table '${TABLE}' (region ${REGION}); no file, no AWS." >&2
     echo "$ITEM_JSON"; exit 0
 fi
 
@@ -327,8 +383,10 @@ if [ "$attempt_put" -eq 1 ]; then
     if ! command -v aws >/dev/null 2>&1; then
         echo "NOTE: AWS CLI not found; kept JSON only. Send ${JSON_FILE} to the dataset owner." >&2; exit 0
     fi
-    put_err="$( aws dynamodb put-item --region "$REGION" --table-name "$TABLE" --item "file://${JSON_FILE}" 2>&1 )"
-    if [ $? -eq 0 ]; then
+    # Test the command directly rather than a separate `$?` read, so the status
+    # cannot be clobbered by anything between the call and the check.
+    if put_err="$( aws dynamodb put-item --region "$REGION" --table-name "$TABLE" \
+                       --item "file://${JSON_FILE}" 2>&1 )"; then
         echo "Stored in DynamoDB: table=${TABLE} record_id=${RECORD_ID}"
     else
         if [ "$DO_PUT" = "yes" ]; then echo "ERROR: put-item failed: ${put_err}" >&2; exit 1; fi
