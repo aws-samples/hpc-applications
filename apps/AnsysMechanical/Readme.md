@@ -207,15 +207,23 @@ filesystem this is a hard planning constraint:
     that is both faster (local, no network round-trip) and effectively free
     compared to shared-filesystem capacity and throughput. AWS ParallelCluster
     formats and mounts the instance store at **`/scratch`** automatically. Run
-    the solve with its working directory on `/scratch` (MAPDL writes its
-    scratch files to the working directory; in DMP each rank writes to the same
-    path local to its own node), keep the input `.dat`/`.db` on the shared
-    filesystem, and copy the output file back at the end of the job. This
-    removes out-of-core I/O from the shared filesystem entirely — the
-    concurrency cap and contention concerns above then apply only to input
-    staging, and out-of-core solves stop competing with each other. Remember
-    instance store is ephemeral: anything not copied back is lost when the node
-    scales down.
+    the solve with its working directory on `/scratch` — MAPDL writes its
+    scratch files to the working directory, and this works **multi-node**
+    (verified): in DMP every rank resolves the same path locally on its own
+    node, so each node uses its own NVMe. Three mechanics to get right:
+    **create** the working directory on every node before launching (e.g.
+    `srun --ntasks-per-node=1 mkdir -p $workdir`), keep the input `.dat`/`.db`
+    on the shared filesystem (only the master rank reads them — symlinks into
+    the workdir suffice), and at the end copy the output file (written on the
+    master node) back to the shared filesystem, then **reclaim** `/scratch` on
+    every node (`srun --ntasks-per-node=1 rm -rf $workdir`) — warm nodes are
+    reused between jobs and leftover scratch accumulates. This removes
+    out-of-core I/O from the shared filesystem entirely — the concurrency cap
+    and contention concerns above then apply only to input staging, and
+    out-of-core solves stop competing with each other. Remember instance store
+    is ephemeral: anything not copied back is lost when the node scales down.
+    The [AnsysMechanical.sbatch](https://github.com/aws-samples/hpc-applications/blob/main/apps/AnsysMechanical/AnsysMechanical.sbatch)
+    in this directory implements all of this (`SCRATCH_MODE=auto|nvme|shared`).
 
 ## Exit codes: do not use them to decide success
 

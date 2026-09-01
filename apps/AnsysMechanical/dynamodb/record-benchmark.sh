@@ -227,7 +227,12 @@ EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print 
 if [ -z "$TIME_TO_SOLUTION" ]; then
     _mln="$(grep -rhiE 'Elapsed [Tt]ime *\(sec\)' "$RUN_DIR"/output.log "$RUN_DIR"/*.out 2>/dev/null | tail -1)"
     if [ -n "$_mln" ]; then
-        TIME_TO_SOLUTION="$(printf '%s\n' "$_mln" | grep -oE '[0-9]+(\.[0-9]+)?' | tail -1)"
+        # Take the number immediately AFTER the '='. MAPDL's summary line ends
+        # with a Date field (`... = 1327.590   Date = 08/29/2026 |`), so taking
+        # the LAST number on the line records the YEAR as the solve time.
+        TIME_TO_SOLUTION="$(printf '%s\n' "$_mln" \
+            | sed -E 's/.*[Ee]lapsed [Tt]ime *\(sec\) *= *([0-9]+(\.[0-9]+)?).*/\1/')"
+        case "$TIME_TO_SOLUTION" in ''|*[!0-9.]*) TIME_TO_SOLUTION="";; esac
     fi
 fi
 
