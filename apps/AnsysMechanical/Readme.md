@@ -8,7 +8,7 @@ with the distributed-memory parallel (DMP) solver under a job scheduler.
 # Versions
 
 Best practices here are written against **2026 R1** (`v261`, `ansys261`) and apply
-to 2023 and newer. Ansys does not currently support Arm/Graviton for MAPDL.
+to 2023 and newer.
 
 # Installation
 
