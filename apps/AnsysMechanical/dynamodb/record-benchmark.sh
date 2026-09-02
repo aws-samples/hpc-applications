@@ -206,9 +206,33 @@ add_kv() {
 if [ -z "$OPERATING_SYSTEM" ] && [ -r /etc/os-release ]; then
     OPERATING_SYSTEM="$(. /etc/os-release 2>/dev/null && printf '%s' "${PRETTY_NAME:-}")"
 fi
+# --- cores_per_node: derive only when it is genuinely a single value -----------
+# NEVER invent a uniform per-node count for a layout that is not uniform. The old
+# rule (ceil(num_cores / num_nodes)) turned an 85-core / 2-node allocation into
+# "cores_per_node = 43", which is one node's share reported as though it applied to
+# both -- incorrect topology written straight into the benchmark dataset.
+#
+# Two no-derive conditions, so a wrong value cannot appear even if the caller
+# forgets to describe the layout:
+#   1. a task_placement characteristic was supplied  -> the real layout is on
+#      record, so any single number would contradict it;
+#   2. num_cores is not an exact multiple of num_nodes -> no single value exists.
+# An explicitly supplied --cores-per-node is always honoured.
+_has_task_placement=0
+for _pair in "${EXTRA_CHARS[@]:-}"; do
+    case "$_pair" in task_placement=*) _has_task_placement=1;; esac
+done
+
 if [ -z "$CORES_PER_NODE" ] && is_number "${NUM_CORES:-}" && is_number "${NUM_INSTANCES:-}" \
         && [ "${NUM_INSTANCES:-0}" -gt 0 ] 2>/dev/null; then
-    CORES_PER_NODE=$(( (NUM_CORES / NUM_INSTANCES) + (NUM_CORES % NUM_INSTANCES > 0) ))
+    if [ "$_has_task_placement" -eq 1 ]; then
+        echo "NOTE: task_placement supplied; not deriving cores_per_node (the layout is not a single value)." >&2
+    elif [ $(( NUM_CORES % NUM_INSTANCES )) -ne 0 ]; then
+        echo "WARN: ${NUM_CORES} cores over ${NUM_INSTANCES} node(s) is not uniform; omitting cores_per_node." >&2
+        echo "      Pass --char task_placement=<host:cores:...> to record the real layout." >&2
+    else
+        CORES_PER_NODE=$(( NUM_CORES / NUM_INSTANCES ))
+    fi
 fi
 if [ -z "$MPI_IMPLEMENTATION" ] && command -v mpirun >/dev/null 2>&1; then
     _mpiv="$(mpirun --version 2>&1)"
@@ -220,14 +244,87 @@ MPI_VERSION="$(mpirun --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | he
 LIBFABRIC_VERSION="$(fi_info --version 2>/dev/null | awk '/libfabric:/ {print $2; exit}')"
 EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print $2; exit}')"
 
-# --- Zero-arg fallback: recover Mechanical result metrics from output.log ----
-# Best-effort: MAPDL writes an "Elapsed Time (sec) = <N>" line near the end of
-# its output. Launch scripts that already time the solve should export
-# TIME_TO_SOLUTION instead of relying on this.
+# --- Timing validity ---------------------------------------------------------
+# time_to_solution_seconds is the model's target metric, so it must be a finite
+# POSITIVE number. This applies to an explicitly supplied value exactly as much
+# as to a derived one: recording 0 or -5 quietly poisons the training set.
+is_positive_number() { is_number "$1" && awk -v x="$1" 'BEGIN { exit !(x + 0 > 0) }'; }
+
+if [ -n "$TIME_TO_SOLUTION" ] && ! is_positive_number "$TIME_TO_SOLUTION"; then
+    echo "WARN: ignoring --time-to-solution '$TIME_TO_SOLUTION' (must be a number > 0)." >&2
+    TIME_TO_SOLUTION=""
+fi
+
+# --- Zero-arg fallback: recover the solve time from the solver output --------
+# MAPDL writes an "Elapsed Time (sec) = <N>" line near the end of its output.
+# Launch scripts that already time the solve should export TIME_TO_SOLUTION
+# instead of relying on this.
+#
+# Timing is only derived from a solve this script can VERIFY completed, because
+# a truncated log still carries an intermediate elapsed value that looks
+# perfectly valid. The authoritative implementation of these rules is
+# ../lib/mapdl-verdict.sh (unit-tested in ../tests); the compact copy below
+# keeps this recorder self-contained, which is a deliberate property - it must
+# stay runnable as a single copied file.
+# The benign pattern is ANCHORED at both ends: a block that carries the expected
+# termination text PLUS another genuine failure must NOT count as benign.
+#
+# This MUST classify identically to ../lib/mapdl-verdict.sh, which is the
+# authoritative implementation -- if the two disagree, the same solver output is
+# accepted live and rejected on replay (or vice versa). Kept in step deliberately:
+# same whitespace normalisation (squeeze, then trim BOTH ends) and the same
+# literal-apostrophe possessive. The apostrophe arrives as an awk variable
+# because the program body is single-quoted here.
+mapdl_unexpected_error_blocks() {   # <file> -> count of non-benign error blocks
+    awk -v apos="'" '
+      function flush() {
+          if (inblk) {
+              gsub(/[[:space:]]+/, " ", buf)
+              sub(/^[[:space:]]+/, "", buf); sub(/[[:space:]]+$/, "", buf)
+              re = "^The number of (iterations|substeps) exceeds [0-9]+(\\. The run is terminated| and the run was terminated) at the user(" apos "|’)s request\\.?$"
+              if (buf !~ re) n++
+          }
+          inblk = 0; buf = ""
+      }
+      /\*\*\* ERROR \*\*\*/                   { flush(); inblk = 1; next }
+      inblk && /^[[:space:]]*$/               { flush(); next }
+      inblk && /\*\*\* (WARNING|NOTE) \*\*\*/ { flush(); next }
+      inblk && /^[[:space:]]*\*-|^[[:space:]]*\|-/ { flush(); next }
+      inblk                                   { buf = buf " " $0; next }
+      END { flush(); print n + 0 }
+    ' "$1" 2>/dev/null
+}
+
 if [ -z "$TIME_TO_SOLUTION" ]; then
-    _mln="$(grep -rhiE 'Elapsed [Tt]ime *\(sec\)' "$RUN_DIR"/output.log "$RUN_DIR"/*.out 2>/dev/null | tail -1)"
-    if [ -n "$_mln" ]; then
-        TIME_TO_SOLUTION="$(printf '%s\n' "$_mln" | grep -oE '[0-9]+(\.[0-9]+)?' | tail -1)"
+    # Include the launcher's own output-<jobid>.log naming, not just output.log.
+    _out=""
+    for _cand in "$RUN_DIR"/output.log "$RUN_DIR"/output-*.log "$RUN_DIR"/*.out; do
+        [ -r "$_cand" ] || continue
+        if [ -z "$_out" ] || [ "$_cand" -nt "$_out" ]; then _out="$_cand"; fi
+    done
+    if [ -n "$_out" ]; then
+        if ! grep -q 'RUN COMPLETED' "$_out" 2>/dev/null; then
+            echo "NOTE: '$_out' has no 'RUN COMPLETED' marker; not deriving a solve time from" >&2
+            echo "      an unverified run. Pass --time-to-solution explicitly if you trust it." >&2
+        elif [ "$(mapdl_unexpected_error_blocks "$_out")" -ne 0 ]; then
+            echo "NOTE: '$_out' contains unexpected MAPDL error block(s); not deriving a solve" >&2
+            echo "      time from a run that did not finish cleanly." >&2
+        else
+            # Take the number immediately AFTER the '='. MAPDL's summary line ends
+            # with a Date field (`... = 1327.590   Date = 08/29/2026 |`), so taking
+            # the LAST number on the line records the YEAR as the solve time.
+            _mln="$(grep -hiE 'Elapsed [Tt]ime *\(sec\)' "$_out" 2>/dev/null | tail -1)"
+            if [ -n "$_mln" ]; then
+                TIME_TO_SOLUTION="$(printf '%s\n' "$_mln" \
+                    | sed -E 's/.*[Ee]lapsed [Tt]ime *\(sec\) *= *(-?[0-9]+(\.[0-9]+)?).*/\1/')"
+                if ! is_positive_number "${TIME_TO_SOLUTION:-}"; then
+                    echo "NOTE: '$_out' reports a non-positive elapsed time ('${TIME_TO_SOLUTION:-none}'); ignoring it." >&2
+                    TIME_TO_SOLUTION=""
+                else
+                    echo "NOTE: derived time_to_solution_seconds=${TIME_TO_SOLUTION} from ${_out} (verified complete)." >&2
+                fi
+            fi
+        fi
     fi
 fi
 
@@ -303,7 +400,8 @@ done
 ITEM_JSON+="}"
 
 if [ "$DRY_RUN" -eq 1 ]; then
-    echo "# DRY RUN — would write to table '${TABLE}' (region ${REGION}); no file, no AWS."
+    # Banner on stderr so stdout stays pure JSON and can be piped to jq/python.
+    echo "# DRY RUN — would write to table '${TABLE}' (region ${REGION}); no file, no AWS." >&2
     echo "$ITEM_JSON"; exit 0
 fi
 
@@ -322,8 +420,10 @@ if [ "$attempt_put" -eq 1 ]; then
     if ! command -v aws >/dev/null 2>&1; then
         echo "NOTE: AWS CLI not found; kept JSON only. Send ${JSON_FILE} to the dataset owner." >&2; exit 0
     fi
-    put_err="$( aws dynamodb put-item --region "$REGION" --table-name "$TABLE" --item "file://${JSON_FILE}" 2>&1 )"
-    if [ $? -eq 0 ]; then
+    # Test the command directly rather than a separate `$?` read, so the status
+    # cannot be clobbered by anything between the call and the check.
+    if put_err="$( aws dynamodb put-item --region "$REGION" --table-name "$TABLE" \
+                       --item "file://${JSON_FILE}" 2>&1 )"; then
         echo "Stored in DynamoDB: table=${TABLE} record_id=${RECORD_ID}"
     else
         if [ "$DO_PUT" = "yes" ]; then echo "ERROR: put-item failed: ${put_err}" >&2; exit 1; fi

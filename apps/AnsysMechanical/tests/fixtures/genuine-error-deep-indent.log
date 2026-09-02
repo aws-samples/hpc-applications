@@ -1,0 +1,17 @@
+ Ansys Mechanical Enterprise
+
+ SOLVE FOR LS 1 OF 1
+
+      *** ERROR ***                      CP =     120.400   TIME= 09:35:02
+      There is not enough memory for the sparse solver to proceed.  Please
+      increase the amount of memory available.
+
+ *---------------------------------------------------------------------------*
+ |                                                                           |
+ |                    DISTRIBUTED ANSYS RUN COMPLETED                        |
+ |                                                                           |
+ |---------------------------------------------------------------------------|
+ |                                                                           |
+ |        Elapsed Time (sec) =      121.000       Date  =  08/29/2026        |
+ |                                                                           |
+ *---------------------------------------------------------------------------*
