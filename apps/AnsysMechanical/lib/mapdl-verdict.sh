@@ -27,7 +27,27 @@
 
 # The single known-benign signature: a deliberate stop at the configured
 # iteration/substep limit.
-MAPDL_BENIGN_ERROR_RE='number of iterations exceeds [0-9]+.*terminated at the.*user.?s request'
+#
+# ANCHORED AT BOTH ENDS ON PURPOSE. A substring match would accept a block that
+# contains the expected phrases *plus* a second, genuine failure, e.g.
+#
+#   *** ERROR ***
+#   The number of iterations exceeds 25 and the run was terminated at the
+#   user's request.
+#   The results database also failed to write and output is incomplete.
+#
+# The whole block must consist of nothing but the expected termination text, so
+# any extra sentence makes it unexpected and fails the run. Two observed wording
+# variants are accepted; whitespace is already squeezed by mapdl_error_blocks.
+MAPDL_BENIGN_ERROR_RE='^ERR: The number of (iterations|substeps) exceeds [0-9]+(\. The run is terminated| and the run was terminated) at the user.?s request\.?$'
+
+# Exit statuses that a benign fixed-iteration termination is allowed to produce.
+# Grounded in the recorded campaign: across 87 V26 Cluster runs the deliberate
+# fixed-iteration stop (V26direct-5/-6) exited 1 (17x) and 255 (8x), while runs
+# that reached their own end exited 0 (62x). Restricting normalisation to this set
+# is what stops an ARBITRARY failure status from being masked by a benign-looking
+# block: rc=42 alongside a benign block stays 42.
+MAPDL_BENIGN_EXIT_STATUSES=" 0 1 255 "
 
 # Declared up front so a caller running with `set -u` can reference them safely
 # before the first mapdl_solve_verdict call.
@@ -68,7 +88,8 @@ mapdl_count_error_blocks() {
     blocks="$(mapdl_error_blocks "$f")"
     if [ -n "$blocks" ]; then
         total="$(printf '%s\n' "$blocks" | grep -c '^ERR: ' || true)"
-        benign="$(printf '%s\n' "$blocks" | grep -ciE "^ERR: .*${MAPDL_BENIGN_ERROR_RE}" || true)"
+        # The pattern carries its own ^/$ anchors - do NOT wrap it in '.*'.
+        benign="$(printf '%s\n' "$blocks" | grep -cE "${MAPDL_BENIGN_ERROR_RE}" || true)"
     fi
     : "${total:=0}" "${benign:=0}"
     printf '%s %s %s\n' "$total" "$benign" "$(( total - benign ))"
@@ -142,11 +163,15 @@ mapdl_memory_mode() {
 #
 # MAPDL_SOLVE_OK=1 requires: "RUN COMPLETED" + elapsed > 0 + no unexpected blocks.
 # MAPDL_FINAL_RC:
-#   verified,   rc == 0                     -> 0
-#   verified,   rc != 0, benign block found  -> 0   (non-zero fully explained)
-#   verified,   rc != 0, no benign block     -> rc  (unexplained: never masked)
-#   unverified, rc != 0                      -> rc
-#   unverified, rc == 0                      -> 3   (synthesised failure)
+#   verified,   rc == 0                                          -> 0
+#   verified,   rc != 0, benign block AND rc in benign status set -> 0
+#   verified,   rc != 0, benign block but rc NOT in that set      -> rc
+#   verified,   rc != 0, no benign block                          -> rc
+#   unverified, rc != 0                                           -> rc
+#   unverified, rc == 0                                           -> 3 (synthesised)
+#
+# The status-set condition matters: without it any arbitrary failure status is
+# masked to success whenever a benign-looking block happens to be present.
 mapdl_solve_verdict() {
     local f="$1" rc="${2:-0}" counts rest
     counts="$(mapdl_count_error_blocks "$f")"
@@ -167,12 +192,22 @@ mapdl_solve_verdict() {
     fi
 
     if [ "$MAPDL_SOLVE_OK" -eq 1 ]; then
-        if   [ "$rc" -eq 0 ];            then MAPDL_FINAL_RC=0
-        elif [ "$MAPDL_BENIGN" -gt 0 ];  then MAPDL_FINAL_RC=0
-        else                                  MAPDL_FINAL_RC="$rc"; fi
+        if [ "$rc" -eq 0 ]; then
+            MAPDL_FINAL_RC=0
+        elif [ "$MAPDL_BENIGN" -gt 0 ] \
+             && [ "${MAPDL_BENIGN_EXIT_STATUSES#* "$rc" }" != "$MAPDL_BENIGN_EXIT_STATUSES" ]; then
+            MAPDL_FINAL_RC=0
+        else
+            MAPDL_FINAL_RC="$rc"
+        fi
     else
         if [ "$rc" -ne 0 ]; then MAPDL_FINAL_RC="$rc"; else MAPDL_FINAL_RC=3; fi
     fi
+
+    # An accepted run means BOTH: output verified AND a final status of zero. The
+    # launcher gates benchmark recording on this, so a job that exits non-zero can
+    # never contribute a row to the dataset.
+    [ "$MAPDL_FINAL_RC" -eq 0 ] || MAPDL_SOLVE_OK=0
 }
 
 # One-line, log-friendly rendering of the last mapdl_solve_verdict call.

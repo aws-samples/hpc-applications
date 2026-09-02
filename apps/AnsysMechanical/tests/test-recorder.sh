@@ -96,6 +96,22 @@ else
 fi
 rm -rf "${tmp}"
 
+# The recorder carries its own copy of the block classifier, so the anchored
+# benign match must hold here too: expected termination text PLUS another failure
+# in the same block is NOT benign and must not yield a recorded solve time.
+for fx in benign-block-with-extra-failure benign-block-observed-wording-with-extra-failure; do
+    tmp="$(mktemp -d)"
+    cp "${FIX}/${fx}.log" "${tmp}/output-90218.log"
+    out="$(run_rec "${tmp}")"
+    if has_attr "${out}" time_to_solution_seconds; then
+        bad "${fx}: derives no timing" "attribute absent" \
+            "$(attr_n "${out}" time_to_solution_seconds)"
+    else
+        ok "${fx}: augmented benign block derives no timing"
+    fi
+    rm -rf "${tmp}"
+done
+
 tmp="$(mktemp -d)"
 cp "${FIX}/zero-elapsed.log" "${tmp}/output-90214.log"
 out="$(run_rec "${tmp}")"

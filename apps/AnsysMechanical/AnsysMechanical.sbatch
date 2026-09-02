@@ -18,9 +18,10 @@
 #     BASE_DIR          install/base root (default /fsx)
 #     SCRATCH_MODE      auto | nvme | shared   (default auto)
 #                       nvme/auto run the solve from node-local instance-store
-#                       NVMe (/scratch, mounted by ParallelCluster) when present
-#                       on ALL nodes - faster for out-of-core solves and keeps
-#                       heavy scratch I/O off the shared filesystem.
+#                       NVMe (SCRATCH_ROOT, mounted by ParallelCluster) when
+#                       present on ALL nodes - faster for out-of-core solves and
+#                       keeps heavy scratch I/O off the shared filesystem.
+#     SCRATCH_ROOT      instance-store mount point (default /scratch).
 #     ANSYS_COMPAT_DIR  dir with the legacy libs AL2023 lacks (see Readme.md);
 #                       default ${BASE_DIR}/ansys_compat, used when it exists.
 #     ANSYSLMD_LICENSE_FILE, SOURCE, DYNAMODB_RECORDER    see recorder section.
@@ -89,6 +90,9 @@ mechanicalversion=${1:-"v261"}
 input_file=${2:-"/fsx/.../your_file.dat"}
 basedir=${BASE_DIR:-"/fsx"}
 scratch_mode=${SCRATCH_MODE:-"auto"}
+# Where node-local instance-store NVMe is mounted. ParallelCluster uses /scratch;
+# override for clusters that mount it elsewhere.
+scratch_root=${SCRATCH_ROOT:-"/scratch"}
 
 APP_BIN_PATH="${basedir}/ansys_inc/${mechanicalversion}/ansys/bin/mapdl"
 
@@ -130,7 +134,12 @@ TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-m
 instanceType=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
 run_tag="${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${instanceType}-${SLURM_NPROCS}-$(date "+%d-%m-%Y-%H-%M")"
 shared_dir="$(readlink -m "${basedir}/${SLURM_JOB_NAME%.*}")/Run/${run_tag}"
-mkdir -p "${shared_dir}"
+if ! mkdir -p "${shared_dir}"; then
+    echo "ERROR: cannot create the shared run directory '${shared_dir}'." >&2
+    echo "       Check that ${basedir} is mounted and writable. Refusing to run: the" >&2
+    echo "       solver log would have nowhere durable to land." >&2
+    exit 1
+fi
 
 # --- working directory: node-local NVMe when available ----------------------
 # MAPDL writes its scratch to the working directory, and in DMP every rank
@@ -142,13 +151,13 @@ mkdir -p "${shared_dir}"
 workdir="${shared_dir}"
 if [ "${scratch_mode}" != "shared" ]; then
     if srun --ntasks=${SLURM_JOB_NUM_NODES} --ntasks-per-node=1 \
-         /bin/bash -c '[ -d /scratch ] && [ -w /scratch ]' 2>/dev/null; then
-        workdir="/scratch/mapdl-${run_tag}"
+         /bin/bash -c "[ -d '${scratch_root}' ] && [ -w '${scratch_root}' ]" 2>/dev/null; then
+        workdir="${scratch_root}/mapdl-${run_tag}"
         srun --ntasks=${SLURM_JOB_NUM_NODES} --ntasks-per-node=1 mkdir -p "${workdir}"
         scratch_mode="nvme"
         echo "Using node-local NVMe scratch on all ${SLURM_JOB_NUM_NODES} node(s): ${workdir}"
     elif [ "${scratch_mode}" = "nvme" ]; then
-        echo "WARNING: SCRATCH_MODE=nvme requested but /scratch is unavailable on some node; using shared filesystem." >&2
+        echo "WARNING: SCRATCH_MODE=nvme requested but '${scratch_root}' is unavailable on some node; using shared filesystem." >&2
         scratch_mode="shared"
     else
         scratch_mode="shared"
@@ -189,23 +198,25 @@ expand_tasks_per_node() {   # "64(x2),32" -> "64 64 32"
 mapfile -t _hosts < <(scontrol show hostnames="${SLURM_JOB_NODELIST}")
 read -r -a _tpn <<< "$(expand_tasks_per_node "${SLURM_TASKS_PER_NODE:-}" || true)"
 
+# FAIL CLOSED if Slurm's placement cannot be read. Redistributing the tasks
+# ourselves would INVENT a placement rather than learn it, and guessing wrong means
+# oversubscribed nodes and over-drawn licence tokens.
 if [ "${#_tpn[@]}" -ne "${#_hosts[@]}" ]; then
-    # Slurm did not tell us (or told us something unparseable): distribute the
-    # tasks as evenly as possible and give the remainder to the first hosts, so
-    # the total always equals SLURM_NPROCS exactly.
-    echo "NOTE: SLURM_TASKS_PER_NODE ('${SLURM_TASKS_PER_NODE:-unset}') did not match ${#_hosts[@]} host(s); distributing ${SLURM_NPROCS} tasks evenly."
-    _tpn=()
-    _base=$(( SLURM_NPROCS / ${#_hosts[@]} ))
-    _rem=$((  SLURM_NPROCS % ${#_hosts[@]} ))
-    for _i in "${!_hosts[@]}"; do
-        if [ "${_i}" -lt "${_rem}" ]; then _tpn+=( $(( _base + 1 )) ); else _tpn+=( "${_base}" ); fi
-    done
+    echo "ERROR: cannot determine the per-host task placement from Slurm." >&2
+    echo "       SLURM_TASKS_PER_NODE='${SLURM_TASKS_PER_NODE:-unset}' expands to ${#_tpn[@]} entry/entries" >&2
+    echo "       but SLURM_JOB_NODELIST='${SLURM_JOB_NODELIST:-unset}' has ${#_hosts[@]} host(s)." >&2
+    echo "       Refusing to guess: an invented -machines list oversubscribes nodes and" >&2
+    echo "       over-draws HPC licence tokens. Submit with an explicit homogeneous layout" >&2
+    echo "       (--nodes=N --ntasks-per-node=C) so Slurm reports the placement, or query" >&2
+    echo "       it authoritatively (e.g. scontrol show job \"\$SLURM_JOB_ID\")." >&2
+    exit 1
 fi
 
-machines=""; _tpn_sum=0
+machines=""; _tpn_sum=0; _tpn_uniform=1
 for _i in "${!_hosts[@]}"; do
     machines="${machines}:${_hosts[$_i]}:${_tpn[$_i]}"
     _tpn_sum=$(( _tpn_sum + _tpn[_i] ))
+    [ "${_tpn[$_i]}" = "${_tpn[0]}" ] || _tpn_uniform=0
 done
 machines="${machines:1}"
 
@@ -214,9 +225,16 @@ if [ "${_tpn_sum}" -ne "${SLURM_NPROCS}" ]; then
     echo "       Refusing to run rather than over- or under-subscribing the allocation." >&2
     exit 1
 fi
-# Representative per-node count for logging/recording (exact when homogeneous).
-export cores_x_node="${_tpn[0]}"
-echo "Task placement: ${machines} (total ${_tpn_sum} cores over ${#_hosts[@]} node(s))"
+# Per-node count, meaningful ONLY when the allocation is homogeneous. Left empty
+# for a heterogeneous layout so nothing downstream records one node's share as if
+# it applied to all of them.
+if [ "${_tpn_uniform}" -eq 1 ]; then
+    export cores_x_node="${_tpn[0]}"
+else
+    export cores_x_node=""
+    echo "NOTE: heterogeneous task placement (${machines}); cores_per_node is not a single value."
+fi
+echo "Task placement: ${machines} (total ${_tpn_sum} cores over ${#_hosts[@]} node(s); uniform=${_tpn_uniform})"
 
 cp "$0" "${shared_dir}/" 2>/dev/null
 # inputs are read only by the master rank; symlinks into the workdir suffice
@@ -298,15 +316,30 @@ for _c in "${_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/apps/AnsysMechanical/dynamodb/record-benchmark.sh"; do
     if [ -n "${_c}" ] && [ -x "${_c}" ]; then _recorder="${_c}"; break; fi
 done
-if [ "${solve_ok}" -eq 1 ] && [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
+# Recorder eligibility means the run was ACCEPTED OVERALL, not merely that the
+# output looked complete: verified output AND a final status of zero AND a durable
+# stage-out. A job the scheduler reports as failed must never contribute a
+# benchmark row, otherwise a failure silently becomes training data.
+if [ "${final_rc}" -eq 0 ] && [ "${solve_ok}" -eq 1 ] \
+   && [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
     _rec_args=( --char memory_mode="${memory_mode}" --char scratch_mode="${scratch_mode}" )
     # Only pass the MAPDL-reported solver time when it is actually valid; the
     # verdict above already guarantees it is positive when solve_ok=1.
     [ -n "${mapdl_elapsed}" ] && _rec_args+=( --metric mapdl_elapsed_seconds="${mapdl_elapsed}" )
-    [ -n "${cores_x_node:-}" ] && _rec_args+=( --cores-per-node "${cores_x_node}" )
+    # cores_per_node is only meaningful when EVERY node got the same count.
+    # Recording one node's share as if it were uniform would misdescribe a
+    # heterogeneous allocation, so record the real layout instead.
+    if [ "${_tpn_uniform}" -eq 1 ] && [ -n "${cores_x_node:-}" ]; then
+        _rec_args+=( --cores-per-node "${cores_x_node}" )
+    else
+        _rec_args+=( --char task_placement="${machines}" )
+        echo "NOTE: heterogeneous task placement; recording task_placement instead of cores_per_node." >&2
+    fi
     MECHANICAL_VERSION="${mechanicalversion}" BENCHMARK_CASE="$(basename "${input_file%.*}")" \
     TIME_TO_SOLUTION="${_rec_secs}" RUN_DIR="${shared_dir}" "${_recorder}" "${_rec_args[@]}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
+elif [ "${final_rc}" -ne 0 ]; then
+    echo "NOTE: run not accepted (solver rc=${_rec_rc}, final rc=${final_rc}); skipping benchmark recording." >&2
 elif [ "${solve_ok}" -ne 1 ]; then
     echo "NOTE: solve not verified (rc=${_rec_rc}); skipping benchmark recording." >&2
 else

@@ -242,11 +242,15 @@ fi
 # ../lib/mapdl-verdict.sh (unit-tested in ../tests); the compact copy below
 # keeps this recorder self-contained, which is a deliberate property - it must
 # stay runnable as a single copied file.
+# The benign pattern is ANCHORED at both ends: a block that carries the expected
+# termination text PLUS another genuine failure must NOT count as benign.
 mapdl_unexpected_error_blocks() {   # <file> -> count of non-benign error blocks
     awk '
       function flush() {
-          if (inblk) { gsub(/[[:space:]]+/, " ", buf)
-              if (buf !~ /number of iterations exceeds [0-9]+.*terminated at the.*user.?s request/) n++ }
+          if (inblk) {
+              gsub(/[[:space:]]+/, " ", buf); sub(/^ /, "", buf); sub(/ $/, "", buf)
+              if (buf !~ /^The number of (iterations|substeps) exceeds [0-9]+(\. The run is terminated| and the run was terminated) at the user.?s request\.?$/) n++
+          }
           inblk = 0; buf = ""
       }
       /\*\*\* ERROR \*\*\*/                   { flush(); inblk = 1; next }

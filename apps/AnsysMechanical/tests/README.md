@@ -29,10 +29,25 @@ boundary.
 | `zero-elapsed.log` | `Elapsed Time (sec) = 0.000` |
 | `negative-elapsed.log` | `Elapsed Time (sec) = -5.000` |
 
-`test-mapdl-verdict.sh` asserts the verdict and the resulting job exit status for
-each fixture across solver exit codes 0, 1, 2 and 42, plus stage-out behaviour
-(successful copy, byte-identical copy, already-shared path, empty source, missing
-source, unwritable destination).
+| `benign-block-with-extra-failure.log` | the expected termination text **plus** a second genuine failure in the *same* block |
+| `benign-block-observed-wording-with-extra-failure.log` | the same trap using the wording our own runs produce |
+
+`test-mapdl-verdict.sh` asserts the verdict and the resulting job exit status. Not
+every fixture is run against every status — the cases are chosen per boundary:
+
+  * the benign fixture across `{0, 1, 255}` (accepted) and `{2, 42, 137}`
+    (rejected, status preserved), which pins normalisation to the statuses the
+    fixed-iteration stop actually produces;
+  * genuine-error fixtures at `2` and at `0`, covering both a preserved status and
+    a synthesised one;
+  * the clean fixture at `42`, covering an unrelated failure that must not be
+    masked;
+  * an invariant check that *does* sweep all 8 fixtures across `{0, 1, 2, 42, 255}`:
+    `solve_ok=1` must never coexist with a non-zero final status, since that pairing
+    is what would let a failed job record a benchmark row.
+
+It also covers stage-out (successful copy, byte-identical copy, already-shared
+path, empty source, missing source, unwritable destination).
 
 `test-recorder.sh` exercises `dynamodb/record-benchmark.sh` in `--dry-run`:
 replay discovery of `output.log`, `output-<jobid>.log` and `*.out`; rejection of
@@ -42,12 +57,25 @@ and the emitted item being valid JSON carrying the canonical attributes.
 
 `test-sbatch-e2e.sh` runs **`AnsysMechanical.sbatch` itself**, with `scontrol`,
 `srun`, `mpirun`, `module`, `curl`, `sudo` and `mapdl` replaced by stubs, so the
-assembled script really executes rather than only passing `bash -n`. It asserts
-the job's final exit status for each fixture (including that a fixed-iteration
-deck exits 0 while a truncated `rc=0` run exits non-zero), that a failed run does
-not record a benchmark row, that `-machines` is built from `SLURM_TASKS_PER_NODE`
-and totals `SLURM_NPROCS`, that the recorder receives the expected metadata, and
-that a missing verdict library aborts before any solver time is spent.
+assembled script really executes rather than only passing `bash -n`. It asserts:
+
+  * the job's final exit status per fixture (a fixed-iteration deck exits 0; a
+    truncated `rc=0` run exits non-zero);
+  * **recorder eligibility** — a run that exits non-zero writes no benchmark row,
+    including the subtle `clean output + rc=42` and `benign block + rc=42` cases;
+  * `-machines` is built from `SLURM_TASKS_PER_NODE` and totals `SLURM_NPROCS`;
+  * a placement Slurm cannot describe (unset or unparseable `SLURM_TASKS_PER_NODE`)
+    aborts rather than being invented;
+  * a heterogeneous `43,42` allocation records `task_placement`, not a uniform
+    `cores_per_node`;
+  * **NVMe stage-out failure at the integration boundary** — with the shared
+    filesystem made read-only mid-solve, the job fails, the reclaim step does not
+    run, the retained scratch path is printed, the log survives on scratch, and no
+    row is recorded; a healthy control run reclaims scratch and does record;
+  * a missing verdict library aborts before any solver time is spent.
+
+The NVMe cases use `SCRATCH_ROOT` to point at a temporary directory, and skip when
+running as root (the failure is simulated with directory permissions).
 
 ## Adding a case
 

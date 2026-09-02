@@ -61,7 +61,40 @@ verdict_is genuine-error-column-zero.log 0 0 3 \
     "genuine error but MAPDL returned 0 -> failure is SYNTHESISED (never reports success)"
 
 verdict_is benign-plus-genuine-error.log 1 0 1 \
-    "benign stop alongside a real error -> failure (the benign whitelist does not absolve the rest)"
+    "benign stop in a SEPARATE block from a real error -> failure"
+
+echo "== the benign whitelist matches a COMPLETE block, not a substring =="
+
+# A single block carrying the expected termination text *plus* another genuine
+# failure must not be absolved. Both observed wording variants are covered.
+verdict_is benign-block-with-extra-failure.log 0 0 3 \
+    "benign phrases + extra failure text in ONE block -> failure (anchored match)"
+
+verdict_is benign-block-with-extra-failure.log 1 0 1 \
+    "same augmented block with rc=1 -> failure, rc preserved"
+
+verdict_is benign-block-observed-wording-with-extra-failure.log 0 0 3 \
+    "observed wording + extra failure text in ONE block -> failure"
+
+for fx in benign-block-with-extra-failure benign-block-observed-wording-with-extra-failure; do
+    got="$(mapdl_count_error_blocks "${FIX}/${fx}.log")"
+    [ "${got}" = "1 0 1" ] && ok "${fx}: block classified unexpected, not benign" \
+        || bad "${fx} block counts" "1 0 1" "${got}"
+done
+
+echo "== normalisation is limited to the benign exit-status set =="
+
+# Grounded in the recorded campaign: the fixed-iteration stop exited 1 and 255;
+# runs that reached their own end exited 0. Anything else is an unrelated failure
+# and must NOT be masked just because a benign block is present.
+for rc in 0 1 255; do
+    verdict_is benign-iteration-stop.log "${rc}" 1 0 \
+        "benign stop + rc=${rc} -> accepted (rc is in the benign status set)"
+done
+for rc in 2 42 137; do
+    verdict_is benign-iteration-stop.log "${rc}" 0 "${rc}" \
+        "benign stop + rc=${rc} -> FAILURE, rc preserved (not in the benign status set)"
+done
 
 echo "== unverified output must never report scheduler success =="
 
@@ -76,8 +109,26 @@ verdict_is missing-file-does-not-exist.log 0 0 3 \
 
 echo "== an unrelated non-zero status must NOT be normalised away =="
 
-verdict_is normal-success.log 42 1 42 \
-    "clean output but rc=42 with no benign block -> rc=42 preserved"
+verdict_is normal-success.log 42 0 42 \
+    "clean output but rc=42 with no benign block -> rc=42 preserved AND not accepted"
+
+echo "== 'accepted' means verified output AND a zero final status =="
+
+# solve_ok is what the launcher gates benchmark recording on, so it must never be
+# true for a job the scheduler reports as failed - otherwise a failed run becomes
+# training data. This is the invariant, asserted over the whole matrix below.
+for fx in normal-success benign-iteration-stop genuine-error-column-zero \
+          truncated-no-completion zero-elapsed negative-elapsed \
+          benign-plus-genuine-error benign-block-with-extra-failure; do
+    for rc in 0 1 2 42 255; do
+        mapdl_solve_verdict "${FIX}/${fx}.log" "${rc}"
+        if [ "${MAPDL_SOLVE_OK}" -eq 1 ] && [ "${MAPDL_FINAL_RC}" -ne 0 ]; then
+            bad "${fx} + rc=${rc}: accepted implies final_rc=0" \
+                "solve_ok=1 => final_rc=0" "$(mapdl_verdict_summary)"
+        fi
+    done
+done
+ok "across 8 fixtures x rc {0,1,2,42,255}: solve_ok=1 never coexists with a non-zero final_rc"
 
 echo "== elapsed time must be finite and strictly positive =="
 

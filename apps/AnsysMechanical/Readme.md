@@ -8,14 +8,21 @@ with the distributed-memory parallel (DMP) solver under a job scheduler.
 # Versions
 
 Everything here was tested on **2026 R1** (`v261`, `ansys261`). The general
-guidance — DMP invocation, EFA settings, memory sizing, scratch placement, output-
-based success detection — applies to 2023 and newer unchanged.
+guidance — DMP invocation, EFA settings, memory sizing, scratch placement, judging
+success from the output rather than the exit status — should apply to 2023 and
+newer, but **verify the release-specific details** rather than assuming they carry
+over. Two things in particular are version-sensitive:
 
-The one part that is **release-specific is the library-path recipe** below: the
-paths embed both the version directory (`v261`) and the bundled component version
-(`polyflow26.1.0`), and those change with every release. Treat the paths as
-verified for 2026 R1 only and re-derive them for other releases (the
-[recipe](#required-os-libraries-on-amazon-linux-2023) shows how).
+  * **The output-verdict logic depends on exact solver output text.** The success
+    markers and the wording of the benign fixed-iteration termination are matched
+    literally (see [Exit codes](#exit-codes-do-not-use-them-to-decide-success)).
+    If a release words them differently, a valid run is rejected until the pattern
+    is extended — deliberately fail-closed, but it does mean re-checking.
+  * **The library paths below embed both the version directory (`v261`) and a
+    bundled component version (`polyflow26.1.0`)**, which change every release.
+
+Treat the library paths as verified for 2026 R1 only and re-derive them for other
+releases (the [recipe](#required-os-libraries-on-amazon-linux-2023) shows how).
 
 # Installation
 
@@ -167,6 +174,19 @@ divisible placement explicitly (`--nodes=N --ntasks-per-node=C` rather than a
 bare `--ntasks`), and fail the job when `ntasks % nodes != 0` instead of rounding
 in either direction.
 
+Two rules worth keeping whichever way you build the list:
+
+  * **If Slurm's placement cannot be read, fail — do not redistribute the tasks
+    yourself.** Spreading `--ntasks` evenly over the node list when
+    `SLURM_TASKS_PER_NODE` is missing or unparseable *invents* a placement rather
+    than learning it, and a wrong guess oversubscribes nodes and over-draws licence
+    tokens. Aborting with an actionable message is cheaper than a silently bad run.
+  * **Check the total.** Assert that the `-machines` counts sum to `SLURM_NPROCS`
+    before launching, and stop if they do not.
+  * **Do not report an uneven layout as a single "cores per node" value.** For a
+    `43,42` allocation there is no such number; recording one node's share as if it
+    applied to all of them misdescribes the run. Record the layout instead.
+
   * `-dis` selects the distributed-memory (DMP) solver, `-mpi intelmpi` the MPI
     implementation. Intel MPI was the faster of the two options in our testing on
     AWS, and it is the one whose EFA path we verified — see
@@ -298,7 +318,9 @@ filesystem this is a hard planning constraint:
     (15.2 TB per node), r7id/r8id and the i-family carry instance-store NVMe
     that is both faster (local, no network round-trip) and effectively free
     compared to shared-filesystem capacity and throughput. AWS ParallelCluster
-    formats and mounts the instance store at **`/scratch`** automatically. Run
+    formats and mounts the instance store at **`/scratch`** automatically (the
+    sbatch reads the mount point from `SCRATCH_ROOT`, default `/scratch`, for
+    clusters that mount it elsewhere). Run
     the solve with its working directory on `/scratch` — MAPDL writes its
     scratch files to the working directory, and this works **multi-node**
     (verified): in DMP every rank resolves the same path locally on its own
@@ -361,17 +383,36 @@ silent in both directions. Four traps we hit:
     meant to accept. Anchoring on `^ \*\*\* ERROR` (exactly one leading space) is
     the mirror-image bug: a column-zero or differently-indented real error
     becomes invisible and the failed run is accepted.
-  * **Whitelist one exact signature, not a substring.** Only the
-    iteration-limit/user-request termination is benign. Anything else — including
-    a benign block *and* a real error in the same log — must fail.
-  * **Normalise a non-zero status only when it is explained.** Forcing the exit
-    status to 0 whenever the output looks complete also swallows unrelated
-    failures (a rank that died with status 42 after the solve finished writing).
-    Only clear the status when the benign signature, `RUN COMPLETED` and a
-    positive elapsed time are *all* present.
+  * **Match the whole block, anchored at both ends — not a substring.** Only the
+    iteration-limit/user-request termination is benign, and only when that is *all*
+    the block says. A substring match accepts a block that carries the expected
+    phrases plus a second, genuine failure:
+
+    ```
+    *** ERROR ***
+    The number of iterations exceeds 25 and the run was terminated at the
+    user's request.
+    The results database also failed to write and output is incomplete.
+    ```
+
+    That run lost its results file and must fail. A benign block and a real error
+    in *separate* blocks must fail too.
+  * **Normalise a non-zero status only when it is explained, and only to the
+    statuses that termination actually produces.** Forcing the status to 0 whenever
+    the output looks complete swallows unrelated failures (a rank that died with
+    status 42 after the solve finished writing). Clear the status only when the
+    benign signature, `RUN COMPLETED` and a positive elapsed time are all present
+    **and** the status is one the fixed-iteration stop is known to return. Across
+    our V26 Cluster runs that set is `{0, 1, 255}`; a status outside it stays as-is
+    even when a benign block is present.
   * **A zero exit status is not proof of anything.** A truncated log with rc=0
     must fail. If output verification does not pass, synthesise a non-zero job
     status — otherwise the scheduler records success for a run nobody verified.
+  * **Only record a benchmark result for a run you accepted overall.** It is
+    tempting to gate result recording on "the output looks complete", but a job
+    that exits non-zero must not contribute a row to any dataset, or failures
+    quietly become training data. Gate recording on the *final* verdict —
+    verified output, a zero final status, and a durable copy of the log.
 
 When parsing that timing line, note the format —
 
