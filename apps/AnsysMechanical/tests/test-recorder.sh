@@ -12,6 +12,9 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FIX="${HERE}/fixtures"
+# shellcheck source=fixture-helpers.sh
+. "${HERE}/fixture-helpers.sh"
+
 REC="${HERE}/../dynamodb/record-benchmark.sh"
 
 pass=0; fail=0
@@ -130,6 +133,63 @@ if has_attr "${out}" time_to_solution_seconds; then
 else
     ok "Elapsed Time = -5.000 derives no timing"
 fi
+rm -rf "${tmp}"
+
+tmp="$(mktemp -d)"
+cp "${FIX}/benign-malformed-possessive.log" "${tmp}/output-90219.log"
+out="$(run_rec "${tmp}")"
+if has_attr "${out}" time_to_solution_seconds; then
+    bad "malformed possessive derives no timing" "attribute absent" \
+        "$(attr_n "${out}" time_to_solution_seconds)"
+else
+    ok "'userXs request' is not benign here either -> derives no timing"
+fi
+rm -rf "${tmp}"
+
+# MAPDL pads its output lines. A genuine benign block with trailing padding must be
+# ACCEPTED, and by both classifiers identically.
+tmp="$(mktemp -d)"
+if write_padded_benign_log "${tmp}/output-90220.log"; then
+    out="$(run_rec "${tmp}")"
+    got="$(attr_n "${out}" time_to_solution_seconds)"
+    [ "${got}" = "456.000" ] && ok "benign block with trailing padding still derives timing (456.000)" \
+        || bad "trailing-padding benign timing" "456.000" "${got:-<absent>}"
+else
+    bad "generate the padded fixture" "trailing whitespace present" "generation failed"
+fi
+rm -rf "${tmp}"
+
+echo "== cores_per_node is never invented for a non-uniform layout =="
+
+tmp="$(mktemp -d)"
+# 85 cores over 2 nodes: ceil() would have produced a bogus uniform 43.
+out="$(run_rec "${tmp}" --num-cores 85 --num-nodes 2 --time-to-solution 100 \
+        --char task_placement=node1:43:node2:42)"
+if has_attr "${out}" cores_per_node; then
+    bad "task_placement suppresses cores_per_node" "absent" "$(attr_n "${out}" cores_per_node)"
+else
+    ok "task_placement supplied -> cores_per_node is NOT derived"
+fi
+has_attr "${out}" task_placement && ok "the real layout is recorded as task_placement" \
+    || bad "task_placement recorded" "present" "absent"
+
+out="$(run_rec "${tmp}" --num-cores 85 --num-nodes 2 --time-to-solution 100)"
+if has_attr "${out}" cores_per_node; then
+    bad "non-divisible layout suppresses cores_per_node" "absent" "$(attr_n "${out}" cores_per_node)"
+else
+    ok "non-divisible 85/2 -> cores_per_node is NOT derived even without task_placement"
+fi
+
+out="$(run_rec "${tmp}" --num-cores 384 --num-nodes 2 --time-to-solution 100)"
+got="$(attr_n "${out}" cores_per_node)"
+[ "${got}" = "192" ] && ok "uniform 384/2 -> cores_per_node=192 (exact division, no ceil)" \
+    || bad "uniform derivation" "192" "${got:-<absent>}"
+
+out="$(run_rec "${tmp}" --num-cores 85 --num-nodes 2 --cores-per-node 43 --time-to-solution 100 \
+        --char task_placement=node1:43:node2:42)"
+got="$(attr_n "${out}" cores_per_node)"
+[ "${got}" = "43" ] && ok "an EXPLICIT --cores-per-node is still honoured" \
+    || bad "explicit cores-per-node honoured" "43" "${got:-<absent>}"
 rm -rf "${tmp}"
 
 echo "== explicit timing must also be finite and positive =="

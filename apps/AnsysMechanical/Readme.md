@@ -186,6 +186,10 @@ Two rules worth keeping whichever way you build the list:
   * **Do not report an uneven layout as a single "cores per node" value.** For a
     `43,42` allocation there is no such number; recording one node's share as if it
     applied to all of them misdescribes the run. Record the layout instead.
+    Watch for this being re-introduced downstream: anything that fills in a missing
+    `cores_per_node` as `cores / nodes` will happily turn 85 cores over 2 nodes back
+    into "43". Derive it only when the division is exact, and never when an explicit
+    layout has already been recorded.
 
   * `-dis` selects the distributed-memory (DMP) solver, `-mpi intelmpi` the MPI
     implementation. Intel MPI was the faster of the two options in our testing on
@@ -397,6 +401,17 @@ silent in both directions. Four traps we hit:
 
     That run lost its results file and must fail. A benign block and a real error
     in *separate* blocks must fail too.
+  * **Match the wording literally — `user.?s` is not a possessive.** In an extended
+    regular expression `.?` is *any* single character, so a pattern written that way
+    also accepts malformed text like `userXs request`. Use a real apostrophe (or an
+    explicit two-character class if you see both the ASCII `'` and a typographic
+    `’`).
+  * **Normalise whitespace the same way everywhere, and trim both ends.** MAPDL pads
+    its output lines with trailing spaces, so an anchored pattern applied to an
+    untrimmed block rejects a perfectly good run. If you have more than one place
+    that classifies these blocks — a launcher and a result recorder, say — they must
+    normalise identically, or the same output is accepted in one path and rejected
+    in the other.
   * **Normalise a non-zero status only when it is explained, and only to the
     statuses that termination actually produces.** Forcing the status to 0 whenever
     the output looks complete swallows unrelated failures (a rank that died with

@@ -38,8 +38,15 @@
 #
 # The whole block must consist of nothing but the expected termination text, so
 # any extra sentence makes it unexpected and fails the run. Two observed wording
-# variants are accepted; whitespace is already squeezed by mapdl_error_blocks.
-MAPDL_BENIGN_ERROR_RE='^ERR: The number of (iterations|substeps) exceeds [0-9]+(\. The run is terminated| and the run was terminated) at the user.?s request\.?$'
+# variants are accepted; whitespace is already squeezed and trimmed by
+# mapdl_error_blocks.
+#
+# The possessive is matched LITERALLY as an apostrophe. Do not write `user.?s`:
+# in ERE `.?` is any single character, so it also accepts malformed text like
+# `userXs`. Both the ASCII apostrophe and the U+2019 right single quote are
+# allowed, because only the character encoding varies - never the wording.
+# Double-quoted so the ASCII apostrophe can appear literally.
+MAPDL_BENIGN_ERROR_RE="^ERR: The number of (iterations|substeps) exceeds [0-9]+(\. The run is terminated| and the run was terminated) at the user('|’)s request\.?\$"
 
 # Exit statuses that a benign fixed-iteration termination is allowed to produce.
 # Grounded in the recorded campaign: across 87 V26 Cluster runs the deliberate
@@ -69,8 +76,18 @@ mapdl_error_blocks() {
     local f="$1"
     [ -n "$f" ] && [ -r "$f" ] || return 0
     awk '
+      # Normalisation must be IDENTICAL to the copy in
+      # dynamodb/record-benchmark.sh, or the same solver output gets classified
+      # one way live and another way on replay. Squeeze runs of whitespace to a
+      # single space, then trim BOTH ends - MAPDL pads its output lines with
+      # trailing spaces, and an untrimmed trailing space defeats the anchored
+      # benign pattern and rejects a perfectly good run.
       function flush() {
-          if (inblk) { gsub(/[[:space:]]+/, " ", buf); sub(/^ /, "", buf); print "ERR: " buf }
+          if (inblk) {
+              gsub(/[[:space:]]+/, " ", buf)
+              sub(/^[[:space:]]+/, "", buf); sub(/[[:space:]]+$/, "", buf)
+              print "ERR: " buf
+          }
           inblk = 0; buf = ""
       }
       /\*\*\* ERROR \*\*\*/                   { flush(); inblk = 1; next }

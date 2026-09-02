@@ -28,9 +28,16 @@ boundary.
 | `truncated-no-completion.log` | output that stops mid-run |
 | `zero-elapsed.log` | `Elapsed Time (sec) = 0.000` |
 | `negative-elapsed.log` | `Elapsed Time (sec) = -5.000` |
-
 | `benign-block-with-extra-failure.log` | the expected termination text **plus** a second genuine failure in the *same* block |
 | `benign-block-observed-wording-with-extra-failure.log` | the same trap using the wording our own runs produce |
+| `benign-malformed-possessive.log` | `userXs request` — catches a `user.?s` pattern treating `.?` as any character |
+
+One more case is **generated at run time** rather than committed: a genuine benign
+block carrying the trailing padding MAPDL really emits. `fixture-helpers.sh`
+(`write_padded_benign_log`) builds it, because a committed file whose whole purpose
+is trailing whitespace would be reported by `git diff --check` and silently gutted
+by any editor or hook that trims it — leaving the test green but meaningless. The
+generator asserts the padding survived.
 
 `test-mapdl-verdict.sh` asserts the verdict and the resulting job exit status. Not
 every fixture is run against every status — the cases are chosen per boundary:
@@ -42,18 +49,29 @@ every fixture is run against every status — the cases are chosen per boundary:
     a synthesised one;
   * the clean fixture at `42`, covering an unrelated failure that must not be
     masked;
-  * an invariant check that *does* sweep all 8 fixtures across `{0, 1, 2, 42, 255}`:
-    `solve_ok=1` must never coexist with a non-zero final status, since that pairing
-    is what would let a failed job record a benchmark row.
+  * an invariant check that sweeps **eight selected fixtures** across
+    `{0, 1, 2, 42, 255}`: `solve_ok=1` must never coexist with a non-zero final
+    status, since that pairing is what would let a failed job record a benchmark
+    row.
 
 It also covers stage-out (successful copy, byte-identical copy, already-shared
-path, empty source, missing source, unwritable destination).
+path, empty source, missing source, unwritable destination), and a
+**cross-classifier consistency check**: MAPDL error blocks are classified by two
+production implementations — the authoritative `lib/mapdl-verdict.sh` and the
+compact copy inside `dynamodb/record-benchmark.sh`, which stays self-contained by
+design. The test extracts the recorder's real function and asserts both report the
+same unexpected-block count for **every** fixture, so the two cannot drift into
+accepting a run live that replay rejects.
 
 `test-recorder.sh` exercises `dynamodb/record-benchmark.sh` in `--dry-run`:
 replay discovery of `output.log`, `output-<jobid>.log` and `*.out`; rejection of
 zero, negative and non-numeric timings whether explicit or derived; refusal to
 derive timing from an unverified solve; explicit values winning over derived ones;
-and the emitted item being valid JSON carrying the canonical attributes.
+the emitted item being valid JSON carrying the canonical attributes; and the
+**no-derive contract for `cores_per_node`** — it is omitted when `task_placement`
+is supplied and when the core count is not an exact multiple of the node count,
+derived only for a genuinely uniform layout, and never overridden when passed
+explicitly.
 
 `test-sbatch-e2e.sh` runs **`AnsysMechanical.sbatch` itself**, with `scontrol`,
 `srun`, `mpirun`, `module`, `curl`, `sudo` and `mapdl` replaced by stubs, so the
@@ -67,7 +85,10 @@ assembled script really executes rather than only passing `bash -n`. It asserts:
   * a placement Slurm cannot describe (unset or unparseable `SLURM_TASKS_PER_NODE`)
     aborts rather than being invented;
   * a heterogeneous `43,42` allocation records `task_placement`, not a uniform
-    `cores_per_node`;
+    `cores_per_node` — asserted twice: once on the launcher's arguments via the
+    recorder stub, and once on the **production recorder's emitted JSON** (via a
+    wrapper that runs the real script in `--dry-run`), because the recorder derives
+    fields of its own and arguments alone do not prove what would be stored;
   * **NVMe stage-out failure at the integration boundary** — with the shared
     filesystem made read-only mid-solve, the job fails, the reclaim step does not
     run, the retained scratch path is printed, the log survives on scratch, and no

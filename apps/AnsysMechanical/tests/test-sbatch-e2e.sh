@@ -91,6 +91,16 @@ cat > "${STUBS}/bin/recorder-stub.sh" <<'EOF'
 } >> "${RECORDER_LOG}"
 exit 0
 EOF
+
+# Real-recorder wrapper: runs the PRODUCTION recorder in dry-run and captures the
+# item JSON it would store. Asserting launcher ARGUMENTS is not enough - the
+# recorder derives fields of its own, so only the final JSON proves what would
+# actually land in the dataset.
+cat > "${STUBS}/bin/real-recorder.sh" <<EOF
+#!/bin/bash
+"${HERE}/../dynamodb/record-benchmark.sh" --dry-run --no-put --source E2ETest "\$@" \\
+    > "\${RECORDER_JSON}" 2>> "\${RECORDER_LOG}"
+EOF
 chmod +x "${STUBS}"/bin/*
 
 # run_case <fixture> <mapdl_rc> -> sets OUT / RC / RECLOG
@@ -361,7 +371,8 @@ fi
 
 echo "== heterogeneous placement is not recorded as a uniform cores_per_node =="
 
-run_case_het() {
+run_case_het() {   # <recorder path>
+    local recorder="$1"
     local base; base="$(mktemp -d)"
     local vdir="${base}/ansys_inc/v261/ansys/bin"
     mkdir -p "${vdir}" "${base}/inputs"
@@ -375,9 +386,10 @@ EOF
     chmod +x "${vdir}/mapdl"
     : > "${base}/inputs/V26direct-5.dat"
     RECLOG="${base}/recorder.log"; : > "${RECLOG}"
+    RECJSON="${base}/recorder-item.json"; : > "${RECJSON}"
     OUT="$(
-      PATH="${STUBS}/bin:${PATH}" RECORDER_LOG="${RECLOG}" \
-      DYNAMODB_RECORDER="${STUBS}/bin/recorder-stub.sh" \
+      PATH="${STUBS}/bin:${PATH}" RECORDER_LOG="${RECLOG}" RECORDER_JSON="${RECJSON}" \
+      DYNAMODB_RECORDER="${recorder}" \
       MAPDL_VERDICT_LIB="${HERE}/../lib/mapdl-verdict.sh" \
       BASE_DIR="${base}" SCRATCH_MODE="shared" \
       SLURM_JOB_ID=93000 SLURM_JOB_NAME="AnsysMechanical.sbatch" \
@@ -390,7 +402,7 @@ EOF
     BASEDIR="${base}"
 }
 
-run_case_het
+run_case_het "${STUBS}/bin/recorder-stub.sh"
 [ "${RC}" -eq 0 ] && ok "heterogeneous 43,42 placement runs (total 85 == SLURM_NPROCS)" \
     || bad "heterogeneous run" "0" "${RC}"
 grep -q 'node1:43:node2:42' <<<"${OUT}" \
@@ -404,6 +416,39 @@ fi
 grep -q 'task_placement=node1:43:node2:42' "${RECLOG}" \
     && ok "the full layout is recorded as task_placement instead" \
     || bad "task_placement recorded" "task_placement=node1:43:node2:42" "$(grep -o 'ARGS.*' "${RECLOG}")"
+rm -rf "${BASEDIR}"
+
+echo "== the PRODUCTION recorder's final JSON, not just the launcher's arguments =="
+
+# Checking launcher arguments is not sufficient: the recorder derives fields of its
+# own, and previously re-derived a bogus uniform cores_per_node = ceil(85/2) = 43
+# even though the launcher deliberately omitted it. Only the emitted item proves
+# what would actually be stored.
+run_case_het "${STUBS}/bin/real-recorder.sh"
+[ "${RC}" -eq 0 ] && ok "heterogeneous run with the real recorder exits 0" \
+    || bad "real-recorder het run" "0" "${RC}"
+
+if [ ! -s "${RECJSON}" ]; then
+    bad "the real recorder emitted an item" "JSON present" "empty (see ${RECLOG})"
+else
+    if grep -q '"cores_per_node"' "${RECJSON}"; then
+        bad "no uniform cores_per_node in the stored item" "absent" \
+            "$(grep -o '"cores_per_node": {[^}]*}' "${RECJSON}")"
+    else
+        ok "stored item has NO cores_per_node for the 43,42 layout"
+    fi
+    grep -q '"task_placement": {"S": "node1:43:node2:42"}' "${RECJSON}" \
+        && ok "stored item carries the real task_placement" \
+        || bad "task_placement in stored item" 'node1:43:node2:42' "$(grep -o '"task_placement".*' "${RECJSON}")"
+    grep -q '"num_cores": {"N": "85"}' "${RECJSON}" \
+        && ok "stored item keeps the true total core count (85)" \
+        || bad "num_cores in stored item" "85" "$(grep -o '"num_cores".*' "${RECJSON}")"
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "${RECJSON}" 2>/dev/null \
+            && ok "the stored item is valid JSON" \
+            || bad "stored item is valid JSON" "parses" "invalid"
+    fi
+fi
 rm -rf "${BASEDIR}"
 
 echo "== refuses to run without the verdict library =="

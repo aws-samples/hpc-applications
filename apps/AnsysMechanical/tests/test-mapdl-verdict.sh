@@ -19,6 +19,8 @@ LIB="${HERE}/../lib/mapdl-verdict.sh"
 
 # shellcheck source=../lib/mapdl-verdict.sh
 . "${LIB}"
+# shellcheck source=fixture-helpers.sh
+. "${HERE}/fixture-helpers.sh"
 
 pass=0; fail=0; skip=0
 
@@ -81,6 +83,37 @@ for fx in benign-block-with-extra-failure benign-block-observed-wording-with-ext
     [ "${got}" = "1 0 1" ] && ok "${fx}: block classified unexpected, not benign" \
         || bad "${fx} block counts" "1 0 1" "${got}"
 done
+
+echo "== the possessive is a literal apostrophe, not 'any character' =="
+
+# `user.?s` would accept malformed text like `userXs`, because in ERE `.?` is any
+# single character. The wording must match literally.
+verdict_is benign-malformed-possessive.log 0 0 3 \
+    "'userXs request' is NOT the benign message -> failure"
+
+got="$(mapdl_count_error_blocks "${FIX}/benign-malformed-possessive.log")"
+[ "${got}" = "1 0 1" ] && ok "malformed possessive classified unexpected" \
+    || bad "malformed possessive block counts" "1 0 1" "${got}"
+
+echo "== MAPDL pads its lines: trailing whitespace must not reject a good run =="
+
+padded="$(mktemp)"
+if write_padded_benign_log "${padded}"; then
+    mapdl_solve_verdict "${padded}" 1
+    if [ "${MAPDL_SOLVE_OK}" = "1" ] && [ "${MAPDL_FINAL_RC}" = "0" ]; then
+        ok "benign block with trailing padding + rc=1 -> accepted (trimmed both ends)"
+    else
+        bad "padded benign block accepted" "solve_ok=1 final_rc=0" "$(mapdl_verdict_summary)"
+    fi
+    blk="$(mapdl_error_blocks "${padded}")"
+    case "${blk}" in
+        *" ") bad "block body is trimmed at both ends" "no trailing space" "<${blk}>" ;;
+        *)    ok "block body is trimmed at both ends" ;;
+    esac
+else
+    bad "generate the padded fixture" "trailing whitespace present" "generation failed"
+fi
+rm -f "${padded}"
 
 echo "== normalisation is limited to the benign exit-status set =="
 
@@ -233,6 +266,40 @@ else
     chmod 700 "${ro}"
 fi
 rm -rf "${tmp}"
+
+echo "== the live and replay classifiers must agree on EVERY fixture =="
+
+# Two production implementations classify MAPDL error blocks: the authoritative
+# library, and the compact copy inside dynamodb/record-benchmark.sh (which stays
+# self-contained by design). If they diverge, the same solver output is accepted
+# live and rejected on replay, or the reverse. Extract the recorder's real function
+# and run both over every fixture.
+REC="${HERE}/../dynamodb/record-benchmark.sh"
+rec_fn="$(mktemp)"
+sed -n '/^mapdl_unexpected_error_blocks()/,/^}/p' "${REC}" > "${rec_fn}"
+if [ ! -s "${rec_fn}" ]; then
+    bad "extract the recorder's classifier" "function found" "not found in ${REC}"
+else
+    # Include the GENERATED padded log: trailing whitespace is precisely where the
+    # two implementations used to disagree, so it must be in this sweep.
+    padded_cmp="$(mktemp)"; write_padded_benign_log "${padded_cmp}"
+    agree=1; checked=0
+    for fx in "${FIX}"/*.log "${padded_cmp}"; do
+        mapdl_solve_verdict "${fx}" 0
+        live="${MAPDL_UNEXPECTED}"
+        replay="$(bash -c ". '${rec_fn}'; mapdl_unexpected_error_blocks '${fx}'" 2>/dev/null)"
+        # The library reports a count of unexpected blocks; so does the recorder.
+        if [ "${live}" != "${replay}" ]; then
+            bad "live/replay agree on $(basename "${fx}")" \
+                "both report the same unexpected count" "live=${live} replay=${replay}"
+            agree=0
+        fi
+        checked=$((checked+1))
+    done
+    rm -f "${padded_cmp}"
+    [ "${agree}" -eq 1 ] && ok "live and replay classifiers agree on all ${checked} fixtures (incl. the padded one)"
+fi
+rm -f "${rec_fn}"
 
 echo
 printf 'verdict tests: %d passed, %d failed, %d skipped\n' "${pass}" "${fail}" "${skip}"

@@ -206,9 +206,33 @@ add_kv() {
 if [ -z "$OPERATING_SYSTEM" ] && [ -r /etc/os-release ]; then
     OPERATING_SYSTEM="$(. /etc/os-release 2>/dev/null && printf '%s' "${PRETTY_NAME:-}")"
 fi
+# --- cores_per_node: derive only when it is genuinely a single value -----------
+# NEVER invent a uniform per-node count for a layout that is not uniform. The old
+# rule (ceil(num_cores / num_nodes)) turned an 85-core / 2-node allocation into
+# "cores_per_node = 43", which is one node's share reported as though it applied to
+# both -- incorrect topology written straight into the benchmark dataset.
+#
+# Two no-derive conditions, so a wrong value cannot appear even if the caller
+# forgets to describe the layout:
+#   1. a task_placement characteristic was supplied  -> the real layout is on
+#      record, so any single number would contradict it;
+#   2. num_cores is not an exact multiple of num_nodes -> no single value exists.
+# An explicitly supplied --cores-per-node is always honoured.
+_has_task_placement=0
+for _pair in "${EXTRA_CHARS[@]:-}"; do
+    case "$_pair" in task_placement=*) _has_task_placement=1;; esac
+done
+
 if [ -z "$CORES_PER_NODE" ] && is_number "${NUM_CORES:-}" && is_number "${NUM_INSTANCES:-}" \
         && [ "${NUM_INSTANCES:-0}" -gt 0 ] 2>/dev/null; then
-    CORES_PER_NODE=$(( (NUM_CORES / NUM_INSTANCES) + (NUM_CORES % NUM_INSTANCES > 0) ))
+    if [ "$_has_task_placement" -eq 1 ]; then
+        echo "NOTE: task_placement supplied; not deriving cores_per_node (the layout is not a single value)." >&2
+    elif [ $(( NUM_CORES % NUM_INSTANCES )) -ne 0 ]; then
+        echo "WARN: ${NUM_CORES} cores over ${NUM_INSTANCES} node(s) is not uniform; omitting cores_per_node." >&2
+        echo "      Pass --char task_placement=<host:cores:...> to record the real layout." >&2
+    else
+        CORES_PER_NODE=$(( NUM_CORES / NUM_INSTANCES ))
+    fi
 fi
 if [ -z "$MPI_IMPLEMENTATION" ] && command -v mpirun >/dev/null 2>&1; then
     _mpiv="$(mpirun --version 2>&1)"
@@ -244,12 +268,21 @@ fi
 # stay runnable as a single copied file.
 # The benign pattern is ANCHORED at both ends: a block that carries the expected
 # termination text PLUS another genuine failure must NOT count as benign.
+#
+# This MUST classify identically to ../lib/mapdl-verdict.sh, which is the
+# authoritative implementation -- if the two disagree, the same solver output is
+# accepted live and rejected on replay (or vice versa). Kept in step deliberately:
+# same whitespace normalisation (squeeze, then trim BOTH ends) and the same
+# literal-apostrophe possessive. The apostrophe arrives as an awk variable
+# because the program body is single-quoted here.
 mapdl_unexpected_error_blocks() {   # <file> -> count of non-benign error blocks
-    awk '
+    awk -v apos="'" '
       function flush() {
           if (inblk) {
-              gsub(/[[:space:]]+/, " ", buf); sub(/^ /, "", buf); sub(/ $/, "", buf)
-              if (buf !~ /^The number of (iterations|substeps) exceeds [0-9]+(\. The run is terminated| and the run was terminated) at the user.?s request\.?$/) n++
+              gsub(/[[:space:]]+/, " ", buf)
+              sub(/^[[:space:]]+/, "", buf); sub(/[[:space:]]+$/, "", buf)
+              re = "^The number of (iterations|substeps) exceeds [0-9]+(\\. The run is terminated| and the run was terminated) at the user(" apos "|’)s request\\.?$"
+              if (buf !~ re) n++
           }
           inblk = 0; buf = ""
       }
