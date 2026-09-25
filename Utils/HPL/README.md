@@ -30,6 +30,8 @@
 | `build_hpl_openmpi.sh` | Build CPU HPL linked against OpenMPI 4 |
 | `build_hpl_intelmpi.sh` | Build CPU HPL linked against Intel MPI |
 | `run_hpl_gpu.sh` | Run GPU HPL-NVIDIA via NGC container (p5/p5en/p6) |
+| `hpl_gpu.sbatch` | Slurm + Pyxis launcher for GPU HPL-NVIDIA and HPL-MxP, single or multi-node over EFA |
+| `hpl_gpu_container.sbatch` | Single-node GPU HPL with the whole batch job inside the NGC container |
 | `hpl_bcast_sweep.sbatch` | CPU HPL broadcast algorithm sweep |
 
 ## CPU HPL (hpc8a)
@@ -160,13 +162,13 @@ echo always | sudo tee /sys/kernel/mm/transparent_hugepage/defrag
 
 GPU-accelerated HPL uses NVIDIA's pre-built binary distributed via the [NGC hpc-benchmarks container](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/hpc-benchmarks). The upstream netlib HPL 2.3 has no GPU support — NVIDIA's closed-source fork offloads DGEMM to GPUs via cuBLAS while using CPUs for panel factorisation.
 
-### Prerequisites
+There are two ways to run it: `run_hpl_gpu.sh` on a single node with Docker, or `hpl_gpu.sbatch` under Slurm with Pyxis/Enroot on one or more nodes.
+
+### Single node with Docker (`run_hpl_gpu.sh`)
 
 - Docker with `nvidia-container-toolkit`
 - NVIDIA GPU drivers (pre-installed on the [Deep Learning AMI](https://aws.amazon.com/machine-learning/amis/))
 - No compilation needed — the binary is inside the container
-
-### Run
 
 ```bash
 # Default: auto-detect GPUs, 90% VRAM, NB=1024
@@ -179,7 +181,7 @@ HPL_N=400000 bash run_hpl_gpu.sh
 HPL_NGC_TAG=24.09 bash run_hpl_gpu.sh
 ```
 
-### GPU HPL Parameters
+### `run_hpl_gpu.sh` parameters
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -191,11 +193,54 @@ HPL_NGC_TAG=24.09 bash run_hpl_gpu.sh
 | `HPL_Q` | (auto) | Process grid columns — defaults to number of GPUs |
 | `HPL_WORK_DIR` | `/tmp/hpl-gpu-run` | Working directory for HPL.dat and logs |
 
+### Slurm with Pyxis (`hpl_gpu.sbatch`)
+
+`hpl_gpu.sbatch` runs HPL-NVIDIA, and optionally HPL-MxP, through Pyxis/Enroot on one or more nodes. It launches one MPI rank per GPU with `srun --mpi=pmix`, so it needs a Slurm cluster with Pyxis/Enroot (for example AWS ParallelCluster with the [Pyxis post-install scripts](../../ParallelCluster/post-install)) and, for multi-node runs, EFA enabled on the compute nodes. Slurm writes the job log to `/fsx/HPL-Run/gpu`, so create it first:
+
+```bash
+mkdir -p /fsx/HPL-Run/gpu
+sbatch hpl_gpu.sbatch                      # 1 node
+sbatch -N 2 hpl_gpu.sbatch                 # 2 nodes over EFA
+HPL_RUN_MXP=1 sbatch -N 2 hpl_gpu.sbatch   # also run HPL-MxP
+NGC_TAG=26.02 sbatch hpl_gpu.sbatch        # other container version
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NGC_TAG` | `26.02.01` | NGC container version |
+| `NGC_IMAGE` | `nvcr.io#nvidia/hpc-benchmarks:${NGC_TAG}` | Full image reference, or a local `.sqsh` file |
+| `HPL_NB` | `1024` | Block size |
+| `HPL_MEM_FRACTION` | `0.85` | Fraction of GPU memory for the matrix (0.78 for GPUs under 100 GB, 0.70 under 50 GB) |
+| `HPL_RUN_MXP` | `0` | Set to `1` to run HPL-MxP after HPL |
+
+On a single node the script uses `P=1`, `Q=GPUs` and NVSHMEM over NVSwitch, with the settings in [Key environment variables](#key-environment-variables-single-node). Across nodes it uses one process row per node (`P=nodes`, `Q=GPUs per node`) and switches NVSHMEM off:
+
+| Variable | Multi-node value | Purpose |
+|----------|------------------|---------|
+| `HPL_USE_NVSHMEM` | `0` | NVSHMEM off (see the known issue below) |
+| `HPL_P2P_AS_BCAST` | `1` | Broadcasts over NCCL send/recv, which uses EFA through the container's AWS OFI NCCL plugin |
+| `HPL_FCT_COMM_POLICY` | `1` | Panel factorisation over host MPI (HPC-X UCX over EFA) |
+| `OMPI_MCA_coll_ucc_enable` | `0` | Disable UCC (known issue with HPC-X 2.25) |
+| `FI_PROVIDER` | `efa` | Use the EFA libfabric provider |
+| `FI_EFA_USE_DEVICE_RDMA` | `1` | Enable GPUDirect RDMA |
+
+Validated on 2026-09-24 with `hpc-benchmarks` 26.02.01 on p5en.48xlarge at default GPU clocks: HPL and HPL-MxP on one and two nodes with `hpl_gpu.sbatch`, and HPL on one node with `hpl_gpu_container.sbatch`, all passed the residual check.
+
+`hpl_gpu_container.sbatch` is a single-node alternative that runs the whole batch job inside the container:
+
+```bash
+sbatch --container-image='nvcr.io#nvidia/hpc-benchmarks:26.02.01' hpl_gpu_container.sbatch
+```
+
+#### Known issue: NVSHMEM over EFA
+
+`hpc-benchmarks` 26.02 and 26.02.01 bundle NVSHMEM 3.5.19. With `HPL_USE_NVSHMEM=1` across nodes, every rank segfaults inside libfabric (`fi_getinfo`) when NVSHMEM brings up its EFA transport. NVSHMEM 3.6.5 fixed libfabric compatibility issues between build and runtime versions ([release notes](https://docs.nvidia.com/nvshmem/release-notes-install-guide/prior-releases/release-3605.html)), but overlaying a newer NVSHMEM build on the bundled `xhpl` fails too. Keep NVSHMEM off for multi-node runs until an `hpc-benchmarks` image ships NVSHMEM 3.6.5 or later.
+
 ### Tuning notes
 
 Performance depends heavily on NB, CHUNK_SIZE_NBS, and CTA_PER_FCT. Run parameter sweeps on your target instance type to find the optimal configuration. The defaults in the script were determined through empirical testing on p5 and p5en instances.
 
-### Key environment variables (set inside the script)
+### Key environment variables (single node)
 
 | Variable | Value | Purpose |
 |----------|-------|---------|
@@ -228,6 +273,8 @@ sudo nvidia-smi -ac 3996,1965
 ### HPL-MxP (mixed-precision)
 
 HPL-MxP uses the same NGC container (`hpl-mxp.sh`). It uses mixed-precision arithmetic (FP8/FP16 for LU factorisation, FP64 for iterative refinement). Use `--sloppy-type 1` (FP8) for best performance on H100/H200.
+
+`hpl_gpu.sbatch` runs it after HPL when `HPL_RUN_MXP=1`, on one node or across nodes. The HPL-MxP binary does not use NVSHMEM, so the NVSHMEM-over-EFA issue above does not affect it.
 
 ## References
 

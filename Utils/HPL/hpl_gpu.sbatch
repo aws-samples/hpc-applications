@@ -17,9 +17,17 @@
 #   sbatch hpl_gpu.sbatch                          # p5en default
 #   sbatch -p p5 hpl_gpu.sbatch                    # p5 (H100)
 #   sbatch -p p4d --gpus-per-node=8 hpl_gpu.sbatch # p4d (A100)
-#   sbatch -N 2 hpl_gpu.sbatch                     # multi-node
+#   sbatch -N 2 hpl_gpu.sbatch                     # multi-node over EFA
 #   HPL_RUN_MXP=1 sbatch hpl_gpu.sbatch            # also run MxP
 #   HPL_NB=768 sbatch hpl_gpu.sbatch               # custom NB
+#   NGC_TAG=26.02 sbatch hpl_gpu.sbatch            # other container version
+#   NGC_IMAGE=/fsx/containers/hpc-benchmarks-26.02.01.sqsh sbatch hpl_gpu.sbatch  # local image
+#
+# One MPI rank per GPU, launched with srun --mpi=pmix. A single node
+# uses NVSHMEM over NVSwitch. Multi-node runs turn NVSHMEM off:
+# NVSHMEM over EFA crashes with the NVSHMEM 3.5.19 bundled in
+# hpc-benchmarks 26.02/26.02.01, so broadcasts go over NCCL and the
+# panel factorisation over MPI, both on EFA.
 #############################################################
 
 ############################################################
@@ -30,9 +38,8 @@
 : "${HPL_RUN_MXP:=0}"
 : "${HPL_MXP_NB:=2048}"
 : "${HPL_MXP_SLOPPY:=1}"
-: "${NGC_TAG:=25.02}"
-
-NGC_IMAGE="nvcr.io#nvidia/hpc-benchmarks:${NGC_TAG}"
+: "${NGC_TAG:=26.02.01}"
+: "${NGC_IMAGE:=nvcr.io#nvidia/hpc-benchmarks:${NGC_TAG}}"
 
 ############################################################
 # Detect hardware
@@ -110,16 +117,32 @@ cd "$WORK_DIR"
 NB=${HPL_NB}
 N=$(python3 -c "import math; print(int(math.sqrt(${HPL_MEM_FRACTION} * ${TOTAL_GPUS} * ${GPU_MEM_MB} * 1024 * 1024 / 8) / ${NB}) * ${NB})")
 
-# Process grid: P x Q = TOTAL_GPUS, P=1 for single-node, auto for multi-node
+# Process grid: P x Q = TOTAL_GPUS. P=1 on a single node; one process
+# row per node across nodes (P=NUM_NODES, Q=GPUs per node).
 if [ "$NUM_NODES" -eq 1 ]; then
     P=1; Q=${TOTAL_GPUS}
 else
-    P=$(python3 -c "import math; sq=int(math.sqrt(${TOTAL_GPUS})); p=max(i for i in range(1,sq+1) if ${TOTAL_GPUS}%i==0); print(p)")
-    Q=$((TOTAL_GPUS / P))
+    P=${NUM_NODES}; Q=${NUM_GPUS_PER_NODE}
+fi
+
+############################################################
+# Communication settings
+############################################################
+TUNE_ENV="HPL_ALLOC_HUGEPAGES=1,HPL_CHUNK_SIZE_NBS=64,HPL_CTA_PER_FCT=32,HPL_DIST_TRSM_FLAG=1,HPL_CUSOLVER_MP_TESTS=0,WARMUP_END_PROG=5"
+if [ "$NUM_NODES" -eq 1 ]; then
+    # NVSHMEM over NVSwitch
+    NET_ENV="OMPI_MCA_coll_ucc_enable=0"
+    COMM_ENV="HPL_USE_NVSHMEM=1,HPL_P2P_AS_BCAST=1,HPL_NVSHMEM_SWAP=1,HPL_FCT_COMM_POLICY=0"
+    MULTINODE_FLAG="--no-multinode"
+else
+    # NVSHMEM off: NCCL broadcasts + host-MPI panel factorisation over EFA
+    NET_ENV="OMPI_MCA_coll_ucc_enable=0,FI_PROVIDER=efa,FI_EFA_USE_DEVICE_RDMA=1"
+    COMM_ENV="HPL_USE_NVSHMEM=0,HPL_P2P_AS_BCAST=1,HPL_FCT_COMM_POLICY=1"
+    MULTINODE_FLAG=""
 fi
 
 echo ""
-echo "=== HPL FP64: N=${N} NB=${NB} P=${P} Q=${Q} ==="
+echo "=== HPL FP64: N=${N} NB=${NB} P=${P} Q=${Q} (${COMM_ENV}) ==="
 
 cat > HPL.dat <<EOF
 HPLinpack benchmark input file
@@ -155,20 +178,16 @@ ${Q}         Qs
 8            memory alignment in double (> 0)
 EOF
 
-srun -n 1 --ntasks-per-node=1 \
+srun -N "${NUM_NODES}" -n "${TOTAL_GPUS}" --ntasks-per-node="${NUM_GPUS_PER_NODE}" \
+    --mpi=pmix --cpu-bind=none \
     --container-image="${NGC_IMAGE}" \
     --container-mounts="${WORK_DIR}:/run-data" \
     --container-workdir=/workspace \
-    --container-env=HPL_USE_NVSHMEM=1,HPL_P2P_AS_BCAST=1,HPL_NVSHMEM_SWAP=1,HPL_FCT_COMM_POLICY=0,HPL_ALLOC_HUGEPAGES=1,HPL_CHUNK_SIZE_NBS=64,HPL_CTA_PER_FCT=32,HPL_DIST_TRSM_FLAG=1,HPL_CUSOLVER_MP_TESTS=0,WARMUP_END_PROG=5 \
-    --gpus-per-node=${NUM_GPUS_PER_NODE} \
-    bash -c "mpirun --allow-run-as-root -np ${TOTAL_GPUS} --bind-to none \
-        -x HPL_USE_NVSHMEM -x HPL_P2P_AS_BCAST -x HPL_NVSHMEM_SWAP \
-        -x HPL_FCT_COMM_POLICY -x HPL_ALLOC_HUGEPAGES -x HPL_CHUNK_SIZE_NBS \
-        -x HPL_CTA_PER_FCT -x HPL_DIST_TRSM_FLAG -x HPL_CUSOLVER_MP_TESTS \
-        -x WARMUP_END_PROG \
-        /workspace/hpl.sh --dat /run-data/HPL.dat \
-            --cpu-affinity '${CPU_AFF}' --mem-affinity '${MEM_AFF}' \
-            $([ "$NUM_NODES" -eq 1 ] && echo '--no-multinode')" \
+    --gpus-per-node="${NUM_GPUS_PER_NODE}" \
+    --export="ALL,${NET_ENV},${TUNE_ENV},${COMM_ENV}" \
+    /workspace/hpl.sh --dat /run-data/HPL.dat \
+        --cpu-affinity "${CPU_AFF}" --mem-affinity "${MEM_AFF}" \
+        ${MULTINODE_FLAG:+"${MULTINODE_FLAG}"} \
     2>&1 | tee hpl-fp64.log
 
 ############################################################
@@ -181,18 +200,19 @@ if [ "${HPL_RUN_MXP}" = "1" ]; then
     echo ""
     echo "=== HPL-MxP: N=${N_MXP} NB=${NB_MXP} P=${P} Q=${Q} sloppy=${HPL_MXP_SLOPPY} ==="
 
-    srun -n 1 --ntasks-per-node=1 \
+    srun -N "${NUM_NODES}" -n "${TOTAL_GPUS}" --ntasks-per-node="${NUM_GPUS_PER_NODE}" \
+        --mpi=pmix --cpu-bind=none \
         --container-image="${NGC_IMAGE}" \
         --container-mounts="${WORK_DIR}:/run-data" \
         --container-workdir=/workspace \
-        --gpus-per-node=${NUM_GPUS_PER_NODE} \
-        bash -c "mpirun --allow-run-as-root -np ${TOTAL_GPUS} --bind-to none \
-            /workspace/hpl-mxp.sh \
-                --gpu-affinity '${GPU_AFF}' \
-                --cpu-affinity '${CPU_AFF}' --mem-affinity '${MEM_AFF}' \
-                --n ${N_MXP} --nb ${NB_MXP} \
-                --nprow ${P} --npcol ${Q} --nporder row \
-                --sloppy-type ${HPL_MXP_SLOPPY}" \
+        --gpus-per-node="${NUM_GPUS_PER_NODE}" \
+        --export="ALL,${NET_ENV}" \
+        /workspace/hpl-mxp.sh \
+            --gpu-affinity "${GPU_AFF}" \
+            --cpu-affinity "${CPU_AFF}" --mem-affinity "${MEM_AFF}" \
+            --n "${N_MXP}" --nb "${NB_MXP}" \
+            --nprow "${P}" --npcol "${Q}" --nporder row \
+            --sloppy-type "${HPL_MXP_SLOPPY}" \
         2>&1 | tee hpl-mxp.log
 fi
 
