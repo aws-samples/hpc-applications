@@ -66,9 +66,11 @@ count in the job itself, before the solver starts, so that a submission made by
 hand is checked as well as one made by your tooling:
 
 ```bash
-# Refuse a cores-per-node count the lists above do not cover.
-TOKEN=$(curl -fs -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
-instance_type=$(curl -fs -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
+# Refuse a cores-per-node count the lists above do not cover. cores_x_node is
+# computed as in the explicit scripts. An IMDS that does not answer within a few
+# seconds refuses the run too.
+TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+instance_type=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
 case "${instance_type}" in
     hpc8a.96xlarge|hpc7a.96xlarge)
         case " 24 48 72 96 120 144 168 192 " in
@@ -80,6 +82,9 @@ case "${instance_type}" in
         exit 1 ;;
 esac
 ```
+
+If your own tooling submits the jobs, refuse the count there as well, so that no
+node starts for it.
 
 ### Other AMD instance types
 
