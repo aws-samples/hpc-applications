@@ -264,7 +264,9 @@ before trusting a timing.
     out-of-core mode`, so a search for "out-of-core" labels in-core runs
     out-of-core. In the 94 sparse-direct V26 Cluster outputs we archived, MAPDL
     reported In-Core for 45, and a whole-file search labelled all 94 out-of-core.
-    The iterative solvers (PCG, JCG) print no `Memory Option:` line.
+    The iterative solvers (PCG, JCG) print no `Memory Option:` line. The line is
+    verified on 2026 R1 only: on a release that does not print it, the sbatch
+    records the memory mode as `unknown`.
   * Because DMP aggregates memory across nodes, **adding a node can be far more
     effective than adding cores**: it raises the memory ceiling as well as the
     core count. Moving a model that is out-of-core on one node onto two nodes

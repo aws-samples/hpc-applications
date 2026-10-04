@@ -251,6 +251,19 @@ got="$(mapdl_memory_mode "${FIX}/truncated-no-completion.log")"
 [ "${got}" = "unknown" ] && ok "run that stopped before its statistics -> unknown" \
     || bad "truncated run memory mode" "unknown" "${got}"
 
+# Every 2026 R1 output we archived holds at most one Memory Option line. Should
+# one hold several, the last is reported, whichever mode it names.
+two_lines="$(mktemp)"
+printf '%s\n' 'Memory Option: In-Core' 'Memory Option: Optimal Out-of-Core' > "${two_lines}"
+got="$(mapdl_memory_mode "${two_lines}")"
+[ "${got}" = "OutOfCore" ] && ok "two Memory Option lines, In-Core then Out-of-Core -> the last, OutOfCore" \
+    || bad "two Memory Option lines, the last is Out-of-Core" "OutOfCore" "${got}"
+printf '%s\n' 'Memory Option: Optimal Out-of-Core' 'Memory Option: In-Core' > "${two_lines}"
+got="$(mapdl_memory_mode "${two_lines}")"
+[ "${got}" = "InCore" ] && ok "two Memory Option lines, Out-of-Core then In-Core -> the last, InCore" \
+    || bad "two Memory Option lines, the last is In-Core" "InCore" "${got}"
+rm -f "${two_lines}"
+
 echo "== stage-out: cleanup must never run on a failed copy =="
 
 tmp="$(mktemp -d)"
