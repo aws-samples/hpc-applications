@@ -164,11 +164,25 @@ mapdl_stage_out() {
 }
 
 # mapdl_memory_mode <file> -> InCore | OutOfCore | unknown
+# MAPDL states the sparse solver's memory mode on ONE line of the solver
+# statistics it prints at the end of the run:
+#
+#   Solver: Sparse               (Method = DSP)
+#   Memory Option: In-Core                    (or "Optimal Out-of-Core")
+#
+# Read that line, never the whole output: every sparse-direct run also prints
+# "Equation solver memory required for out-of-core mode = ..." in its memory
+# summary, so a search of the whole file for "out-of-core" labels every in-core
+# run out-of-core. The iterative solvers (PCG, JCG) print no Memory Option line,
+# and neither does a run that stopped before its statistics: both are unknown.
 mapdl_memory_mode() {
-    local f="$1"
-    if   grep -qi 'Out-of-Core'      "$f" 2>/dev/null; then echo OutOfCore
-    elif grep -qiE 'In-Core|InCore'  "$f" 2>/dev/null; then echo InCore
-    else echo unknown; fi
+    local f="$1" line
+    line="$(grep -E '^[[:space:]]*Memory Option:' "$f" 2>/dev/null | tail -1)"
+    case "${line}" in
+        *[Oo]ut-of-[Cc]ore*) echo OutOfCore ;;
+        *[Ii]n-[Cc]ore*)     echo InCore ;;
+        *)                   echo unknown ;;
+    esac
 }
 
 # mapdl_solve_verdict <output_file> <solver_rc>

@@ -248,6 +248,8 @@ grep -q 'mapdl_elapsed_seconds=845.000' "${RECLOG}" && ok "MAPDL elapsed passed 
     || bad "mapdl_elapsed metric" "845.000" "$(grep ARGS "${RECLOG}")"
 grep -q 'cores-per-node 64'             "${RECLOG}" && ok "cores-per-node passed from real placement" \
     || bad "cores-per-node" "64" "$(grep ARGS "${RECLOG}")"
+grep -q 'memory_mode=InCore'            "${RECLOG}" && ok "memory mode read from MAPDL's Memory Option line (InCore)" \
+    || bad "memory_mode" "InCore" "$(grep ARGS "${RECLOG}")"
 
 echo "== NVMe mode: a failed stage-out must retain scratch and fail the job =="
 

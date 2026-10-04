@@ -20,8 +20,9 @@ boundary.
 
 | Fixture | Represents |
 |---|---|
-| `normal-success.log` | clean completion, In-Core |
-| `benign-iteration-stop.log` | the expected fixed-iteration termination, Out-of-Core |
+| `normal-success.log` | clean completion, `Memory Option: In-Core`, with the out-of-core memory requirement every sparse-direct run also prints |
+| `benign-iteration-stop.log` | the expected fixed-iteration termination, `Memory Option: Optimal Out-of-Core` |
+| `iterative-pcg.log` | an iterative (PCG) completion, which prints no `Memory Option:` line |
 | `genuine-error-column-zero.log` | a real error at column zero, with `RUN COMPLETED` also present |
 | `genuine-error-deep-indent.log` | a real error indented far from column one |
 | `benign-plus-genuine-error.log` | the benign stop *and* a real error in one log |
@@ -79,6 +80,8 @@ assembled script really executes rather than only passing `bash -n`. It asserts:
 
   * the job's final exit status per fixture (a fixed-iteration deck exits 0; a
     truncated `rc=0` run exits non-zero);
+  * the memory mode handed to the recorder is the one on MAPDL's `Memory Option:`
+    line;
   * **recorder eligibility** — a run that exits non-zero writes no benchmark row,
     including the subtle `clean output + rc=42` and `benign block + rc=42` cases;
   * `-machines` is built from `SLURM_TASKS_PER_NODE` and totals `SLURM_NPROCS`;

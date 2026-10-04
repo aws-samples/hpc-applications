@@ -256,9 +256,15 @@ before trusting a timing.
     requirement. If the *aggregate* RAM of the job is below it, MAPDL falls back
     to an **out-of-core** mode that does heavy I/O, and runtime can more than
     double. Size the job to fit in memory first; only then optimise for cores.
-  * **Check which memory mode you got.** MAPDL reports `In-Core` or
-    `Out-of-Core` in its output — it is the first thing to look at when a run is
-    unexpectedly slow.
+  * **Check which memory mode you got.** MAPDL states it on the `Memory Option:`
+    line of the solver statistics at the end of its output (`In-Core` or
+    `Optimal Out-of-Core`) — it is the first thing to look at when a run is
+    unexpectedly slow. Read that line rather than searching the whole file: every
+    sparse-direct run also prints `Equation solver memory required for
+    out-of-core mode`, so a search for "out-of-core" labels in-core runs
+    out-of-core. In the 94 sparse-direct V26 Cluster outputs we archived, MAPDL
+    reported In-Core for 45, and a whole-file search labelled all 94 out-of-core.
+    The iterative solvers (PCG, JCG) print no `Memory Option:` line.
   * Because DMP aggregates memory across nodes, **adding a node can be far more
     effective than adding cores**: it raises the memory ceiling as well as the
     core count. Moving a model that is out-of-core on one node onto two nodes

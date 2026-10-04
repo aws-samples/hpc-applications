@@ -51,6 +51,9 @@ verdict_is benign-iteration-stop.log 1 1 0 \
 verdict_is benign-iteration-stop.log 0 1 0 \
     "expected fixed-iteration stop, rc=0 -> success"
 
+verdict_is iterative-pcg.log 0 1 0 \
+    "iterative (PCG) completion, rc=0 -> success"
+
 echo "== genuine errors must be caught at ANY indentation =="
 
 verdict_is genuine-error-column-zero.log 2 0 2 \
@@ -205,11 +208,28 @@ got="$(mapdl_count_error_blocks "${empty_body}")"
     || bad "empty-body error block counts" "1 0 1" "${got}"
 rm -f "${empty_body}"
 
-echo "== memory mode =="
+echo "== memory mode comes from MAPDL's 'Memory Option:' line =="
+
+# Every sparse-direct run prints "Equation solver memory required for
+# out-of-core mode" in its memory summary, in-core runs included, so a search of
+# the whole output for "out-of-core" labels every in-core run out-of-core.
+if grep -qi 'out-of-core' "${FIX}/normal-success.log"; then
+    ok "the in-core fixture mentions out-of-core outside its Memory Option line"
+else
+    bad "in-core fixture mentions out-of-core" "present (or the next test is vacuous)" "absent"
+fi
 got="$(mapdl_memory_mode "${FIX}/normal-success.log")"
-[ "${got}" = "InCore" ] && ok "In-Core detected" || bad "In-Core detected" "InCore" "${got}"
+[ "${got}" = "InCore" ] && ok "Memory Option: In-Core -> InCore, despite the out-of-core requirement line" \
+    || bad "In-Core detected" "InCore" "${got}"
 got="$(mapdl_memory_mode "${FIX}/benign-iteration-stop.log")"
-[ "${got}" = "OutOfCore" ] && ok "Out-of-Core detected" || bad "Out-of-Core detected" "OutOfCore" "${got}"
+[ "${got}" = "OutOfCore" ] && ok "Memory Option: Optimal Out-of-Core -> OutOfCore" \
+    || bad "Out-of-Core detected" "OutOfCore" "${got}"
+got="$(mapdl_memory_mode "${FIX}/iterative-pcg.log")"
+[ "${got}" = "unknown" ] && ok "iterative (PCG) run prints no Memory Option line -> unknown" \
+    || bad "iterative run memory mode" "unknown" "${got}"
+got="$(mapdl_memory_mode "${FIX}/truncated-no-completion.log")"
+[ "${got}" = "unknown" ] && ok "run that stopped before its statistics -> unknown" \
+    || bad "truncated run memory mode" "unknown" "${got}"
 
 echo "== stage-out: cleanup must never run on a failed copy =="
 
