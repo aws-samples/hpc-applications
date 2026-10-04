@@ -68,6 +68,23 @@ verdict_is genuine-error-column-zero.log 0 0 3 \
 verdict_is benign-plus-genuine-error.log 1 0 1 \
     "benign stop in a SEPARATE block from a real error -> failure"
 
+echo "== a disk-full abort looks complete on every signal but its error block =="
+
+# Taken from V26 Cluster runs whose scratch filesystem filled up: MAPDL stopped
+# the factorisation with an I/O error, then still printed RUN COMPLETED and a
+# positive Elapsed Time, and exited 1 (one node) or 255 (two nodes) - the same
+# statuses the expected fixed-iteration stop returns. Only the error block shows
+# that the solve never finished.
+for rc in 1 255; do
+    verdict_is disk-full-abort.log "${rc}" 0 "${rc}" \
+        "disk-full abort, rc=${rc} -> failure, rc preserved (not normalised like a benign stop)"
+done
+verdict_is disk-full-abort.log 0 0 3 \
+    "disk-full abort, rc=0 -> failure synthesised"
+got="$(mapdl_count_error_blocks "${FIX}/disk-full-abort.log")"
+[ "${got}" = "1 0 1" ] && ok "disk-full abort: 1 error block, classified unexpected" \
+    || bad "disk-full abort block counts" "1 0 1" "${got}"
+
 echo "== the benign whitelist matches a COMPLETE block, not a substring =="
 
 # A single block carrying the expected termination text *plus* another genuine
@@ -224,6 +241,9 @@ got="$(mapdl_memory_mode "${FIX}/normal-success.log")"
 got="$(mapdl_memory_mode "${FIX}/benign-iteration-stop.log")"
 [ "${got}" = "OutOfCore" ] && ok "Memory Option: Optimal Out-of-Core -> OutOfCore" \
     || bad "Out-of-Core detected" "OutOfCore" "${got}"
+got="$(mapdl_memory_mode "${FIX}/disk-full-abort.log")"
+[ "${got}" = "OutOfCore" ] && ok "out-of-core run with a WARNING about it -> OutOfCore" \
+    || bad "Out-of-Core detected (disk-full fixture)" "OutOfCore" "${got}"
 got="$(mapdl_memory_mode "${FIX}/iterative-pcg.log")"
 [ "${got}" = "unknown" ] && ok "iterative (PCG) run prints no Memory Option line -> unknown" \
     || bad "iterative run memory mode" "unknown" "${got}"

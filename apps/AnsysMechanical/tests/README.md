@@ -23,6 +23,7 @@ boundary.
 | `normal-success.log` | clean completion, `Memory Option: In-Core`, with the out-of-core memory requirement every sparse-direct run also prints |
 | `benign-iteration-stop.log` | the expected fixed-iteration termination, `Memory Option: Optimal Out-of-Core` |
 | `iterative-pcg.log` | an iterative (PCG) completion, which prints no `Memory Option:` line |
+| `disk-full-abort.log` | an I/O error on a full disk, followed by `RUN COMPLETED` and a positive elapsed time, as MAPDL 2026 R1 printed it |
 | `genuine-error-column-zero.log` | a real error at column zero, with `RUN COMPLETED` also present |
 | `genuine-error-deep-indent.log` | a real error indented far from column one |
 | `benign-plus-genuine-error.log` | the benign stop *and* a real error in one log |
@@ -79,7 +80,7 @@ explicitly.
 assembled script really executes rather than only passing `bash -n`. It asserts:
 
   * the job's final exit status per fixture (a fixed-iteration deck exits 0; a
-    truncated `rc=0` run exits non-zero);
+    truncated `rc=0` run exits non-zero; a disk-full abort keeps its 255);
   * the memory mode handed to the recorder is the one on MAPDL's `Memory Option:`
     line;
   * **recorder eligibility** — a run that exits non-zero writes no benchmark row,

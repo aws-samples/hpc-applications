@@ -383,6 +383,15 @@ run. A robust success test is therefore: `RUN COMPLETED` present, a final
 `Elapsed Time (sec)` present **and positive**, **and** no `*** ERROR ***` block
 other than the expected iteration-limit termination.
 
+A full disk shows why the error blocks are the test that matters. When the shared
+filesystem holding the scratch filled up during our V26 Cluster runs, MAPDL
+stopped the sparse factorisation with "An input/output error has occurred ...
+Please check to see if the disk containing the working directory ... is full",
+then still printed `RUN COMPLETED` and a positive `Elapsed Time (sec)`, and
+exited 1 (one node) or 255 (two nodes): the statuses the fixed-iteration stop
+also returns. Only the error block says that the solve never finished
+([tests/fixtures/disk-full-abort.log](https://github.com/aws-samples/hpc-applications/blob/main/apps/AnsysMechanical/tests/fixtures/disk-full-abort.log)).
+
 Getting that test right is fiddlier than it looks, and the failure modes are
 silent in both directions. Four traps we hit:
 
