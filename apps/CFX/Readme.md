@@ -32,7 +32,7 @@ We would strongly recommend to use [Amazon FSx for Lustre](https://aws.amazon.co
 
   * CFX is a compute and memory bandwidth bound code. 
     * the best instance types for running it are the ones with higher amount of cores, and higher memory bandwidth per core.
-    * As of today, the instance that shows the **best price/performance** is the [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) .
+    * As of today, the instance that shows the **best price/performance** is the [Hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/): on the 100M Airfoil it took 29% less time than [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) on the same nodes, and 22% less per run at On-Demand prices in eu-north-1 (September 2026). See [Performance](#performance).
   * CFX is a software that scales on multiple nodes: the simulation time decreases as the numbrer of cores being used increases (typically not proportionally).
 
   * `-parallel` This parameter tells CFX to use run in parallel on multiple nodes.
