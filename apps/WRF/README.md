@@ -215,8 +215,15 @@ Key takeaways:
 
 ## Key Metrics
 
-- **Average time per timestep** — extracted from `rsl.error.0000` (the primary scaling metric)
+- **Average time per timestep** — extracted from `rsl.error.0000`; it includes the output writes, so compare node counts on the median or the steady step (below)
 - **Total wall time** — end-to-end execution time including MPI startup and I/O
+
+Run the full forecast the case ships with (6 hours, 1,440 steps of 15 s for CONUS 2.5km), not a shortened one, and to compare node counts use the median time per step, or the steady step: the average without the first step and the steps that write output or read boundaries. The average per step and the total wall time both include output, which does not get faster with more nodes: WRF counts each history or restart write in the `Timing for main` line of the step that makes it.
+
+- **A shortened run mostly measures start-up.** A 5-minute window (20 steps) on 1, 2, 4 and 8 `hpc8a.96xlarge` nodes (Intel MPI, June 2026, medians of 3 to 7 runs) ran 1.22, 1.34 and 1.20 times as fast on 2, 4 and 8 nodes as on one, so 8 nodes looked slower than 4, while the median step ran 2.09, 4.31 and 9.47 times as fast. The first step took about the same time at every node count, most of it the history write at t=0, so it grew from 46-47% of the run on 1 node to 55-58% on 8, and it dominates the average over the 20 steps (only 1.47 times as fast on 8 nodes as on one).
+- **The full forecast writes output every hour.** On one `hpc7a.96xlarge`, `m8g.48xlarge` or `hpc6a.48xlarge` node (October 2026) its first step is under 2% of the run, but the 7 hourly history writes and the restart write took 7-17% of it, all but the last of them inside step timings, so the average step was 17-30% above the median step. On 8 nodes of `hpc7a.96xlarge` or `hpc8a.96xlarge` the same writes took about two thirds of the run, so the more nodes, the larger the share of the output in the average and in the wall time.
+
+The 5-minute runs were launched a few at a time: 21 of the 22 overlapped 1 to 4 of the others on the cluster and its FSx for Lustre file system, and the one made alone (4 nodes) matched the other 4-node runs within 1%. The one-node 6-hour runs had up to 6 other benchmark jobs running on the same file system when they started or ended.
 
 ## Files
 
