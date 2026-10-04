@@ -306,9 +306,11 @@ before trusting a timing.
 ## Scratch space and concurrency
 
 Out-of-core solves write a large amount of scratch to the working directory —
-**on the order of 0.5-0.8 TB per job** for the bigger benchmark models (MAPDL
-reports it as `Sum Scratch Used(All)` at the end of the run). On a shared
-filesystem this is a hard planning constraint:
+**about 0.5-1.2 TB per job** for the V26 Cluster sparse-direct models, against
+0.01-0.23 TB when the same models run in-core. MAPDL reports it as
+`Sum of disk space used on all processes` in its I/O statistics (`Sum Scratch
+Used(All)` in the closing box is scratch *memory*, and it is largest for in-core
+runs). On a shared filesystem this is a hard planning constraint:
 
   * Size the filesystem for `concurrent_jobs x per_job_scratch`, not for the
     input data.
