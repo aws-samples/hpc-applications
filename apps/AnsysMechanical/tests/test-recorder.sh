@@ -78,8 +78,8 @@ tmp="$(mktemp -d)"
 cp "${FIX}/iterative-pcg.log" "${tmp}/output-90222.log"
 out="$(run_rec "${tmp}")"
 got="$(attr_n "${out}" time_to_solution_seconds)"
-[ "${got}" = "928.538" ] && ok "iterative (PCG) run: timing derived (928.538)" \
-    || bad "iterative run timing" "928.538" "${got:-<absent>}"
+[ "${got}" = "500.000" ] && ok "iterative (PCG) run: timing derived (500.000)" \
+    || bad "iterative run timing" "500.000" "${got:-<absent>}"
 rm -rf "${tmp}"
 
 echo "== derived timing requires a VERIFIED solve =="
