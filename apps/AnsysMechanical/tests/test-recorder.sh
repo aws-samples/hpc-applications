@@ -74,6 +74,14 @@ got="$(attr_n "${out}" time_to_solution_seconds)"
     || bad "benign iteration stop timing" "1244.974" "${got:-<absent>}"
 rm -rf "${tmp}"
 
+tmp="$(mktemp -d)"
+cp "${FIX}/iterative-pcg.log" "${tmp}/output-90222.log"
+out="$(run_rec "${tmp}")"
+got="$(attr_n "${out}" time_to_solution_seconds)"
+[ "${got}" = "928.538" ] && ok "iterative (PCG) run: timing derived (928.538)" \
+    || bad "iterative run timing" "928.538" "${got:-<absent>}"
+rm -rf "${tmp}"
+
 echo "== derived timing requires a VERIFIED solve =="
 
 tmp="$(mktemp -d)"
@@ -96,6 +104,18 @@ if has_attr "${out}" time_to_solution_seconds; then
     bad "genuine error derives no timing" "attribute absent" "$(attr_n "${out}" time_to_solution_seconds)"
 else
     ok "column-zero genuine error derives no timing (even with RUN COMPLETED present)"
+fi
+rm -rf "${tmp}"
+
+# A disk-full abort carries RUN COMPLETED and a positive Elapsed Time; only its
+# error block says the solve never finished.
+tmp="$(mktemp -d)"
+cp "${FIX}/disk-full-abort.log" "${tmp}/output-90221.log"
+out="$(run_rec "${tmp}")"
+if has_attr "${out}" time_to_solution_seconds; then
+    bad "disk-full abort derives no timing" "attribute absent" "$(attr_n "${out}" time_to_solution_seconds)"
+else
+    ok "disk-full abort derives no timing (RUN COMPLETED and Elapsed Time present)"
 fi
 rm -rf "${tmp}"
 

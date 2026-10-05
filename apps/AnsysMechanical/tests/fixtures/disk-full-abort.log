@@ -1,0 +1,51 @@
+ Ansys Mechanical Enterprise
+
+ SOLVE FOR LS 1 OF 1
+
+  Equation solver memory allocated                     =   666.954 GB
+  Equation solver memory required for in-core mode     =   985.326 GB
+  Equation solver memory required for out-of-core mode =   338.014 GB
+  Total (solver and non-solver) memory allocated       =   837.231 GB
+
+ *** WARNING ***                         ELAPSED TIME =     809.506   TIME= 17:10:09
+ The Distributed Sparse Matrix Solver is running in out-of-core memory
+ mode.  This mode may result in significantly lower performance than
+ in-core memory mode, depending on available system memory and I/O
+ speed.  Monitor solver performance to ensure that high I/O to solver
+ files does not create a performance bottleneck.
+
+ *** ERROR ***                           ELAPSED TIME =    2386.431   TIME= 17:36:31
+ An input/output error has occurred on the process with MPI Rank ID = 0.
+  Please check to see if the disk containing the working directory
+ (/fsx/AnsysMechanical/Run/90000-2xhpc8a.96xlarge-128) on machine
+ (node2) is full.
+  terminating : cxmf2Factor error                     18
+
+  DSP Matrix Solver         CPU Time (sec) =       1591.906
+  DSP Matrix Solver     ELAPSED Time (sec) =       1597.581
+  DSP Matrix Solver      Memory Used ( MB) =       7701.035
+
+ NUMBER OF WARNING MESSAGES ENCOUNTERED=          5
+ NUMBER OF ERROR   MESSAGES ENCOUNTERED=          1
+
+ ***** PROBLEM TERMINATED BY INDICATED ERROR(S) OR BY END OF INPUT DATA *****
+
+--- S O L V E R   S T A T I S T I C S ------------------------------------------
+
+Solver: Sparse               (Method = DSP)
+Memory Option: Optimal Out-of-Core
+
+ *-----------------------------------------------------------------------------*
+ |                                                                             |
+ |                               RUN COMPLETED                                 |
+ |                                                                             |
+ |-----------------------------------------------------------------------------|
+ |                                                                             |
+ |  Ansys MAPDL 2026 R1         Build 26.1         UP20260202    LINUX x64     |
+ |                                                                             |
+ |-----------------------------------------------------------------------------|
+ |                                                                             |
+ |        CP Time      (sec) =       2252.829       Time  =  17:39:19          |
+ |        Elapsed Time (sec) =       2554.351       Date  =  08/29/2026        |
+ |                                                                             |
+ *-----------------------------------------------------------------------------*

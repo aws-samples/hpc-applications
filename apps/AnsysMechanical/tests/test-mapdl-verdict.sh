@@ -51,6 +51,9 @@ verdict_is benign-iteration-stop.log 1 1 0 \
 verdict_is benign-iteration-stop.log 0 1 0 \
     "expected fixed-iteration stop, rc=0 -> success"
 
+verdict_is iterative-pcg.log 0 1 0 \
+    "iterative (PCG) completion, rc=0 -> success"
+
 echo "== genuine errors must be caught at ANY indentation =="
 
 verdict_is genuine-error-column-zero.log 2 0 2 \
@@ -64,6 +67,23 @@ verdict_is genuine-error-column-zero.log 0 0 3 \
 
 verdict_is benign-plus-genuine-error.log 1 0 1 \
     "benign stop in a SEPARATE block from a real error -> failure"
+
+echo "== a disk-full abort looks complete on every signal but its error block =="
+
+# Taken from V26 Cluster runs whose scratch filesystem filled up: MAPDL stopped
+# the factorisation with an I/O error, then still printed RUN COMPLETED and a
+# positive Elapsed Time, and exited 1 (one node) or 255 (two nodes) - the same
+# statuses the expected fixed-iteration stop returns. Only the error block shows
+# that the solve never finished.
+for rc in 1 255; do
+    verdict_is disk-full-abort.log "${rc}" 0 "${rc}" \
+        "disk-full abort, rc=${rc} -> failure, rc preserved (not normalised like a benign stop)"
+done
+verdict_is disk-full-abort.log 0 0 3 \
+    "disk-full abort, rc=0 -> failure synthesised"
+got="$(mapdl_count_error_blocks "${FIX}/disk-full-abort.log")"
+[ "${got}" = "1 0 1" ] && ok "disk-full abort: 1 error block, classified unexpected" \
+    || bad "disk-full abort block counts" "1 0 1" "${got}"
 
 echo "== the benign whitelist matches a COMPLETE block, not a substring =="
 
@@ -205,11 +225,44 @@ got="$(mapdl_count_error_blocks "${empty_body}")"
     || bad "empty-body error block counts" "1 0 1" "${got}"
 rm -f "${empty_body}"
 
-echo "== memory mode =="
+echo "== memory mode comes from MAPDL's 'Memory Option:' line =="
+
+# Every sparse-direct run prints "Equation solver memory required for
+# out-of-core mode" in its memory summary, in-core runs included, so a search of
+# the whole output for "out-of-core" labels every in-core run out-of-core.
+if grep -qi 'out-of-core' "${FIX}/normal-success.log"; then
+    ok "the in-core fixture mentions out-of-core outside its Memory Option line"
+else
+    bad "in-core fixture mentions out-of-core" "present (or the next test is vacuous)" "absent"
+fi
 got="$(mapdl_memory_mode "${FIX}/normal-success.log")"
-[ "${got}" = "InCore" ] && ok "In-Core detected" || bad "In-Core detected" "InCore" "${got}"
+[ "${got}" = "InCore" ] && ok "Memory Option: In-Core -> InCore, despite the out-of-core requirement line" \
+    || bad "In-Core detected" "InCore" "${got}"
 got="$(mapdl_memory_mode "${FIX}/benign-iteration-stop.log")"
-[ "${got}" = "OutOfCore" ] && ok "Out-of-Core detected" || bad "Out-of-Core detected" "OutOfCore" "${got}"
+[ "${got}" = "OutOfCore" ] && ok "Memory Option: Optimal Out-of-Core -> OutOfCore" \
+    || bad "Out-of-Core detected" "OutOfCore" "${got}"
+got="$(mapdl_memory_mode "${FIX}/disk-full-abort.log")"
+[ "${got}" = "OutOfCore" ] && ok "out-of-core run with a WARNING about it -> OutOfCore" \
+    || bad "Out-of-Core detected (disk-full fixture)" "OutOfCore" "${got}"
+got="$(mapdl_memory_mode "${FIX}/iterative-pcg.log")"
+[ "${got}" = "unknown" ] && ok "iterative (PCG) run prints no Memory Option line -> unknown" \
+    || bad "iterative run memory mode" "unknown" "${got}"
+got="$(mapdl_memory_mode "${FIX}/truncated-no-completion.log")"
+[ "${got}" = "unknown" ] && ok "run that stopped before its statistics -> unknown" \
+    || bad "truncated run memory mode" "unknown" "${got}"
+
+# Every 2026 R1 output we archived holds at most one Memory Option line. Should
+# one hold several, the last is reported, whichever mode it names.
+two_lines="$(mktemp)"
+printf '%s\n' 'Memory Option: In-Core' 'Memory Option: Optimal Out-of-Core' > "${two_lines}"
+got="$(mapdl_memory_mode "${two_lines}")"
+[ "${got}" = "OutOfCore" ] && ok "two Memory Option lines, In-Core then Out-of-Core -> the last, OutOfCore" \
+    || bad "two Memory Option lines, the last is Out-of-Core" "OutOfCore" "${got}"
+printf '%s\n' 'Memory Option: Optimal Out-of-Core' 'Memory Option: In-Core' > "${two_lines}"
+got="$(mapdl_memory_mode "${two_lines}")"
+[ "${got}" = "InCore" ] && ok "two Memory Option lines, Out-of-Core then In-Core -> the last, InCore" \
+    || bad "two Memory Option lines, the last is In-Core" "InCore" "${got}"
+rm -f "${two_lines}"
 
 echo "== stage-out: cleanup must never run on a failed copy =="
 

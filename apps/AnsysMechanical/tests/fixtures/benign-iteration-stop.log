@@ -6,11 +6,18 @@
  Distributed sparse solver maximum pivot= 9.876543210E+11 at node 4321
  UZ.
 
- Solver Memory Mode: Out-of-Core
+  Equation solver memory allocated                     =   650.000 GB
+  Equation solver memory required for in-core mode     =   980.000 GB
+  Equation solver memory required for out-of-core mode =   340.000 GB
 
  *** ERROR ***                           CP =    1244.974   TIME= 09:53:54
  The number of iterations exceeds 1.  The run is terminated at the
  user's request.
+
+--- S O L V E R   S T A T I S T I C S ------------------------------------------
+
+Solver: Sparse               (Method = DSP)
+Memory Option: Optimal Out-of-Core
 
  *---------------------------------------------------------------------------*
  |                                                                           |

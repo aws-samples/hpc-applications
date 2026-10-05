@@ -256,9 +256,17 @@ before trusting a timing.
     requirement. If the *aggregate* RAM of the job is below it, MAPDL falls back
     to an **out-of-core** mode that does heavy I/O, and runtime can more than
     double. Size the job to fit in memory first; only then optimise for cores.
-  * **Check which memory mode you got.** MAPDL reports `In-Core` or
-    `Out-of-Core` in its output — it is the first thing to look at when a run is
-    unexpectedly slow.
+  * **Check which memory mode you got.** MAPDL states it on the `Memory Option:`
+    line of the solver statistics at the end of its output (`In-Core` or
+    `Optimal Out-of-Core`) — it is the first thing to look at when a run is
+    unexpectedly slow. Read that line rather than searching the whole file: every
+    sparse-direct run also prints `Equation solver memory required for
+    out-of-core mode`, so a search for "out-of-core" labels in-core runs
+    out-of-core. In the 94 sparse-direct V26 Cluster outputs we archived, MAPDL
+    reported In-Core for 45, and a whole-file search labelled all 94 out-of-core.
+    The iterative solvers (PCG, JCG) print no `Memory Option:` line. The line is
+    verified on 2026 R1 only: on a release that does not print it, the sbatch
+    records the memory mode as `unknown`.
   * Because DMP aggregates memory across nodes, **adding a node can be far more
     effective than adding cores**: it raises the memory ceiling as well as the
     core count. Moving a model that is out-of-core on one node onto two nodes
@@ -300,9 +308,11 @@ before trusting a timing.
 ## Scratch space and concurrency
 
 Out-of-core solves write a large amount of scratch to the working directory —
-**on the order of 0.5-0.8 TB per job** for the bigger benchmark models (MAPDL
-reports it as `Sum Scratch Used(All)` at the end of the run). On a shared
-filesystem this is a hard planning constraint:
+**about 0.5-1.2 TB per job** for the V26 Cluster sparse-direct models, against
+0.01-0.23 TB when the same models run in-core. MAPDL reports it as
+`Sum of disk space used on all processes` in its I/O statistics (`Sum Scratch
+Used(All)` in the closing box is scratch *memory*, and it is largest for in-core
+runs). On a shared filesystem this is a hard planning constraint:
 
   * Size the filesystem for `concurrent_jobs x per_job_scratch`, not for the
     input data.
@@ -376,6 +386,15 @@ communication aborts, insufficient memory or disk — are real and must fail the
 run. A robust success test is therefore: `RUN COMPLETED` present, a final
 `Elapsed Time (sec)` present **and positive**, **and** no `*** ERROR ***` block
 other than the expected iteration-limit termination.
+
+A full disk shows why the error blocks are the test that matters. When the shared
+filesystem holding the scratch filled up during our V26 Cluster runs, MAPDL
+stopped the sparse factorisation with "An input/output error has occurred ...
+Please check to see if the disk containing the working directory ... is full",
+then still printed `RUN COMPLETED` and a positive `Elapsed Time (sec)`, and
+exited 1 (one node) or 255 (two nodes): the statuses the fixed-iteration stop
+also returns. Only the error block says that the solve never finished
+([tests/fixtures/disk-full-abort.log](https://github.com/aws-samples/hpc-applications/blob/main/apps/AnsysMechanical/tests/fixtures/disk-full-abort.log)).
 
 Getting that test right is fiddlier than it looks, and the failure modes are
 silent in both directions. Four traps we hit:

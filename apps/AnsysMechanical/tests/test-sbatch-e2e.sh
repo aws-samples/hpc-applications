@@ -225,6 +225,17 @@ run_case "${FIX}/zero-elapsed.log" 0
 [ "${RC}" -eq 3 ] && ok "zero elapsed time -> job exits 3" \
     || bad "zero elapsed exit status" "3" "${RC}"
 
+# A disk-full abort exits with a status the fixed-iteration stop also returns
+# (255 on two nodes) and still prints RUN COMPLETED and a positive elapsed time.
+run_case "${FIX}/disk-full-abort.log" 255
+[ "${RC}" -eq 255 ] && ok "disk-full abort, mapdl rc=255 -> job exits 255 (not normalised to 0)" \
+    || bad "disk-full abort exit status" "255" "${RC}"
+if [ -s "${RECLOG}" ]; then
+    bad "disk-full abort records nothing" "recorder not called" "recorder called"
+else
+    ok "disk-full abort does NOT record a benchmark row"
+fi
+
 echo "== task placement comes from Slurm =="
 
 run_case "${FIX}/normal-success.log" 0
@@ -248,6 +259,8 @@ grep -q 'mapdl_elapsed_seconds=845.000' "${RECLOG}" && ok "MAPDL elapsed passed 
     || bad "mapdl_elapsed metric" "845.000" "$(grep ARGS "${RECLOG}")"
 grep -q 'cores-per-node 64'             "${RECLOG}" && ok "cores-per-node passed from real placement" \
     || bad "cores-per-node" "64" "$(grep ARGS "${RECLOG}")"
+grep -q 'memory_mode=InCore'            "${RECLOG}" && ok "memory mode read from MAPDL's Memory Option line (InCore)" \
+    || bad "memory_mode" "InCore" "$(grep ARGS "${RECLOG}")"
 
 echo "== NVMe mode: a failed stage-out must retain scratch and fail the job =="
 
