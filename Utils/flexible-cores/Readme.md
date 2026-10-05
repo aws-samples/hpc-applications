@@ -174,8 +174,185 @@ Both Hpc8a.96xlarge and Hpc7a.96xlarge have:
 - SMT is disabled by default
 - Cores 0-95 typically map to socket 0, cores 96-191 to socket 1
 
-
 ## Notes
 
 - Proper core pinning can significantly impact application performance, particularly for memory bandwidth bound applications
 - Test different configurations to find optimal performance for your workload
+
+## Addendum: Tuning for CMRX8i instances (Intel Granite Rapids, SNC3)
+
+### Why CMRX8i Require Explicit Tuning
+
+These instances (`C8i, C8id, C8in, C8ine, C8ib, M8i, M8id, M8in, M8idn, M8ine, M8ib, M8idb, R8i, R8id, R8in, R8idn, R8ib, R8idb, X8i)` use Intel Xeon 6900P processors (Granite Rapids) with Sub-NUMA Clustering (SNC3) enabled by default. Each socket contains 3 compute dies, and each die is exposed as a separate NUMA domain. This results in (taking the R8i case as an example):
+
+- **R8i.48xlarge**: 1 socket, 3 NUMA nodes, 32 physical cores per NUMA node (96 total), SMT enabled (192 vCPUs)
+- **R8i.96xlarge**: 2 sockets, 6 NUMA nodes, 32 physical cores per NUMA node (192 total), SMT enabled (384 vCPUs)
+
+Please note that `32xlarge` sizes have only two NUMA domains and `16xlarge` and smaller are uniform (one NUMA).
+
+The topology can be inspected with `lscpu --extended` (shows CPU to NUMA node and cache mapping) and `numactl --hardware` (shows NUMA nodes, memory sizes, and distance matrix).
+
+Unlike Hpc8a/Hpc7a (which have a nearly flat intra-socket topology with less than 3% bandwidth penalty) and R7i (which has 0% intra-socket penalty), the 48.xlarge and 96.xlarge sizes of these instances have significant bandwidth penalties for accessing memory on a different die within the same socket:
+
+| Access pattern | NUMA distance | Measured bandwidth loss |
+| --- | --- | --- |
+| Local (same die) | 10 | baseline |
+| Adjacent die, same socket | 15 | 11 to 19% |
+| Far die, same socket | 17 | 22 to 24% |
+| Cross-socket (R8i.96xl only) | 21 to 28 | 36 to 45% |
+
+NUMA distances are relative, dimensionless values defined by the ACPI SLIT table. Local access is always 10 (baseline), and higher values represent proportionally higher memory access latency. They are not expressed in nanoseconds or any physical unit.
+
+The bandwidth loss measurements were obtained with the STREAM benchmark:
+
+```bash
+wget https://www.cs.virginia.edu/stream/FTP/Code/stream.c
+gcc -O3 -march=native -fopenmp -DSTREAM_ARRAY_SIZE=80000000 -DNTIMES=20 -o stream_c.exe stream.c
+export OMP_NUM_THREADS=8
+numactl --cpunodebind=0 --membind=<N> ./stream_c.exe | grep Triad
+
+```
+
+Replace `<N>` with each NUMA node index (0, 1, 2, ... up to the number of nodes minus 1) to measure bandwidth at each distance.
+
+Applications that ran well on R7i or Hpc7a with loose pinning may underperform on CMRX8i because threads or memory allocations silently cross die boundaries. The SNC3 topology is documented in the [Intel Xeon 6 with P-Cores Configuration and Tuning Guide for HPC Applications](https://www.intel.com/content/www/us/en/content-details/858491/intel-xeon-6-with-p-cores-configuration-and-tuning-guide-for-hpc-applications.html) (Document 858491, Rev 1.1, December 2025, Section 2.2) and confirmed by independent benchmarks ([Phoronix, Oct 2024](https://www.phoronix.com/review/xeon-6980p-snc3-hex), [Phoronix, Oct 2025](https://www.phoronix.com/review/intel-xeon-snc3-hex-benchmarks)). SNC3 cannot be disabled on EC2 instances (neither virtualized nor bare-metal).
+
+### NUMA Distance Matrix
+
+Obtained with:
+
+```bash
+numactl --hardware
+
+```
+
+**R8i.48xlarge example (1 socket, 3 NUMA nodes):**
+
+```
+node   0   1   2 
+  0:  10  15  17 
+  1:  15  10  15 
+  2:  17  15  10 
+
+```
+
+**R8i.96xlarge example (2 sockets, 6 NUMA nodes):**
+
+```
+node   0   1   2   3   4   5 
+  0:  10  15  17  21  28  26 
+  1:  15  10  15  23  26  23 
+  2:  17  15  10  26  23  21 
+  3:  21  28  26  10  15  17 
+  4:  23  26  23  15  10  15 
+  5:  26  23  21  17  15  10 
+
+```
+
+### General Tuning Principles
+
+**1. One MPI rank per NUMA domain**
+
+The fundamental rule is to keep each rank and its memory within a single NUMA domain. Each NUMA domain contains 32 physical cores (64 vCPUs with SMT). The recommended decomposition per instance:
+
+| Instance | Total physical cores | NUMA domains | Ranks per instance | Physical cores per rank | vCPUs per rank (with SMT) |
+| --- | --- | --- | --- | --- | --- |
+| R8i.48xl | 96 | 3 | 3 | 32 | 64 |
+| R8i.96xl | 192 | 6 | 6 | 32 | 64 |
+
+If the application uses fewer threads per rank, leave the remaining cores idle within that NUMA domain rather than packing additional ranks that would share the same memory controller. Verify rank placement by checking the NUMA domain boundaries in the output of `lscpu --extended` (NODE column) or `numactl --hardware` (CPU list per domain).
+
+**2. Always bind memory locally**
+
+```bash
+#SBATCH --mem-bind=local
+
+```
+
+Without this, the Linux kernel may allocate memory pages on a remote die during initialization, causing persistent bandwidth loss for the entire run.
+
+**3. Use compact pinning, not scatter**
+
+```bash
+export OMP_PROC_BIND=close
+export OMP_PLACES=cores
+export I_MPI_PIN_DOMAIN=omp:compact
+export I_MPI_PIN_ORDER=compact
+
+```
+
+`scatter` and `spread` strategies that worked on R7i's flat topology or Hpc8a's nearly-flat intra-socket will spread threads across multiple dies on CMRX8i, incurring 11 to 24% bandwidth loss per misplaced thread.
+
+**4. Handle SMT appropriately**
+
+For compute-bound workloads (recommended):
+
+```bash
+#SBATCH --threads-per-core=1
+#SBATCH --hint=nomultithread
+
+```
+
+When using `--hint=nomultithread`, always ensure `OMP_NUM_THREADS` matches `--cpus-per-task`. Setting `OMP_NUM_THREADS` higher than the allocated CPUs causes oversubscription and performance degradation from context switching.
+
+If the application benefits from SMT (I/O-heavy or latency-hiding workloads), omit these flags and use `OMP_PLACES=cores` with `OMP_PROC_BIND=close` to place threads on distinct physical cores while leaving SMT siblings available.
+
+**5. Generic Slurm template**
+
+```bash
+#!/bin/bash
+#SBATCH --nodes=<N>
+#SBATCH --ntasks-per-node=<NUMA_NODES>    # 3 for r8i.48xl, 6 for r8i.96xl
+#SBATCH --cpus-per-task=<THREADS>          # up to 32 (physical) or 64 (with SMT)
+#SBATCH --threads-per-core=1              # omit if SMT is desired
+#SBATCH --hint=nomultithread              # omit if SMT is desired
+#SBATCH --mem-bind=local
+
+export OMP_NUM_THREADS=<THREADS>           # must match cpus-per-task
+export OMP_PROC_BIND=close
+export OMP_PLACES=cores
+
+export I_MPI_HYDRA_BOOTSTRAP=slurm
+export I_MPI_PIN_DOMAIN=omp:compact
+export I_MPI_PIN_ORDER=compact
+
+srun ./application
+
+```
+
+Replace `<NUMA_NODES>` with 3 (for .48xlarge sizes) or 6 (for .96xlarge sizes) and `<THREADS>` with the desired thread count per rank (up to 32 without SMT, 64 with SMT).
+
+**6. Validate pinning before production runs**
+
+```bash
+export I_MPI_DEBUG=5
+srun ./application
+
+```
+
+Verify in the output that each rank's CPU set falls entirely within one NUMA node boundary:
+
+- CMRX8i.48xl: 0-31, 32-63, 64-95 (physical cores); add 96-127, 128-159, 160-191 if SMT is active
+- CMRX8i.96xl: 0-31, 32-63, 64-95, 96-127, 128-159, 160-191 (physical cores); add 192-383 if SMT is active
+
+Any rank spanning two NUMA boundaries will incur 11 to 45% bandwidth loss depending on the distance between the dies involved.
+
+### Comparison with R7i
+
+Settings that work on R7i without tuning will typically fail on CMRX8i:
+
+| Setting | R7i (flat intra-socket) | CMRX8i (SNC3, requires tuning) |
+| --- | --- | --- |
+| OMP_PROC_BIND | false (safe, no intra-socket penalty) | close (required to prevent tile migration) |
+| OMP_PLACES | undefined (safe) | cores (required) |
+| I_MPI_PIN_DOMAIN | numa (48 cores, all local) | omp:compact (limits to one 32-core tile) |
+| I_MPI_PIN_ORDER | scatter (safe) | compact (required) |
+| --mem-bind | not critical (flat NUMA) | local (critical) |
+| --hint | not critical | nomultithread (recommended for HPC) |
+
+### Reference
+
+- [Intel Xeon 6 with P-Cores Configuration and Tuning Guide for HPC Applications, Document 858491, Rev 1.1, Dec 2025](https://www.intel.com/content/www/us/en/content-details/858491/intel-xeon-6-with-p-cores-configuration-and-tuning-guide-for-hpc-applications.html)
+- [Intel Xeon 6980P SNC3 vs HEX Clustering Mode Performance Review, Phoronix, Oct 2024](https://www.phoronix.com/review/xeon-6980p-snc3-hex)
+- [Revisiting SNC3 vs HEX Mode Performance, Phoronix, Oct 2025](https://www.phoronix.com/review/intel-xeon-snc3-hex-benchmarks)
+- [Intel Xeon 6 Granite Rapids product page](https://www.intel.com/content/www/us/en/ark/products/codename/128428/products-formerly-granite-rapids.html)
