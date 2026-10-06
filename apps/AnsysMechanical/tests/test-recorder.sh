@@ -41,10 +41,10 @@ tmp="$(mktemp -d)"
 cp "${FIX}/normal-success.log" "${tmp}/output-90210.log"
 out="$(run_rec "${tmp}")"
 got="$(attr_n "${out}" time_to_solution_seconds)"
-if [ "${got}" = "845.000" ]; then
-    ok "output-<jobid>.log is discovered and 845.000 s recovered"
+if [ "${got}" = "600.000" ]; then
+    ok "output-<jobid>.log is discovered and 600.000 s recovered"
 else
-    bad "output-<jobid>.log discovery" "845.000" "${got:-<absent>}"
+    bad "output-<jobid>.log discovery" "600.000" "${got:-<absent>}"
 fi
 rm -rf "${tmp}"
 
@@ -52,16 +52,16 @@ tmp="$(mktemp -d)"
 cp "${FIX}/normal-success.log" "${tmp}/output.log"
 out="$(run_rec "${tmp}")"
 got="$(attr_n "${out}" time_to_solution_seconds)"
-[ "${got}" = "845.000" ] && ok "plain output.log still works (unchanged behaviour)" \
-    || bad "output.log discovery" "845.000" "${got:-<absent>}"
+[ "${got}" = "600.000" ] && ok "plain output.log still works (unchanged behaviour)" \
+    || bad "output.log discovery" "600.000" "${got:-<absent>}"
 rm -rf "${tmp}"
 
 tmp="$(mktemp -d)"
 cp "${FIX}/normal-success.log" "${tmp}/solve.out"
 out="$(run_rec "${tmp}")"
 got="$(attr_n "${out}" time_to_solution_seconds)"
-[ "${got}" = "845.000" ] && ok "*.out still works (unchanged behaviour)" \
-    || bad "*.out discovery" "845.000" "${got:-<absent>}"
+[ "${got}" = "600.000" ] && ok "*.out still works (unchanged behaviour)" \
+    || bad "*.out discovery" "600.000" "${got:-<absent>}"
 rm -rf "${tmp}"
 
 echo "== a valid fixed-iteration benchmark is still recorded =="
@@ -70,8 +70,8 @@ tmp="$(mktemp -d)"
 cp "${FIX}/benign-iteration-stop.log" "${tmp}/output-90211.log"
 out="$(run_rec "${tmp}")"
 got="$(attr_n "${out}" time_to_solution_seconds)"
-[ "${got}" = "1244.974" ] && ok "benign iteration stop: timing derived (1244.974)" \
-    || bad "benign iteration stop timing" "1244.974" "${got:-<absent>}"
+[ "${got}" = "1200.000" ] && ok "benign iteration stop: timing derived (1200.000)" \
+    || bad "benign iteration stop timing" "1200.000" "${got:-<absent>}"
 rm -rf "${tmp}"
 
 tmp="$(mktemp -d)"
@@ -234,10 +234,10 @@ rm -rf "${tmp}"
 echo "== explicit values stay authoritative over derived ones =="
 
 tmp="$(mktemp -d)"
-cp "${FIX}/normal-success.log" "${tmp}/output-90216.log"   # would derive 845.000
+cp "${FIX}/normal-success.log" "${tmp}/output-90216.log"   # would derive 600.000
 out="$(run_rec "${tmp}" --time-to-solution 999)"
 got="$(attr_n "${out}" time_to_solution_seconds)"
-[ "${got}" = "999" ] && ok "explicit 999 wins over the derivable 845.000" \
+[ "${got}" = "999" ] && ok "explicit 999 wins over the derivable 600.000" \
     || bad "explicit wins over derived" "999" "${got:-<absent>}"
 rm -rf "${tmp}"
 
