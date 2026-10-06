@@ -203,6 +203,8 @@ Key takeaways:
 - **Atom-steps/sec** — derived as `atoms * timesteps / loop_time` — the workload-normalised metric, useful when comparing different atom counts (e.g. `SCALE` sweeps).
 - **Wall time** — total mpirun wall time including MPI startup and final output, measured by the launcher.
 
+With the default 100 timesteps the loop is short and the wall time is mostly start-up. In 56 runs of `lj` (`SCALE=1` and `4`), `rhodo` and `eam` (`SCALE=1`) on 1 to 4 nodes of `hpc8a.96xlarge`, `hpc7a.96xlarge`, `c7gn.16xlarge`, `m8g.48xlarge`, `hpc6id.32xlarge`, `r8i.96xlarge` and `i7i.48xlarge` (May and June 2026), the loop was a median 4.3% of the wall time, and at most 45%. Most of these runs overlapped 1 to 6 others of the same study on a shared FSx for Lustre file system; the 13 that ran alone gave a median of 5.0%. With `MODEL=rhodo_scaled` at `SCALE=16` (2 runs) the 100-step loop was 95% of the wall time. Compare runs on Loop time, which leaves the start-up out; if you compare wall time, raise `TIMESTEPS` (or `SCALE`) until the loop dominates it.
+
 ## Files
 
 ### x86 ([`x86/`](x86/))

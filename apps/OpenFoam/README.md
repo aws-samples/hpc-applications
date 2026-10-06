@@ -180,6 +180,18 @@ Key takeaways:
 - **`decomposePar` time** — domain decomposition cost (grows with node count; dominant at high scale)
 - **`renumberMesh` / `potentialFoam` time** — setup phase cost
 
+Compare runs on the `simpleFoam` time, which the benchmark scripts pass to the recorder as the time to solution, not on the `Total` they also print: `decomposePar` is serial, and it takes longer the more subdomains it writes. OCC DrivAer 236M, 200 iterations, `hpc8a.96xlarge` at 192 cores per node, May 2026, medians of 6 or 7 runs across the OpenMPI and Intel MPI builds, as relative performance of each phase (the 1-node time divided by the time, so 1 node = 1.00 and higher is faster):
+
+| Nodes | `decomposePar` | `simpleFoam` | `decomposePar` to the end of `simpleFoam` | `decomposePar` time over `simpleFoam` time |
+|------:|------:|------:|------:|------:|
+| 1 | 1.00 | 1.00 | 1.00 | 0.13 |
+| 2 | 0.90 | 2.01 | 1.72 | 0.30 |
+| 4 | 0.79 | 3.56 | 2.50 | 0.60 |
+| 8 | 0.57 | 5.74 | 2.77 | 1.35 |
+| 16 (1 run) | 0.24 | 7.13 | 1.65 | 3.92 |
+
+From 8 nodes on, decomposing took longer than solving, and the total makes 16 nodes look slower than 4 while the solve is twice as fast. The runs shared the cluster's FSx for Lustre file system with other runs of the same study, launched in waves whose `decomposePar` phases overlapped: each 1-node run and six of the seven 2-node runs had 13 others alongside, each 4-node run 6, each 8-node run 2 or 3, and the 16-node run 1. Contention was heaviest at the low node counts, so it does not explain the growth; the seventh 2-node run, made alone, decomposed in 13% less time than the 2-node median. `decomposePar` also runs on a single core while the job holds all its nodes, so for a multi-node study it is cheaper to decompose each layout once, in a single-node job, and copy the decomposed case into each run.
+
 ## Files
 
 ### x86 (`x86/`)
