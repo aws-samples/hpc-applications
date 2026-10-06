@@ -44,6 +44,61 @@ Flexible core configurations allow you to:
 | 168   | Custom           | 7 cores per CCD  | 7/8 capacity  |
 | 192   | Hpc8a.96xlarge   | All physical cores (both sockets) | Full instance capacity  |
 
+### Counts not in the table
+
+Any other count per node loads the 24 CCDs unevenly, and spreading the ranks with
+an even stride (`192 / count`) does not fix it:
+
+| Cores per node | Stride | Ranks per CCD |
+|---|--:|---|
+| 16 | 12 | 1 on 16 CCDs, none on the other 8 |
+| 32 | 6 | 2 on 8 CCDs, 1 on the other 16 |
+| 64 | 3 | 3 on 16 CCDs, 2 on the other 8 |
+
+Every list in the explicit scripts gives each CCD the same number of ranks, 1 to 8.
+Counts like these come up when an application's own increments are powers of two:
+the Ansys Mechanical benchmark package uses 16, 32, 64 and 128 (see
+[AnsysMechanical](https://github.com/aws-samples/hpc-applications/tree/main/apps/AnsysMechanical)).
+
+The explicit scripts print a warning for a count they have no list for, and carry
+on. Where only balanced runs are acceptable, benchmarking for example, refuse the
+count in the job itself, before the solver starts, so that a submission made by
+hand is checked as well as one made by your tooling:
+
+```bash
+# Refuse a cores-per-node count the lists above do not cover. cores_x_node is
+# computed as in the explicit scripts. An IMDS that does not answer within a few
+# seconds refuses the run too.
+TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+instance_type=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
+case "${instance_type}" in
+    hpc8a.96xlarge|hpc7a.96xlarge)
+        case " 24 48 72 96 120 144 168 192 " in
+            *" ${cores_x_node} "*) ;;
+            *) echo "ERROR: ${cores_x_node} cores per node loads the CCDs of ${instance_type} unevenly" >&2
+               exit 1 ;;
+        esac ;;
+    "") echo "ERROR: cannot read the instance type from IMDS; not starting" >&2
+        exit 1 ;;
+esac
+```
+
+If your own tooling submits the jobs, refuse the count there as well, so that no
+node starts for it.
+
+### Other AMD instance types
+
+The lists here are for the 192-core Hpc8a/Hpc7a.96xlarge, but the same principle
+applies to other AMD instances, with their own L3 layout. On an hpc6a.48xlarge
+(AMD EPYC 7R13, 2 sockets of 48 cores, SMT off), `lscpu` shows 4 NUMA nodes of 24
+cores and 12 L3 groups of 8 consecutive cores (0-7, 8-15, ..., 88-95), 3 per NUMA
+node and 6 per socket. Balanced counts per node there are multiples of 12 (12, 24,
+..., 96). Check the layout of the instance you use before you choose counts:
+
+```bash
+lscpu -e=CPU,CORE,SOCKET,NODE,CACHE   # the last field of CACHE is the L3 id
+```
+
 ## Script Comparison
 
 ### Intel MPI Scripts
