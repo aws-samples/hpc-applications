@@ -523,4 +523,115 @@ most of the runtime variation between otherwise identical configurations.
 
 # Performance
 
-TBC — scaling and instance-comparison charts to follow.
+Measured on AWS with the V26 Cluster models and MAPDL 2026 R1 (`v261`), launched
+with the command line `runBench.py` prints (see [Benchmarks](#benchmarks)), Intel
+MPI over EFA, in eu-north-1. Scratch is the working directory on FSx for Lustre
+unless stated. Under-populated Hpc8a/Hpc7a nodes were pinned with the lists from
+[Utils/flexible-cores](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores)
+(`I_MPI_PIN_PROCESSOR_LIST`, checked in Intel MPI's pinning table with
+`I_MPI_DEBUG=5`). Treat the numbers as measurements of these models on these
+configurations, not as a general ranking.
+
+> Every figure below is relative performance, computed from MAPDL's own
+> `Elapsed Time (sec)`, one run per cell: the reference run's time divided by
+> each run's time, so the reference is 1.00 and higher is faster. These models
+> ran at most 96 cores per node, so the instance comparison uses one
+> hpc7a.96xlarge node at 96 cores as its reference, not a fully populated node.
+
+## Balanced core counts on Hpc8a and Hpc7a
+
+Every layout below gives each of the 24 CCDs the same number of ranks. The runs
+are from 2026-10-04, with at most two other MAPDL solves running at the same time.
+The 1 x 96 cells marked * are earlier runs: V26iter-5 and V26iter-6 ran alone
+(2026-08-31), V26iter-4 with at most two other solves (2026-08-31), and
+V26direct-5 on Hpc7a with at most three (2026-08-30).
+
+Core counts and nodes on hpc8a.96xlarge, each model against one node at 96 cores
+= 1.00:
+
+| Model | 1 x 24 | 1 x 48 | 1 x 96 | 2 x 48 | 2 x 96 |
+|---|--:|--:|--:|--:|--:|
+| V26direct-4 | 0.37 | 0.69 | 1.00 | 1.01 | 1.20 |
+| V26direct-5 | 0.65 | 0.91 | 1.00 | 2.92 | 3.65 |
+| V26direct-6 | 0.52 | 0.80 | 1.00 | 1.47 | 1.97 |
+| V26iter-4 | 0.76 | 0.97 | 1.00* | 1.22 | 1.23 |
+| V26iter-5 | 0.80 | 0.94 | 1.00* | | |
+| V26iter-6 | 0.66 | 0.85 | 1.00* | 1.22 | 1.20 |
+
+Hpc8a against Hpc7a, each model against one hpc7a.96xlarge node at 96 cores =
+1.00:
+
+| Model | Instance | 1 x 24 | 1 x 48 | 1 x 96 |
+|---|---|--:|--:|--:|
+| V26direct-5 | hpc7a.96xlarge | 0.47 | 0.76 | 1.00* |
+| V26direct-5 | hpc8a.96xlarge | 0.75 | 1.04 | 1.15 |
+| V26iter-5 | hpc7a.96xlarge | 0.83 | 0.95 | 1.00* |
+| V26iter-5 | hpc8a.96xlarge | 0.99 | 1.17 | 1.24* |
+
+Nodes x cores per node; relative performance, higher is faster.
+
+  * On one node, 96 cores was the fastest of the three counts for every model.
+  * On two nodes, the iterative models ran as fast at 48 cores per node as at 96
+    (V26iter-6: 1.22 and 1.20; V26iter-4: 1.22 and 1.23), while the sparse-direct
+    models still gained from 96 (V26direct-6: 1.47 to 1.97).
+  * The memory mode explains the largest steps. V26direct-5 (710 GB) ran
+    Optimal Out-of-Core on one hpc8a.96xlarge (768 GB) and In-Core on two, so
+    2 x 48 was 2.9x faster than 1 x 96 on the same 96 cores. V26direct-6
+    (1,100 GB) stayed out-of-core on two hpc8a nodes, and V26direct-4 (510 GB)
+    was in-core throughout. The figure in brackets is the requirement
+    `JOBS.CONFIG` lists, and both out-of-core cases had more RAM than it, so
+    read it as a floor: V26direct-6 did not run in-core on the 1,536 GB of two
+    hpc8a nodes, and did on two hpc6id.32xlarge (2,048 GB, see the NVMe table
+    below).
+  * At the same layout, hpc8a.96xlarge was 1.15-1.59x as fast as
+    hpc7a.96xlarge (13-37% less time).
+
+## Scratch on local NVMe vs FSx for Lustre
+
+hpc6id.32xlarge at 64 cores per node. Each pair ran back to back, with no other
+MAPDL, CFX or Fluent solve of our benchmark campaigns running at the same time: the
+working directory, and so MAPDL's scratch, on FSx for Lustre first, then on the
+instance-store NVMe ParallelCluster mounts at `/scratch` (what
+`SCRATCH_MODE=shared` and `SCRATCH_MODE=nvme` select in the sbatch).
+
+| Model | Nodes | MAPDL memory mode | Date | FSx for Lustre | NVMe | Time on NVMe vs FSx |
+|---|--:|---|---|--:|--:|--:|
+| V26direct-6 | 1 | Optimal Out-of-Core | 2026-09-01 | 1.00 | 1.27 | -21.0% |
+| V26direct-6 | 1 | Optimal Out-of-Core | 2026-10-04 | 1.00 | 1.27 | -21.4% |
+| V26direct-6 | 2 | In-Core | 2026-09-01 | 1.00 | 1.06 | -6.1% |
+| V26direct-6 | 2 | In-Core | 2026-10-04 | 1.00 | 1.06 | -5.8% |
+| V26direct-5 | 1 | In-Core | 2026-10-04 | 1.00 | 1.03 | -2.8% |
+
+Relative performance, the FSx for Lustre run of each pair = 1.00. Local NVMe
+saved about 21% when MAPDL ran out-of-core and
+3-6% in-core, and the two A/B tests a month apart agree within half a point. That
+is the case for the default `SCRATCH_MODE=auto`, which runs from `/scratch` when
+every node has a writable one. It does not check the free space, so make sure
+`/scratch` holds the job's scratch: V26direct-6 out-of-core wrote about 1.2 TB on
+one node (MAPDL's `Sum of disk space used on all processes`).
+
+## Shared-filesystem contention
+
+The same configurations alone, and while other MAPDL solves of the same campaign
+shared the FSx for Lustre file system (2026-08-29):
+
+| Model | Nodes x cores per node | Alone | Shared | Other MAPDL solves at the same time |
+|---|---|--:|--:|--:|
+| V26iter-5 | 1 x 96, hpc8a.96xlarge | 1.00 | 0.50 / 0.33 / 0.30 | up to 23 |
+| V26iter-6 | 1 x 96, hpc8a.96xlarge | 1.00 | 0.50 / 0.33 / 0.32 | up to 23 |
+| V26direct-5 | 2 x 64, hpc6id.32xlarge | 1.00 | 0.96 / 0.82 / 0.74 | 10-11 |
+
+Relative performance, the run alone = 1.00; the runs alone are from 2026-08-31
+and 2026-10-03. Sharing
+made the same solve up to 3.3x slower, which is why the advice above is to cap
+concurrent solves and to re-run a surprising result alone.
+
+## Which time to compare
+
+The sbatch records two times: the wall clock around the `mapdl` command
+(`time_to_solution_seconds`) and MAPDL's own `Elapsed Time (sec)`
+(`mapdl_elapsed_seconds`). Compare runs on MAPDL's. The difference is the time
+spent outside MAPDL's own clock, and it is not constant: for V26direct-5 on
+2 x hpc6id.32xlarge the wall clock was 9% longer than MAPDL's time when the solve
+ran alone, and 8% to 137% longer on the shared file system above (2.4x MAPDL's
+time at worst).
