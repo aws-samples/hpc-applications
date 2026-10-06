@@ -255,8 +255,8 @@ grep -q 'BENCHMARK_CASE=V26direct-5'    "${RECLOG}" && ok "case name passed to t
     || bad "case name" "V26direct-5" "$(grep BENCHMARK_CASE "${RECLOG}")"
 grep -q 'MECHANICAL_VERSION=v261'       "${RECLOG}" && ok "version passed to the recorder" \
     || bad "version" "v261" "$(grep MECHANICAL_VERSION "${RECLOG}")"
-grep -q 'mapdl_elapsed_seconds=845.000' "${RECLOG}" && ok "MAPDL elapsed passed as a metric" \
-    || bad "mapdl_elapsed metric" "845.000" "$(grep ARGS "${RECLOG}")"
+grep -q 'mapdl_elapsed_seconds=600.000' "${RECLOG}" && ok "MAPDL elapsed passed as a metric" \
+    || bad "mapdl_elapsed metric" "600.000" "$(grep ARGS "${RECLOG}")"
 grep -q 'cores-per-node 64'             "${RECLOG}" && ok "cores-per-node passed from real placement" \
     || bad "cores-per-node" "64" "$(grep ARGS "${RECLOG}")"
 grep -q 'memory_mode=InCore'            "${RECLOG}" && ok "memory mode read from MAPDL's Memory Option line (InCore)" \

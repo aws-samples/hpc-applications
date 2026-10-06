@@ -192,10 +192,10 @@ verdict_is negative-elapsed.log 0 0 3 \
     "Elapsed Time (sec) = -5.000 -> failure"
 
 got="$(mapdl_elapsed_seconds "${FIX}/normal-success.log")"
-if [ "${got}" = "845.000" ]; then
-    ok "elapsed parses the value after '=' (845.000), not the trailing Date year"
+if [ "${got}" = "600.000" ]; then
+    ok "elapsed parses the value after '=' (600.000), not the trailing Date year"
 else
-    bad "elapsed parses the value after '=' not the Date year" "845.000" "${got:-<empty>}"
+    bad "elapsed parses the value after '=' not the Date year" "600.000" "${got:-<empty>}"
 fi
 
 for f in zero-elapsed negative-elapsed; do

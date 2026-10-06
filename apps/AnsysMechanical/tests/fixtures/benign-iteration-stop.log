@@ -10,7 +10,7 @@
   Equation solver memory required for in-core mode     =   980.000 GB
   Equation solver memory required for out-of-core mode =   340.000 GB
 
- *** ERROR ***                           CP =    1244.974   TIME= 09:53:54
+ *** ERROR ***                           CP =    1100.000   TIME= 09:53:54
  The number of iterations exceeds 1.  The run is terminated at the
  user's request.
 
@@ -25,7 +25,7 @@ Memory Option: Optimal Out-of-Core
  |                                                                           |
  |---------------------------------------------------------------------------|
  |                                                                           |
- |        CP Time      (sec) =     1240.110       Time  =  09:53:55          |
- |        Elapsed Time (sec) =     1244.974       Date  =  08/29/2026        |
+ |        CP Time      (sec) =     1100.000       Time  =  09:53:55          |
+ |        Elapsed Time (sec) =     1200.000       Date  =  08/29/2026        |
  |                                                                           |
  *---------------------------------------------------------------------------*
