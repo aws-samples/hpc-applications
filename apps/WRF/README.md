@@ -166,20 +166,33 @@ All benchmark scripts (x86 and Arm):
 
 ## Performance
 
-### x86 — hpc8a vs hpc7a (CONUS 2.5km)
+### CONUS 2.5km — scaling on six instance types (6-hour forecast)
 
-This chart shows the scaling performance of WRF running the CONUS 2.5km benchmark (1501×1201 grid, 15s timestep, 6-hour simulation) on AWS EC2 [hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/) vs [hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) instances.
+This chart shows the scaling of WRF 4.6.1 on the CONUS 2.5km benchmark (1501×1201 grid, 50 levels, 15s timestep), running the full 6-hour forecast it ships with (1,440 steps, hourly history output), on 1 to 16 nodes of AWS EC2 [hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/), [c8i](https://aws.amazon.com/ec2/instance-types/c8i/), [m8a](https://aws.amazon.com/ec2/instance-types/m8a/), [m8g](https://aws.amazon.com/ec2/instance-types/m8g/), [hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) and [hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) instances.
 
-All runs use Intel MPI 2021.17 with EFA and MULTIRAIL enabled, 192 cores per node (full node utilization). Performance is expressed as speedup normalized to a single `hpc7a.96xlarge` node — higher is better.
+Every node is fully populated with one MPI rank per core (96 on `hpc6a.48xlarge`, 192 on the others), over EFA. The x86 instances run the GCC + Intel MPI build (Option 2) with the Intel MPI settings of `x86/wrf-benchmark-conus2.5km-intel.sbatch` (Intel MPI 2021.17 or 2021.18, MULTIRAIL enabled); `m8g.48xlarge` runs the Graviton4 build with OpenMPI 5.0.9, launched as `Arm/wrf-benchmark.sbatch` does. Performance is the steady step (see [Key Metrics](#key-metrics)), the median over each configuration's runs, normalized to a single `hpc7a.96xlarge` node — higher is better. The right panel shows each instance type's parallel efficiency against its own single node.
 
-![WRF CONUS 2.5km hpc8a vs hpc7a](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/WRF/WRF-CONUS2.5km-Hpc8aVsHpc7a.png?raw=true)
+![WRF CONUS 2.5km 6-hour scaling](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/WRF/WRF-CONUS2.5km-6h-Scaling.png?raw=true)
+
+Relative performance (1 node `hpc7a.96xlarge` = 1.00×):
+
+| Nodes | hpc8a.96xlarge | c8i.96xlarge | m8a.48xlarge | m8g.48xlarge | hpc7a.96xlarge | hpc6a.48xlarge |
+|------:|---------------:|-------------:|-------------:|-------------:|---------------:|---------------:|
+| 1 | 1.38× | 1.38× | 1.26× (1 run) | 1.13× | 1.00× | 0.41× |
+| 2 | 2.85× | 2.75× | 2.58× (1 run) | 2.19× | 2.07× | 0.80× |
+| 4 | 5.92× | — | — | 4.33× | 4.31× | 1.66× |
+| 8 | 12.68× | — | — | 8.70× (2 runs) | 9.30× | 3.46× |
+| 16 | — | — | — | — | — | 7.10× (4 runs) |
+
+All other values are medians of 3 runs. The runs were made in October 2026, with 0 to 8 other benchmark jobs sharing their FSx for Lustre file system (the steady step leaves file I/O out). The runs of each configuration agree within 3%, except on 16 `hpc6a.48xlarge` nodes: there the two runs in us-east-2, on separately launched nodes, agree within 0.5% but were both about 5% slower than the two in eu-north-1 (6.94× against 7.30×), and their median step was slower than either of theirs in every hour of the forecast. That points to the Regions' software stacks (they differ, for example Intel MPI 2021.17 against 2021.18) rather than to the nodes of one us-east-2 run. The table and the chart give the median of all four.
 
 Key takeaways:
 
-- A single hpc8a node delivers **1.38x** the performance of a single hpc7a node
-- At 8 nodes, hpc8a reaches **4.59x** vs **3.51x** for hpc7a (relative to the 1N hpc7a baseline)
-- hpc8a maintains a consistent ~30–38% advantage over hpc7a at every node count
-- Both instance types show good scaling up to 4 nodes; efficiency tapers at 8 nodes as the CONUS 2.5km workload begins to saturate at 1536 cores
+- The steady step keeps scaling to 1,536 cores: hpc7a and hpc8a reach **116%** and **115%** parallel efficiency on 8 nodes, and hpc6a **109%** on 16. Efficiency above 100% means the steady step shrank more than in proportion to the node count; each rank's smaller part of the grid fitting better in cache would explain it, but that was not measured here.
+- A single hpc8a node delivers **1.38×** the performance of a single hpc7a node, and hpc8a stays at 1.36–1.38× hpc7a at every node count from 1 to 8.
+- On 1 and 2 nodes, c8i is within 4% of hpc8a (1.38× and 2.75× against 1.38× and 2.85×); m8a reaches 1.26× and 2.58× (one run each).
+- m8g (Graviton4, OpenMPI 5) starts ahead of hpc7a (1.13× on one node) but scales at 95–97%, so the two are level at 4 nodes and hpc7a leads at 8 (9.30× against 8.70×).
+- On the total wall time instead, the same runs reach only 3.53× (hpc7a) and 4.68× (hpc8a) on 8 nodes: the hourly history writes and the restart write do not get faster with more nodes, and they take 15–16% of a one-node hpc7a or hpc8a run but 64–66% of an 8-node one.
 
 ### Arm — Graviton3E (hpc7g) vs Graviton4 (m8g)
 
