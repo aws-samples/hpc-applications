@@ -198,7 +198,7 @@ Key takeaways:
 
 This chart shows the scaling performance of WRF 4.6.1 running both CONUS benchmarks on [hpc7g](https://aws.amazon.com/ec2/instance-types/hpc7g/) (Graviton3E, Neoverse V1, 64 cores) vs [m8g](https://aws.amazon.com/ec2/instance-types/m8g/) (Graviton4, Neoverse V2, 192 cores) instances.
 
-Each platform uses the CPU-tuned GCC build (`target=neoverse_v1` on Graviton3E, `target=neoverse_v2` on Graviton4), OpenMPI 5.0.9 over EFA, and pure MPI (one rank per core, `OMP_NUM_THREADS=1`). Performance is expressed as speedup normalized to a single `hpc7g.16xlarge` node — higher is better.
+Each platform uses the CPU-tuned GCC build (`target=neoverse_v1` on Graviton3E, `target=neoverse_v2` on Graviton4), OpenMPI 5.0.9 over EFA, and pure MPI (one rank per core, `OMP_NUM_THREADS=1`). Performance is expressed as speedup on the total wall time (output included), normalized to a single `hpc7g.16xlarge` node — higher is better.
 
 ![WRF CONUS Graviton3E vs Graviton4](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/WRF/WRF-CONUS-Graviton3VsGraviton4.png?raw=true)
 
