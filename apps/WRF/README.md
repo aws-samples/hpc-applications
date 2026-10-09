@@ -229,6 +229,7 @@ Key takeaways:
 ## Key Metrics
 
 - **Average time per timestep** — extracted from `rsl.error.0000`; it includes the output writes, so compare node counts on the median or the steady step (below)
+- **Median and steady time per timestep** — printed by every benchmark script next to the average (`Median timestep:`, `Steady timestep:`) and recorded with it; the steady step leaves out the first step and every step that follows an output write or a boundary read ([`lib/wrf-step-timing.sh`](lib/wrf-step-timing.sh))
 - **Total wall time** — end-to-end execution time including MPI startup and I/O
 
 Run the full forecast the case ships with (6 hours, 1,440 steps of 15 s for CONUS 2.5km), not a shortened one, and to compare node counts use the median time per step, or the steady step: the average without the first step and the steps that write output or read boundaries. The average per step and the total wall time both include output, which does not get faster with more nodes: WRF counts each history or restart write in the `Timing for main` line of the step that makes it.
@@ -258,3 +259,10 @@ The 5-minute runs were launched a few at a time: 21 of the 22 overlapped 1 to 4 
 |------|-------------|
 | `build_wrf_arm.sbatch` | Build WRF via Spack (GCC + OpenMPI 4 or 5, auto-detects Graviton3E or Graviton4) |
 | `wrf-benchmark.sbatch` | CONUS 12km or 2.5km benchmark (selectable via `BENCHMARK`) with OpenMPI + EFA |
+
+### Shared ([`lib/`](lib/), [`tests/`](tests/))
+
+| File | Description |
+|------|-------------|
+| `lib/wrf-step-timing.sh` | Median and steady time per timestep from `rsl.error.0000`, used by every benchmark script |
+| `tests/run-tests.sh` | The helper's tests and the benchmark scripts' end-to-end tests (see [`tests/README.md`](tests/README.md)) |
