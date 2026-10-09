@@ -1,7 +1,8 @@
 #!/bin/bash
 # =============================================================================
 # NVMe scratch in AnsysMechanical.sbatch: the check every node must pass before
-# MAPDL's working directory goes on SCRATCH_ROOT.
+# MAPDL's working directory goes on SCRATCH_ROOT, and the copy of MAPDL's error
+# logs (file*.err) off every node's NVMe scratch before the reclaim.
 # =============================================================================
 # Runs the assembled launcher, as test-sbatch-e2e.sh does, on emulated nodes. The
 # srun stub runs each per-node step once per node (STUB_NODE=node-1..N), and
@@ -10,7 +11,8 @@
 # fixtures (fixtures/scratch-hpc6id-*.txt) are what a real hpc6id.32xlarge answered
 # for the /scratch ParallelCluster mounts there: an LVM volume over its four
 # instance-store drives. The emulated nodes share one real directory as
-# SCRATCH_ROOT.
+# SCRATCH_ROOT; while a node's error-log copy runs, the working directory holds
+# that node's file*.err and no other node's.
 #
 # No Slurm, no EC2, no MPI, no licensed solver, no AWS credentials, no network.
 #
@@ -59,6 +61,7 @@ opts=()
 while [ $# -gt 0 ] && [ "${1#--}" != "$1" ]; do opts+=("$1"); shift; done
 if   [ "$1" = mkdir ];                  then step=mkdir
 elif [ "${4:-}" = nvme-scratch-probe ]; then step=probe
+elif [ "${4:-}" = mapdl-error-logs ];   then step=errlogs
 elif [ "${3:-}" != "${3#rm -rf }" ];    then step=reclaim
 else                                         step=other
 fi
@@ -68,6 +71,12 @@ for (( i = 1; i <= SLURM_JOB_NUM_NODES; i++ )); do
     node="node-${i}"; d="${STUB_NODES}/${node}"
     # a node whose probe prints nothing: it never answered
     if [ "${step}" = probe ] && [ -e "${d}/silent" ]; then continue; fi
+    # the nodes share one working directory ($5): while a node's copy runs, it holds
+    # that node's error logs (its "errlogs" fixture) and no other node's
+    if [ "${step}" = errlogs ]; then
+        rm -f "$5"/file*.err
+        if [ -d "${d}/errlogs" ]; then cp "${d}/errlogs/"* "$5"/; fi
+    fi
     STUB_NODE="${node}" "$@" || rc=1
 done
 exit "${rc}"
@@ -143,7 +152,7 @@ chmod +x "${STUBS}"/bin/*
 # ---------------------------------------------------------------------------
 # Cases and nodes. new_case starts a case (CASE, NODES, ROOT); node <n> <kind>
 # [option ...] writes node-<n>'s answers under ${NODES}/node-<n>/ (findmnt, lsblk and
-# the device it describes, lsblk.device, df, hostname, silent).
+# the device it describes, lsblk.device, df, hostname, silent, errlogs/).
 #   kinds:   hpc6id     the real hpc6id.32xlarge answers (13335 GiB free)
 #            plain-dir  a type with no instance store: SCRATCH_ROOT only a directory
 #                       on the root volume, which findmnt does not list
@@ -153,6 +162,8 @@ chmod +x "${STUBS}"/bin/*
 #   options: free=<GiB> with that many GiB free (plus less than a GiB, which does
 #                       not count); df-kib=<n> with exactly n KiB free; no-df (df fails)
 #            host=<name> the host name the node answers with; silent (no answer)
+#            errlogs=<a,b,...> the MAPDL error logs its working directory holds,
+#                       each reading "<name> written on node-<n>"
 # ---------------------------------------------------------------------------
 GIB=1048576   # KiB
 
@@ -168,7 +179,7 @@ df_fixture() {   # <source> <available KiB> <mounted on>
 }
 
 node() {
-    local kind="$2" d="${NODES}/node-$1" opt; shift 2
+    local n="$1" kind="$2" d="${NODES}/node-$1" opt log; shift 2
     mkdir -p "${d}"
     case "${kind}" in
         hpc6id)
@@ -206,6 +217,11 @@ node() {
             no-df)    rm -f "${d}/df" ;;
             host=*)   echo "${opt#host=}" > "${d}/hostname" ;;
             silent)   : > "${d}/silent" ;;
+            errlogs=*)
+                mkdir -p "${d}/errlogs"
+                for log in $(tr ',' ' ' <<<"${opt#errlogs=}"); do
+                    echo "${log} written on node-${n}" > "${d}/errlogs/${log}"
+                done ;;
             *)        echo "unknown node option ${opt}" >&2; return 1 ;;
         esac
     done
@@ -213,9 +229,11 @@ node() {
 
 # scratch_job <nodes> [VAR=value ...]: run the launcher on <nodes> emulated nodes,
 # with the given job environment (SCRATCH_MODE=..., SCRATCH_MIN_FREE_GIB=...). The
-# mapdl stub writes normal-success.log and exits 0. Sets RC, OUT (stdout), ERR
-# (stderr), CALLS (srun's calls: step, then its options) and REC (the recorder's
-# arguments; empty when it was not called).
+# mapdl stub writes MAPDL_FIXTURE (default normal-success.log) and exits MAPDL_RC
+# (default 0); BLOCK_HOST_DIR=<host> puts a file where that host's error-log
+# directory would go, in the run directory. Sets RC, OUT (stdout), ERR (stderr),
+# CALLS (srun's calls: step, then its options), REC (the recorder's arguments; empty
+# when it was not called) and SHARED (the run directory on the shared filesystem).
 scratch_job() {
     local nodes="$1"; shift
     local base="${CASE}/base" vdir="${CASE}/base/ansys_inc/v261/ansys/bin" i nodelist tpn
@@ -225,8 +243,11 @@ scratch_job() {
 outfile=""; prev=""
 for a in "\$@"; do [ "\$prev" = "-o" ] && outfile="\$a"; prev="\$a"; done
 : > "${CASE}/mapdl-ran"
-[ -n "\${outfile}" ] && cp "${FIX}/normal-success.log" "\${outfile}"
-exit 0
+[ -n "\${outfile}" ] && cp "\${MAPDL_FIXTURE:-${FIX}/normal-success.log}" "\${outfile}"
+if [ -n "\${BLOCK_HOST_DIR:-}" ]; then
+    for d in "${base}"/*/Run/*; do [ -d "\$d" ] && echo blocked > "\$d/\${BLOCK_HOST_DIR}"; done
+fi
+exit "\${MAPDL_RC:-0}"
 EOF
     chmod +x "${vdir}/mapdl"
     : > "${base}/inputs/V26direct-5.dat"
@@ -251,6 +272,18 @@ EOF
     ERR="$(cat "${CASE}/stderr")"
     CALLS="$(cat "${CASE}/srun.calls")"
     REC="$(cat "${CASE}/recorder.log")"
+    # resolved as the launcher resolves it (readlink -m), so log lines compare equal
+    SHARED="$(find "${base}/AnsysMechanical/Run" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -n 1)"
+    [ -z "${SHARED}" ] || SHARED="$(readlink -m "${SHARED}")"
+}
+
+# Every MAPDL error log in the run directory, sorted, as "<path under it>=<content>|".
+kept_logs() {
+    local f
+    [ -n "${SHARED}" ] || return 0
+    while IFS= read -r f; do
+        printf '%s=%s|' "${f#"${SHARED}"/}" "$(cat "${f}")"
+    done < <(find "${SHARED}" -name 'file*.err' -type f | sort)
 }
 
 has()   { grep -qF -- "$2" <<<"$1"; }
@@ -308,7 +341,8 @@ new_case; node 1 hpc6id; node 2 hpc6id; node 3 hpc6id; node 4 hpc6id
 scratch_job 4
 expect_nvme "four hpc6id nodes" 4
 expect_out "every node answers" "  node-4 ok: ${ROOT} on local NVMe instance storage"
-expect_steps "the check, the workdir and the reclaim are one srun step each" "probe mkdir reclaim"
+expect_steps "the check, the workdir, the error-log copy and the reclaim are one srun step each" \
+    "probe mkdir errlogs reclaim"
 if [ -n "${CALLS}" ] && ! grep -qv -- ' --ntasks=4 --ntasks-per-node=1$' <<<"${CALLS}"; then
     ok "every per-node step asks srun for one task on each of the 4 nodes"
 else
@@ -486,6 +520,84 @@ if [ "${RC}" -eq 0 ] && [ -z "${CALLS}" ] && ! has "${OUT}" "NVMe scratch check"
     ok "SCRATCH_MODE=shared never checks, even where NVMe is available"
 else
     bad "SCRATCH_MODE=shared" "no srun step, no check, shared workdir" "exit ${RC}; steps: $(steps)"
+fi
+
+echo "== MAPDL's error logs (file*.err) come off every node's NVMe scratch =="
+
+expect_kept() {   # <what> <expected kept_logs>
+    if [ "$(kept_logs)" = "$2" ]; then ok "$1"; else bad "$1" "$2" "$(kept_logs)"; fi
+}
+
+new_case; node 1 hpc6id errlogs=file0.err,file1.err
+scratch_job 1
+expect_nvme "one node with two error logs" 1
+expect_kept "they land in the run directory, where a shared-filesystem run has them" \
+    "file0.err=file0.err written on node-1|file1.err=file1.err written on node-1|"
+expect_out "the node says how many it copied" \
+    "node-1: 2 MAPDL error log(s) (file*.err) copied to ${SHARED}"
+expect_steps "they are copied before the reclaim deletes the working directory" \
+    "probe mkdir errlogs reclaim"
+if [ -n "${SHARED}" ] && [ ! -e "${SHARED}/node-1" ]; then
+    ok "no per-host directory is left when every name is unique"
+else
+    bad "no per-host directory left" "no ${SHARED}/node-1" "$(find "${SHARED}" -mindepth 1 -maxdepth 1 -printf '%f ')"
+fi
+expect_no_warning "a complete copy raises no warning"
+
+new_case; node 1 hpc6id errlogs=file0.err,file1.err; node 2 hpc6id errlogs=file2.err,file3.err
+scratch_job 2
+expect_nvme "two nodes with their own error logs" 2
+expect_kept "every node's error logs are kept" \
+    "file0.err=file0.err written on node-1|file1.err=file1.err written on node-1|file2.err=file2.err written on node-2|file3.err=file3.err written on node-2|"
+
+new_case; node 1 hpc6id errlogs=file0.err,file1.err; node 2 hpc6id errlogs=file1.err,file2.err
+scratch_job 2
+expect_nvme "two nodes that both hold a file1.err" 2
+expect_kept "a name both nodes hold stays under each host: no node's copy replaces another's" \
+    "file0.err=file0.err written on node-1|file2.err=file2.err written on node-2|node-1/file1.err=file1.err written on node-1|node-2/file1.err=file1.err written on node-2|"
+expect_out "and the log says where they are" \
+    "MAPDL error logs: 2 file(s) whose name another node also holds kept under ${SHARED}/<host>/"
+
+new_case; node 1 hpc6id errlogs=file0.err; node 2 hpc6id errlogs=file1.err,file2.err
+scratch_job 2 BLOCK_HOST_DIR=node-2
+expect_nvme "a node whose copy fails: the run still succeeds, is recorded and reclaimed" 2
+if has "${ERR}" "WARNING: node-2: 2 MAPDL error log(s) (file*.err) not copied" \
+   && has "${ERR}" "WARNING: not every MAPDL error log (file*.err) was copied off the nodes' NVMe scratch; the reclaim deletes the rest."; then
+    ok "a failed copy prints a WARNING naming the node"
+else
+    bad "failed copy warning" "WARNING: node-2: 2 ... not copied, and the summary WARNING" "${ERR//$'\n'/|}"
+fi
+expect_kept "the other node's error logs are still kept" "file0.err=file0.err written on node-1|"
+
+new_case; node 1 hpc6id errlogs=file0.err,file1.err; node 2 hpc6id errlogs=file2.err
+scratch_job 2 MAPDL_FIXTURE="${FIX}/genuine-error-column-zero.log" MAPDL_RC=2
+if [ "${RC}" -eq 2 ] && [ -z "${REC}" ] && has "${OUT}" "local scratch reclaimed"; then
+    ok "a failed solve on NVMe keeps its exit status (2), records no row, and is reclaimed"
+else
+    bad "failed solve on NVMe" "exit 2, no row, reclaimed" "exit ${RC}; recorder: ${REC:-not called}"
+fi
+expect_kept "a failed solve's error logs are kept from every node" \
+    "file0.err=file0.err written on node-1|file1.err=file1.err written on node-1|file2.err=file2.err written on node-2|"
+
+new_case; node 1 hpc6id; node 2 hpc6id
+scratch_job 2
+expect_nvme "two nodes without error logs" 2
+if has "${OUT}" "node-2: 0 MAPDL error log(s) (file*.err) copied to ${SHARED}" && [ -z "$(kept_logs)" ] \
+   && [ ! -e "${SHARED}/node-1" ] && [ ! -e "${SHARED}/node-2" ]; then
+    ok "a node without error logs copies none, makes no directory and warns about nothing"
+else
+    bad "nodes without error logs" "0 copied, no file, no host directory" \
+        "$(kept_logs); $(find "${SHARED}" -mindepth 1 -maxdepth 1 -printf '%f ')"
+fi
+expect_no_warning "and raises no warning"
+
+new_case; node 1 hpc6id errlogs=file0.err; node 2 plain-dir
+scratch_job 2
+expect_shared "a run that falls back to the shared filesystem" 1 2
+if ! has "${OUT}" "MAPDL error log"; then
+    ok "a shared-filesystem run copies no error logs: they are already in its run directory"
+else
+    bad "a shared-filesystem run copies nothing" "no 'MAPDL error log' line" "$(grep 'MAPDL error log' <<<"${OUT}")"
 fi
 
 echo

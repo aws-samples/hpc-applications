@@ -345,7 +345,11 @@ runs). On a shared filesystem this is a hard planning constraint:
     the workdir suffice), and at the end copy the output file (written on the
     master node) back to the shared filesystem, then **reclaim** `/scratch` on
     every node (`srun --ntasks-per-node=1 rm -rf $workdir`) — warm nodes are
-    reused between jobs and leftover scratch accumulates.
+    reused between jobs and leftover scratch accumulates. Before the reclaim,
+    copy MAPDL's error logs off every node as well: each process writes its own
+    `file<N>.err` on its own node, and the reclaim deletes them (the sbatch puts
+    them in the run directory, where a shared-filesystem run has them, and under
+    `<host>/` when two nodes hold the same name).
     **Check that the copy succeeded before you delete anything.** Once the solve
     runs on instance store, that copy is the only lasting record of it, so a
     `cp` whose result is discarded followed by an unconditional `rm -rf` destroys

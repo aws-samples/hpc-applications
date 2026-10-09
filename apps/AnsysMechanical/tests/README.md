@@ -107,9 +107,10 @@ the scratch check. They skip when running as root (the failure is simulated with
 directory permissions).
 
 `test-nvme-scratch.sh` runs the assembled sbatch on emulated nodes to pin the **NVMe
-scratch check**: `srun` runs each per-node step once per node, and `hostname`,
-`findmnt`, `lsblk` and `df` answer from that node's fixture, in the formats
-util-linux 2.37 and GNU coreutils 8.32 print on Amazon Linux 2023. It asserts:
+scratch check** and the copy of **MAPDL's error logs** off NVMe scratch: `srun` runs
+each per-node step once per node, and `hostname`, `findmnt`, `lsblk` and `df` answer
+from that node's fixture, in the formats util-linux 2.37 and GNU coreutils 8.32
+print on Amazon Linux 2023. It asserts:
 
   * NVMe is used only when every node passes: the hpc6id fixtures pass, on one node
     and on four, and the job records `scratch_mode=nvme`;
@@ -127,7 +128,13 @@ util-linux 2.37 and GNU coreutils 8.32 print on Amazon Linux 2023. It asserts:
     a fraction, a space) ends the job before any node work, in `shared` mode too;
     the probe itself answers no to a minimum it cannot compare;
   * `SCRATCH_MODE=nvme` falls back with the same warning as before, `auto` falls back
-    without one, and `shared` never checks.
+    without one, and `shared` never checks;
+  * every node's `file*.err` reaches the run directory before the reclaim, on one
+    node and on two, for a failed solve too (exit status kept, no row); a name two
+    nodes hold stays under each `<host>/`, so no copy replaces another; a copy
+    that fails warns, and the run's status, row and reclaim are unchanged; a node
+    without error logs copies none and makes no directory; a run on the shared
+    filesystem copies nothing.
 
 ## Adding a case
 

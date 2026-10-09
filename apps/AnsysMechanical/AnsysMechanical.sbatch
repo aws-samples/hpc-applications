@@ -352,6 +352,50 @@ if [ "${MAPDL_UNEXPECTED}" -gt 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# MAPDL's error logs on node-local scratch. Every MAPDL process writes its own
+# file<N>.err in the working directory of the node it runs on, and the reclaim
+# below deletes that directory. So, first, each node copies its own into
+# <shared_dir>/<host>/ (the scratch check passed only distinct host names); then a
+# name only one node holds moves up to <shared_dir>/, where a run on the shared
+# filesystem has it, and a name more than one node holds stays under each <host>/,
+# so no node's copy replaces another's. Best effort: a copy that fails prints a
+# WARNING, and neither the reclaim nor the job's exit status changes.
+# ---------------------------------------------------------------------------
+keep_mapdl_error_logs() {   # <node-local workdir> <shared run dir>
+    local src="$1" dest="$2" f same apart=0
+    # shellcheck disable=SC2016  # the script is expanded by the bash on each node
+    srun --ntasks="${SLURM_JOB_NUM_NODES}" --ntasks-per-node=1 /bin/bash -c '
+        host="$(hostname)" copied=0 failed=0
+        for f in "$1"/file*.err; do
+            [ -f "${f}" ] || continue
+            if mkdir -p "$2/${host}" && cp -p -- "${f}" "$2/${host}/"; then
+                copied=$(( copied + 1 ))
+            else
+                failed=$(( failed + 1 ))
+            fi
+        done
+        echo "${host}: ${copied} MAPDL error log(s) (file*.err) copied to $2"
+        if [ "${failed}" -gt 0 ]; then
+            echo "WARNING: ${host}: ${failed} MAPDL error log(s) (file*.err) not copied" >&2; exit 1
+        fi' mapdl-error-logs "${src}" "${dest}" \
+        || echo "WARNING: not every MAPDL error log (file*.err) was copied off the nodes' NVMe scratch; the reclaim deletes the rest." >&2
+    for f in "${dest}"/*/file*.err; do
+        [ -f "${f}" ] || continue
+        same=( "${dest}"/*/"${f##*/}" )
+        if [ "${#same[@]}" -eq 1 ] && [ ! -e "${dest}/${f##*/}" ]; then
+            mv -- "${f}" "${dest}/"
+        else
+            apart=$(( apart + 1 ))
+        fi
+    done
+    rmdir "${dest}"/*/ 2>/dev/null
+    if [ "${apart}" -gt 0 ]; then
+        echo "MAPDL error logs: ${apart} file(s) whose name another node also holds kept under ${dest}/<host>/"
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Durable stage-out BEFORE reclaiming node-local scratch. When the solve ran on
 # /scratch, the copy on the shared filesystem is the ONLY lasting record of it,
 # so a failed copy must never be followed by `rm -rf`: keep the scratch, say
@@ -360,6 +404,7 @@ fi
 if mapdl_stage_out "${output_file}" "${shared_dir}"; then
     if [ "${scratch_mode}" = "nvme" ]; then
         cd "${shared_dir}"
+        keep_mapdl_error_logs "${workdir}" "${shared_dir}"
         srun --ntasks=${SLURM_JOB_NUM_NODES} --ntasks-per-node=1 \
           /bin/bash -c "rm -rf '${workdir}' && echo \"\$(hostname): local scratch reclaimed\""
     fi
