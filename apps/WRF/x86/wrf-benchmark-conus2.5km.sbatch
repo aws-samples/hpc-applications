@@ -192,6 +192,8 @@ if [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
     WRF_VERSION="${_wrf_version}" BENCHMARK_CASE="CONUS-2.5km" ANALYSIS_TYPE="forecast" \
     TIME_TO_SOLUTION="${WRF_TIME}" RUN_DIR="${workdir}" "${_recorder}" \
         --metric "avg_timestep_seconds=${AVG_STEP}" \
+        --metric "median_timestep_seconds=${MEDIAN_STEP}" \
+        --metric "steady_timestep_seconds=${STEADY_STEP}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 else
     echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2

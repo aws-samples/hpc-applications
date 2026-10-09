@@ -52,6 +52,10 @@ call. For each script it asserts:
   * the average step is unchanged, and the report gives `Median timestep:` and
     `Steady timestep:` right after `Avg timestep:` (the x86 scripts also print
     both next to their average in the checking section);
+  * the recorder gets `median_timestep_seconds` and `steady_timestep_seconds`
+    next to `avg_timestep_seconds`, and this repository's recorder, run in
+    `--dry-run`, would store them as two new numeric attributes of a valid
+    item; an N/A value is skipped with a warning, as the average already is;
   * the library is found when the job is submitted from the script's
     directory, from `apps/WRF` or from the repository root, and through
     `WRF_STEP_TIMING_LIB` from anywhere else; the variable takes precedence

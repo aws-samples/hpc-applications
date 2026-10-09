@@ -106,6 +106,15 @@ cat > "${STUBS}/bin/recorder-stub.sh" <<'EOF'
 exit 0
 EOF
 
+# Real-recorder wrapper: runs this repository's recorder in --dry-run, which
+# prints the item it would store and touches neither disk nor AWS. Checking the
+# script's arguments is not enough: only the item shows what would be stored.
+cat > "${STUBS}/bin/real-recorder.sh" <<EOF
+#!/bin/bash
+"${WRF_APP}/dynamodb/record-benchmark.sh" --dry-run --source E2ETest "\$@" \\
+    > "\${RECORDER_JSON}" 2>> "\${RECORDER_LOG}"
+EOF
+
 # Stub solve: leave the chosen fixture as rsl.error.0000 in the run directory
 # (none when WRF_FIXTURE is empty).
 cat > "${STUBS}/WRF/test/em_real/wrf.exe" <<'EOF'
@@ -135,15 +144,18 @@ printf ' &time_control\n run_hours = 3,\n /\n' > "${STUBS}/conus/namelist.input"
 
 # run_script <script> <fixture or ""> [NAME=value...]
 # Runs one benchmark script in a clean environment; extra NAME=value pairs
-# override the defaults. Sets OUT (stdout and stderr), RC and RECLOG.
+# override the defaults. Sets OUT (stdout and stderr), RC, RECLOG and RECJSON
+# (the item the real recorder would store, when it is the one called).
 run_script() {
     local script="$1" fixture="$2"; shift 2
     local base; base="$(mktemp -d "${STUBS}/case.XXXXXX")"
     RECLOG="${base}/recorder.log"; : > "${RECLOG}"
+    RECJSON="${base}/recorder-item.json"; : > "${RECJSON}"
     OUT="$(cd "${base}" && env -i \
         PATH="${STUBS}/bin:/usr/local/bin:/usr/bin:/bin" HOME="${base}" LANG=C \
         WRF_ENV="${STUBS}/wrf-env.sh" CONUS_DIR="${STUBS}/conus" BASE_DIR="${base}" \
-        WRF_FIXTURE="${fixture}" RECORDER_LOG="${RECLOG}" AWS_STUB_LOG="${STUBS}/aws-calls.log" \
+        WRF_FIXTURE="${fixture}" RECORDER_LOG="${RECLOG}" RECORDER_JSON="${RECJSON}" \
+        AWS_STUB_LOG="${STUBS}/aws-calls.log" \
         DYNAMODB_RECORDER="${STUBS}/bin/recorder-stub.sh" \
         SLURM_JOB_ID=4242 SLURM_JOB_NAME="$(basename "${script}")" SLURM_CLUSTER_NAME=test \
         SLURM_JOB_NUM_NODES=2 SLURM_NTASKS_PER_NODE=4 SLURM_NTASKS=8 SLURM_NODELIST="node[1-2]" \
@@ -187,6 +199,10 @@ for s in "${SCRIPTS[@]}"; do
     grep -q -- '--metric avg_timestep_seconds=2.25' "${RECLOG}" \
         && ok "the recorder still gets the average" \
         || bad "the recorder gets the average" "--metric avg_timestep_seconds=2.25" "$(head -1 "${RECLOG}")"
+    want='ARGS: --metric avg_timestep_seconds=2.25 --metric median_timestep_seconds=1.15000 --metric steady_timestep_seconds=1.11111'
+    grep -qxF -- "${want}" "${RECLOG}" \
+        && ok "the recorder also gets the median and the steady step" \
+        || bad "the recorder gets the median and the steady step" "${want}" "$(head -1 "${RECLOG}")"
 
     run_script "${s}" "${FIX}/hourly-history.rsl" SLURM_SUBMIT_DIR="${WRF_APP}"
     has "submitted from apps/WRF: the library is found" "Median timestep:  1.15000s"
@@ -199,6 +215,36 @@ for s in "${SCRIPTS[@]}"; do
     has "no rsl.error.0000: the average is N/A, as before" "Avg timestep:     N/As"
     has "no rsl.error.0000: the median step is N/A" "Median timestep:  N/As"
     has "no rsl.error.0000: the steady step is N/A" "Steady timestep:  N/As"
+    grep -q -- '--metric median_timestep_seconds=N/A --metric steady_timestep_seconds=N/A' "${RECLOG}" \
+        && ok "no rsl.error.0000: the recorder gets N/A for both, as for the average" \
+        || bad "no rsl.error.0000: recorder arguments" "median/steady =N/A" "$(head -1 "${RECLOG}")"
+
+    # This repository's recorder, in --dry-run: the item it would store.
+    run_script "${s}" "${FIX}/hourly-history.rsl" \
+        DYNAMODB_RECORDER="${STUBS}/bin/real-recorder.sh" OPERATING_SYSTEM="Test OS"
+    item="$(sed -n '/^{/,$p' "${RECJSON}")"
+    for attr in '"avg_timestep_seconds": {"N": "2.25"}' \
+                '"median_timestep_seconds": {"N": "1.15000"}' \
+                '"steady_timestep_seconds": {"N": "1.11111"}'; do
+        grep -qF -- "${attr}" <<<"${item}" && ok "the stored item holds ${attr}" \
+            || bad "the stored item holds ${attr}" "${attr}" "$(grep timestep <<<"${item}" | tr '\n' '|')"
+    done
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import json, sys; json.loads(sys.stdin.read())' <<<"${item}" 2>/dev/null \
+            && ok "the stored item is valid JSON" || bad "the stored item is valid JSON" "parses" "${item:0:200}"
+    else
+        skipt "the stored item is valid JSON" "no python3"
+    fi
+    run_script "${s}" "" DYNAMODB_RECORDER="${STUBS}/bin/real-recorder.sh" OPERATING_SYSTEM="Test OS"
+    item="$(sed -n '/^{/,$p' "${RECJSON}")"
+    if [ -n "${item}" ] && ! grep -q 'timestep_seconds' <<<"${item}"; then
+        ok "no rsl.error.0000: the stored item has no timestep attribute (N/A is skipped), as for the average"
+    else
+        bad "no rsl.error.0000: no timestep attribute" "an item without one" "$(grep timestep <<<"${item:-<no item>}")"
+    fi
+    grep -q "WARN: ignoring non-numeric value for 'steady_timestep_seconds': 'N/A'" "${RECLOG}" \
+        && ok "no rsl.error.0000: the recorder says it skipped them" \
+        || bad "no rsl.error.0000: recorder WARN" "WARN ... 'N/A'" "$(grep WARN "${RECLOG}" | head -3 | tr '\n' '|')"
 
     # The existing "grep 'Timing for main' | tail -5" stops the script under
     # pipefail when no step was timed, before the report and the recorder.
