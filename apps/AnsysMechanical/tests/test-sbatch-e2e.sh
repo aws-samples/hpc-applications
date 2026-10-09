@@ -79,6 +79,27 @@ cat > "${STUBS}/bin/tee" <<'EOF'
 cat > /dev/null
 EOF
 
+# The NVMe cases' SCRATCH_ROOT is a temporary directory. findmnt, lsblk and df answer
+# for it what a real hpc6id.32xlarge answers for /scratch (an LVM volume over its
+# instance-store drives), so it passes the launcher's scratch check; hostname gives
+# the one node's name. test-nvme-scratch.sh covers the check itself.
+cat > "${STUBS}/bin/findmnt" <<EOF
+#!/bin/bash
+cat "${FIX}/scratch-hpc6id-findmnt.txt"
+EOF
+cat > "${STUBS}/bin/lsblk" <<EOF
+#!/bin/bash
+cat "${FIX}/scratch-hpc6id-lsblk.txt"
+EOF
+cat > "${STUBS}/bin/df" <<EOF
+#!/bin/bash
+cat "${FIX}/scratch-hpc6id-df.txt"
+EOF
+cat > "${STUBS}/bin/hostname" <<'EOF'
+#!/bin/bash
+echo node1
+EOF
+
 # Recorder stub: log how the launcher invoked it (args + key env).
 cat > "${STUBS}/bin/recorder-stub.sh" <<'EOF'
 #!/bin/bash

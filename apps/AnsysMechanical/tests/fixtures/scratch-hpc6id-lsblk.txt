@@ -1,0 +1,5 @@
+TYPE="lvm" MODEL=""
+TYPE="disk" MODEL="Amazon EC2 NVMe Instance Storage"
+TYPE="disk" MODEL="Amazon EC2 NVMe Instance Storage"
+TYPE="disk" MODEL="Amazon EC2 NVMe Instance Storage"
+TYPE="disk" MODEL="Amazon EC2 NVMe Instance Storage"
