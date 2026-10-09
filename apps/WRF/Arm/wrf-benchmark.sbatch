@@ -168,6 +168,8 @@ WRF_TIME=$(elapsed_seconds "$T_START" "$T_END")
 # ---------------------------------------------------------------------------
 echo "=== Checking results ==="
 AVG_STEP="N/A"
+MEDIAN_STEP="N/A"
+STEADY_STEP="N/A"
 if [ -f rsl.error.0000 ]; then
     if grep -q "SUCCESS COMPLETE WRF" rsl.error.0000; then
         echo "SUCCESS: WRF completed"
@@ -176,6 +178,23 @@ if [ -f rsl.error.0000 ]; then
     fi
     grep "Timing for main" rsl.error.0000 | tail -5
     AVG_STEP=$(grep "Timing for main" rsl.error.0000 | awk '{sum+=$9; n++} END {if(n>0) printf "%.2f", sum/n; else print "N/A"}')
+    # WRF counts each output write and boundary read in the step that makes it,
+    # so the average includes I/O that does not get faster with more nodes. To
+    # compare node counts, use the median or the steady step instead, from
+    # lib/wrf-step-timing.sh (its header gives the rule).
+    _step_lib="${WRF_STEP_TIMING_LIB:-}"
+    for _c in "${_step_lib}" \
+              "${SLURM_SUBMIT_DIR:-.}/../lib/wrf-step-timing.sh" \
+              "${SLURM_SUBMIT_DIR:-.}/lib/wrf-step-timing.sh" \
+              "${SLURM_SUBMIT_DIR:-.}/apps/WRF/lib/wrf-step-timing.sh"; do
+        if [ -n "${_c}" ] && [ -r "${_c}" ]; then _step_lib="${_c}"; break; fi
+    done
+    if [ -n "${_step_lib}" ] && [ -r "${_step_lib}" ] && . "${_step_lib}"; then
+        MEDIAN_STEP=$(wrf_median_step rsl.error.0000) || MEDIAN_STEP="N/A"
+        STEADY_STEP=$(wrf_steady_step rsl.error.0000) || STEADY_STEP="N/A"
+    else
+        echo "NOTE: lib/wrf-step-timing.sh not found, so no median or steady step; set WRF_STEP_TIMING_LIB=/path/to/apps/WRF/lib/wrf-step-timing.sh." >&2
+    fi
 fi
 
 cat << REPORT
@@ -197,6 +216,8 @@ Working dir:      ${workdir}
 
 Total WRF time:   ${WRF_TIME}s
 Avg timestep:     ${AVG_STEP}s
+Median timestep:  ${MEDIAN_STEP}s
+Steady timestep:  ${STEADY_STEP}s
 ================================================================================
 REPORT
 

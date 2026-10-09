@@ -42,6 +42,28 @@ locale is installed). Finally it pins the contract the scripts rely on: under
 `set -euo pipefail` both functions print one value and never stop the caller,
 and sourcing the library defines its two functions and changes no shell option.
 
+`test-sbatch-e2e.sh` runs **every benchmark script itself**
+(`x86/wrf-benchmark*.sbatch` and `Arm/wrf-benchmark.sbatch`), with `curl`,
+`scontrol`, `srun`, `mpirun`, `sudo`, `aws` and `wrf.exe` replaced by stubs, so
+the assembled script really executes. The stubs touch nothing on the host: the
+cache drops and THP settings are swallowed, and the `aws` stub refuses every
+call. For each script it asserts:
+
+  * the average step is unchanged, and the report gives `Median timestep:` and
+    `Steady timestep:` right after `Avg timestep:` (the x86 scripts also print
+    both next to their average in the checking section);
+  * the library is found when the job is submitted from the script's
+    directory, from `apps/WRF` or from the repository root, and through
+    `WRF_STEP_TIMING_LIB` from anywhere else; the variable takes precedence
+    over a copy in the submit directory;
+  * without the library the job still completes, prints a NOTE saying how to
+    point at it, and gives N/A for both;
+  * without `rsl.error.0000` all three values are N/A and the job completes,
+    as before;
+  * with no step line the job stops where it did before (the existing
+    `grep "Timing for main" | tail -5` under `pipefail`), with no report and
+    no benchmark row.
+
 ## Adding a case
 
 Drop an `.rsl` fixture in `fixtures/` and add an assertion to the relevant
