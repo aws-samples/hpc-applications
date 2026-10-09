@@ -1,0 +1,1 @@
+/dev/mapper/vg.01-lv_ephemeral

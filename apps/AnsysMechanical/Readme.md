@@ -345,7 +345,11 @@ runs). On a shared filesystem this is a hard planning constraint:
     the workdir suffice), and at the end copy the output file (written on the
     master node) back to the shared filesystem, then **reclaim** `/scratch` on
     every node (`srun --ntasks-per-node=1 rm -rf $workdir`) — warm nodes are
-    reused between jobs and leftover scratch accumulates.
+    reused between jobs and leftover scratch accumulates. Before the reclaim,
+    copy MAPDL's error logs off every node as well: each process writes its own
+    `file<N>.err` on its own node, and the reclaim deletes them (the sbatch puts
+    them in the run directory, where a shared-filesystem run has them, and under
+    `<host>/` when two nodes hold the same name).
     **Check that the copy succeeded before you delete anything.** Once the solve
     runs on instance store, that copy is the only lasting record of it, so a
     `cp` whose result is discarded followed by an unconditional `rm -rf` destroys
@@ -361,6 +365,26 @@ runs). On a shared filesystem this is a hard planning constraint:
     is ephemeral: anything not copied back is lost when the node scales down.
     The [AnsysMechanical.sbatch](https://github.com/aws-samples/hpc-applications/blob/main/apps/AnsysMechanical/AnsysMechanical.sbatch)
     in this directory implements all of this (`SCRATCH_MODE=auto|nvme|shared`).
+  * **Check that `/scratch` is local instance store, with room, before using
+    it.** A writable `/scratch` proves neither: on an instance type without
+    instance store it can be a plain directory on the root EBS volume, and the
+    solve then writes its scratch there. With `SCRATCH_MODE=auto` (the default)
+    or `nvme`, the sbatch first checks on every node that `SCRATCH_ROOT` is a
+    mount point (`findmnt`), that every disk under it is local NVMe instance
+    storage (`lsblk -s` reports each one's model as `Amazon EC2 NVMe Instance
+    Storage`), that the job user can write it, and that it has at least
+    `SCRATCH_MIN_FREE_GIB` free (`df`). It uses NVMe only when every node passes,
+    counted by distinct host name, and otherwise runs from the shared filesystem,
+    with each node's reason in the job log; `nvme` also prints a warning, and
+    `shared` never checks. `SCRATCH_ROOT` must be the mount point itself: a
+    directory below it, such as `/scratch/$USER`, is refused. The default
+    minimum, 300 GiB, holds the whole of every in-core sparse-direct V26 Cluster
+    solve we ran (at most 231 GiB) on one node. An
+    out-of-core solve writes several times more (see above), and a node that runs
+    out of scratch space fails the run, so for an out-of-core model set
+    `SCRATCH_MIN_FREE_GIB` to what the model writes on a node. MAPDL reports the
+    whole job's as `Sum of disk space used on all processes`, which is also the
+    most any one node can need.
 
 ## Exit codes: do not use them to decide success
 
@@ -606,9 +630,11 @@ Relative performance, the FSx for Lustre run of each pair = 1.00. Local NVMe
 saved about 21% when MAPDL ran out-of-core and
 3-6% in-core, and the two A/B tests a month apart agree within half a point. That
 is the case for the default `SCRATCH_MODE=auto`, which runs from `/scratch` when
-every node has a writable one. It does not check the free space, so make sure
-`/scratch` holds the job's scratch: V26direct-6 out-of-core wrote about 1.2 TB on
-one node (MAPDL's `Sum of disk space used on all processes`).
+every node has it on local instance storage with at least `SCRATCH_MIN_FREE_GIB`
+free (see [Scratch space and concurrency](#scratch-space-and-concurrency)). The
+default minimum is sized for in-core solves, so raise it for an out-of-core model:
+V26direct-6 out-of-core wrote about 1.2 TB on one node (MAPDL's `Sum of disk space
+used on all processes`).
 
 ## Shared-filesystem contention
 

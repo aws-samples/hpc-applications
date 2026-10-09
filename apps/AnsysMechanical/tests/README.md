@@ -33,6 +33,7 @@ boundary.
 | `benign-block-with-extra-failure.log` | the expected termination text **plus** a second genuine failure in the *same* block |
 | `benign-block-observed-wording-with-extra-failure.log` | the same trap using the wording our own runs produce |
 | `benign-malformed-possessive.log` | `userXs request` — catches a `user.?s` pattern treating `.?` as any character |
+| `scratch-hpc6id-findmnt.txt`, `scratch-hpc6id-lsblk.txt`, `scratch-hpc6id-df.txt` | what a real hpc6id.32xlarge answered for `/scratch` to the NVMe scratch check's three queries (`findmnt -n -o SOURCE --mountpoint`, `lsblk -n -s -P -o TYPE,MODEL`, `df -Pk`): an LVM volume over four instance-store drives |
 
 One more case is **generated at run time** rather than committed: a genuine benign
 block carrying the trailing padding MAPDL really emits. `fixture-helpers.sh`
@@ -76,8 +77,9 @@ derived only for a genuinely uniform layout, and never overridden when passed
 explicitly.
 
 `test-sbatch-e2e.sh` runs **`AnsysMechanical.sbatch` itself**, with `scontrol`,
-`srun`, `mpirun`, `module`, `curl`, `sudo` and `mapdl` replaced by stubs, so the
-assembled script really executes rather than only passing `bash -n`. It asserts:
+`srun`, `mpirun`, `module`, `curl`, `sudo`, `mapdl` and the scratch check's
+`findmnt`, `lsblk`, `df` and `hostname` replaced by stubs, so the assembled script
+really executes rather than only passing `bash -n`. It asserts:
 
   * the job's final exit status per fixture (a fixed-iteration deck exits 0; a
     truncated `rc=0` run exits non-zero; a disk-full abort keeps its 255);
@@ -99,8 +101,40 @@ assembled script really executes rather than only passing `bash -n`. It asserts:
     row is recorded; a healthy control run reclaims scratch and does record;
   * a missing verdict library aborts before any solver time is spent.
 
-The NVMe cases use `SCRATCH_ROOT` to point at a temporary directory, and skip when
-running as root (the failure is simulated with directory permissions).
+The NVMe cases use `SCRATCH_ROOT` to point at a temporary directory, which stubbed
+`findmnt`, `lsblk` and `df` describe as the hpc6id fixtures' `/scratch`, so it passes
+the scratch check. They skip when running as root (the failure is simulated with
+directory permissions).
+
+`test-nvme-scratch.sh` runs the assembled sbatch on emulated nodes to pin the **NVMe
+scratch check** and the copy of **MAPDL's error logs** off NVMe scratch: `srun` runs
+each per-node step once per node, and `hostname`, `findmnt`, `lsblk` and `df` answer
+from that node's fixture, in the formats util-linux 2.37 and GNU coreutils 8.32
+print on Amazon Linux 2023. It asserts:
+
+  * NVMe is used only when every node passes: the hpc6id fixtures pass, on one node
+    and on four, and the job records `scratch_mode=nvme`;
+  * any one failing node sends the job to the shared filesystem, with that node's
+    reason in the log and `scratch_mode=shared` recorded: a plain directory on the
+    root volume, an EBS volume, a volume over an instance-store drive and an EBS
+    volume, tmpfs, NFS, too little space (299 GiB free against 300), a `df` that
+    fails or answers a number the shell cannot hold, a `SCRATCH_ROOT` that does not
+    exist or that the job user cannot write;
+  * a node that does not answer, and a second answer from one host name, cannot
+    stand in for a node;
+  * with two mounts at `SCRATCH_ROOT`, the one on top decides;
+  * `SCRATCH_MIN_FREE_GIB` is honoured from 1 to 9999999, defaults to 300 when unset
+    or empty, and anything else (0 in any spelling, 8 digits or more, a unit, a sign,
+    a fraction, a space) ends the job before any node work, in `shared` mode too;
+    the probe itself answers no to a minimum it cannot compare;
+  * `SCRATCH_MODE=nvme` falls back with the same warning as before, `auto` falls back
+    without one, and `shared` never checks;
+  * every node's `file*.err` reaches the run directory before the reclaim, on one
+    node and on two, for a failed solve too (exit status kept, no row); a name two
+    nodes hold stays under each `<host>/`, so no copy replaces another; a copy
+    that fails warns, and the run's status, row and reclaim are unchanged; a node
+    without error logs copies none and makes no directory; a run on the shared
+    filesystem copies nothing.
 
 ## Adding a case
 

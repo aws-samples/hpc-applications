@@ -19,9 +19,12 @@
 #     SCRATCH_MODE      auto | nvme | shared   (default auto)
 #                       nvme/auto run the solve from node-local instance-store
 #                       NVMe (SCRATCH_ROOT, mounted by ParallelCluster) when
-#                       present on ALL nodes - faster for out-of-core solves and
-#                       keeps heavy scratch I/O off the shared filesystem.
+#                       ALL nodes pass the scratch check below - faster for
+#                       out-of-core solves and keeps heavy scratch I/O off the
+#                       shared filesystem. shared never checks.
 #     SCRATCH_ROOT      instance-store mount point (default /scratch).
+#     SCRATCH_MIN_FREE_GIB  free space SCRATCH_ROOT needs on every node for the
+#                       solve to run there, in GiB (default 300; 1 to 9999999).
 #     ANSYS_COMPAT_DIR  dir with the legacy libs AL2023 lacks (see Readme.md);
 #                       default ${BASE_DIR}/ansys_compat, used when it exists.
 #     ANSYSLMD_LICENSE_FILE, SOURCE, DYNAMODB_RECORDER    see recorder section.
@@ -93,6 +96,23 @@ scratch_mode=${SCRATCH_MODE:-"auto"}
 # Where node-local instance-store NVMe is mounted. ParallelCluster uses /scratch;
 # override for clusters that mount it elsewhere.
 scratch_root=${SCRATCH_ROOT:-"/scratch"}
+# Free space, in GiB, SCRATCH_ROOT must have on EVERY node for the solve to run
+# there (see the scratch check below). The default holds the whole of an in-core
+# V26 Cluster solve on one node (MAPDL reported at most 231 GiB of disk space used)
+# with room to spare. Out-of-core solves write several times more (0.5-1.2 TB for
+# those models), and a node that runs out of scratch mid-solve fails the run, so
+# for an out-of-core model set it to what the model writes on a node.
+scratch_min_free_gib=${SCRATCH_MIN_FREE_GIB:-"300"}
+# A whole number from 1 to 9999999: at most 7 digits keeps the comparison far
+# inside the shell's integers, and 0 would let any free space pass.
+case "${scratch_min_free_gib}" in
+    *[!0-9]*|0|00|000|0000|00000|000000|0000000|????????*)
+        echo "ERROR: SCRATCH_MIN_FREE_GIB='${scratch_min_free_gib}' is not a whole number of GiB" >&2
+        echo "       from 1 to 9999999. It is the free space SCRATCH_ROOT needs on every node" >&2
+        echo "       for the solve to use node-local NVMe scratch. Refusing to run rather" >&2
+        echo "       than guess at it." >&2
+        exit 1 ;;
+esac
 
 APP_BIN_PATH="${basedir}/ansys_inc/${mechanicalversion}/ansys/bin/mapdl"
 
@@ -148,18 +168,68 @@ fi
 # keeps out-of-core I/O local: measurably faster and no shared-FS contention.
 # Verified single-node and multi-node; each node needs the dir created, and
 # each node's scratch must be reclaimed afterwards (warm nodes are reused).
+#
+# A writable SCRATCH_ROOT is not enough: on a type without instance store it can
+# be a plain directory on the root volume, and the solve would then write its
+# scratch to EBS. So every node runs nvme_scratch_probe (one srun task per node):
+# SCRATCH_ROOT must be a mount point, every disk under it local NVMe instance
+# storage (ParallelCluster stripes the drives into one LVM volume; lsblk reports
+# each one's model as "Amazon EC2 NVMe Instance Storage"), writable by the job
+# user, with at least SCRATCH_MIN_FREE_GIB free. NVMe is used only when the number
+# of DISTINCT host names that passed equals the node count: a node that printed
+# nothing, or a second answer from the same host, cannot stand in for a node.
+# Anything else runs from the shared run directory, as SCRATCH_MODE=shared does.
+# shellcheck disable=SC2317  # runs on each node through srun (declare -f), not here
+nvme_scratch_probe() {   # <root> <min_free_gib> -> "<host> ok: ..." or "<host> no: <why>"
+    local root="$1" need="$2" host src disks free_kib free_gib
+    host="$(hostname)"
+    if [ ! -d "${root}" ]; then echo "${host} no: ${root} does not exist"; return 0; fi
+    # The last mount listed at that point is the one on top: the one a path there reaches.
+    src="$(findmnt -n -o SOURCE --mountpoint "${root}" 2>/dev/null | tail -n 1)"
+    if [ -z "${src}" ]; then
+        echo "${host} no: ${root} is not a mount point (a directory on another filesystem)"; return 0
+    fi
+    disks="$(lsblk -n -s -P -o TYPE,MODEL "${src}" 2>/dev/null | grep 'TYPE="disk"')"
+    if [ -z "${disks}" ]; then echo "${host} no: ${root} (${src}) is on no local disk"; return 0; fi
+    if grep -qv 'MODEL="Amazon EC2 NVMe Instance Storage' <<< "${disks}"; then
+        echo "${host} no: ${root} (${src}) has a disk that is not local NVMe instance storage"; return 0
+    fi
+    if [ ! -w "${root}" ]; then echo "${host} no: ${root} is not writable by $(id -un)"; return 0; fi
+    free_kib="$(df -Pk "${root}" 2>/dev/null | awk 'NR == 2 { print $4 }')"
+    # 18 digits at most, so the arithmetic below cannot overflow; 10# reads it as decimal
+    case "${free_kib}" in
+        ''|*[!0-9]*|???????????????????*) echo "${host} no: cannot read the free space of ${root}"; return 0 ;;
+    esac
+    free_gib=$(( 10#${free_kib} / 1048576 ))
+    # "ok" only when the test holds: a comparison the shell cannot evaluate answers no.
+    if [ "${free_gib}" -ge "${need}" ] 2>/dev/null; then
+        echo "${host} ok: ${root} on local NVMe instance storage (${src}), ${free_gib} GiB free"
+    elif [ "${free_gib}" -lt "${need}" ] 2>/dev/null; then
+        echo "${host} no: ${root} has ${free_gib} GiB free, under ${need} GiB"
+    else
+        echo "${host} no: cannot compare the ${free_gib} GiB free on ${root} with ${need} GiB"
+    fi
+}
 workdir="${shared_dir}"
 if [ "${scratch_mode}" != "shared" ]; then
-    if srun --ntasks=${SLURM_JOB_NUM_NODES} --ntasks-per-node=1 \
-         /bin/bash -c "[ -d '${scratch_root}' ] && [ -w '${scratch_root}' ]" 2>/dev/null; then
+    echo "NVMe scratch check (SCRATCH_MODE=${scratch_mode}): ${scratch_root} on each of the" \
+         "${SLURM_JOB_NUM_NODES} node(s) must be a mount point on local NVMe instance storage," \
+         "writable, with at least ${scratch_min_free_gib} GiB free"
+    _probe="$(srun --ntasks=${SLURM_JOB_NUM_NODES} --ntasks-per-node=1 /bin/bash -c \
+                "$(declare -f nvme_scratch_probe); nvme_scratch_probe \"\$@\"" nvme-scratch-probe \
+                "${scratch_root}" "${scratch_min_free_gib}" 2>&1)"
+    [ -n "${_probe}" ] && printf '%s\n' "${_probe}" | sed 's/^/  /'
+    _passed="$(printf '%s\n' "${_probe}" | awk '$2 == "ok:" && !seen[$1]++ { n++ } END { print n + 0 }')"
+    if [ "${_passed}" = "${SLURM_JOB_NUM_NODES}" ]; then
         workdir="${scratch_root}/mapdl-${run_tag}"
         srun --ntasks=${SLURM_JOB_NUM_NODES} --ntasks-per-node=1 mkdir -p "${workdir}"
         scratch_mode="nvme"
         echo "Using node-local NVMe scratch on all ${SLURM_JOB_NUM_NODES} node(s): ${workdir}"
-    elif [ "${scratch_mode}" = "nvme" ]; then
-        echo "WARNING: SCRATCH_MODE=nvme requested but '${scratch_root}' is unavailable on some node; using shared filesystem." >&2
-        scratch_mode="shared"
     else
+        echo "${_passed} of ${SLURM_JOB_NUM_NODES} node(s) passed the NVMe scratch check; using the shared filesystem."
+        if [ "${scratch_mode}" = "nvme" ]; then
+            echo "WARNING: SCRATCH_MODE=nvme requested but '${scratch_root}' is unavailable on some node; using shared filesystem." >&2
+        fi
         scratch_mode="shared"
     fi
 fi
@@ -282,6 +352,50 @@ if [ "${MAPDL_UNEXPECTED}" -gt 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# MAPDL's error logs on node-local scratch. Every MAPDL process writes its own
+# file<N>.err in the working directory of the node it runs on, and the reclaim
+# below deletes that directory. So, first, each node copies its own into
+# <shared_dir>/<host>/ (the scratch check passed only distinct host names); then a
+# name only one node holds moves up to <shared_dir>/, where a run on the shared
+# filesystem has it, and a name more than one node holds stays under each <host>/,
+# so no node's copy replaces another's. Best effort: a copy that fails prints a
+# WARNING, and neither the reclaim nor the job's exit status changes.
+# ---------------------------------------------------------------------------
+keep_mapdl_error_logs() {   # <node-local workdir> <shared run dir>
+    local src="$1" dest="$2" f same apart=0
+    # shellcheck disable=SC2016  # the script is expanded by the bash on each node
+    srun --ntasks="${SLURM_JOB_NUM_NODES}" --ntasks-per-node=1 /bin/bash -c '
+        host="$(hostname)" copied=0 failed=0
+        for f in "$1"/file*.err; do
+            [ -f "${f}" ] || continue
+            if mkdir -p "$2/${host}" && cp -p -- "${f}" "$2/${host}/"; then
+                copied=$(( copied + 1 ))
+            else
+                failed=$(( failed + 1 ))
+            fi
+        done
+        echo "${host}: ${copied} MAPDL error log(s) (file*.err) copied to $2"
+        if [ "${failed}" -gt 0 ]; then
+            echo "WARNING: ${host}: ${failed} MAPDL error log(s) (file*.err) not copied" >&2; exit 1
+        fi' mapdl-error-logs "${src}" "${dest}" \
+        || echo "WARNING: not every MAPDL error log (file*.err) was copied off the nodes' NVMe scratch; the reclaim deletes the rest." >&2
+    for f in "${dest}"/*/file*.err; do
+        [ -f "${f}" ] || continue
+        same=( "${dest}"/*/"${f##*/}" )
+        if [ "${#same[@]}" -eq 1 ] && [ ! -e "${dest}/${f##*/}" ]; then
+            mv -- "${f}" "${dest}/"
+        else
+            apart=$(( apart + 1 ))
+        fi
+    done
+    rmdir "${dest}"/*/ 2>/dev/null
+    if [ "${apart}" -gt 0 ]; then
+        echo "MAPDL error logs: ${apart} file(s) whose name another node also holds kept under ${dest}/<host>/"
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Durable stage-out BEFORE reclaiming node-local scratch. When the solve ran on
 # /scratch, the copy on the shared filesystem is the ONLY lasting record of it,
 # so a failed copy must never be followed by `rm -rf`: keep the scratch, say
@@ -290,6 +404,7 @@ fi
 if mapdl_stage_out "${output_file}" "${shared_dir}"; then
     if [ "${scratch_mode}" = "nvme" ]; then
         cd "${shared_dir}"
+        keep_mapdl_error_logs "${workdir}" "${shared_dir}"
         srun --ntasks=${SLURM_JOB_NUM_NODES} --ntasks-per-node=1 \
           /bin/bash -c "rm -rf '${workdir}' && echo \"\$(hostname): local scratch reclaimed\""
     fi
