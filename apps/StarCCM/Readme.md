@@ -157,3 +157,7 @@ The chart above compares average iteration time (lower is better) across three s
 - **CPU binding matters.** The default `-cpubind bandwidth` is optimal; explicitly setting `-cpubind off` costs 42–45% performance on AMD multi-CCD architectures.
 - **Warmup iterations are important for benchmarking.** The first ~100 iterations involve memory allocation overhead and should be discarded for timing purposes.
 - **AL2023 is the recommended OS** for x86 and GPU instances (glibc 2.34). Amazon Linux 2 is no longer compatible with STAR-CCM+ 21.02+.
+
+## Contribute your results
+
+The benchmark scripts in this folder call [`dynamodb/record-benchmark.sh`](dynamodb/record-benchmark.sh) after every successful run. The recorder saves the run as a small JSON record (`<record_id>.json`) and adds it to the shared AI-Powered HPC benchmark dataset when you have write access to it. That dataset trains a model that predicts HPC performance on AWS, so every result you share helps. Set `SOURCE=<YourOrg>` to tag your runs, and see [BENCHMARK-RECORDERS.md](../BENCHMARK-RECORDERS.md) for the options and how to send the record in.

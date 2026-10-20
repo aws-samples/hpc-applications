@@ -40,6 +40,13 @@ GitHub provides additional document on [forking a repository](https://help.githu
 [creating a pull request](https://help.github.com/articles/creating-a-pull-request/).
 
 
+## Contributing benchmark results
+Benchmark results are contributions too. Eleven applications in this repository ship a recorder, and their benchmark
+launch scripts save each successful run as a small JSON record. See [apps/BENCHMARK-RECORDERS.md](apps/BENCHMARK-RECORDERS.md)
+for how to tag your runs and share them with the AI-Powered HPC dataset, which trains a model that predicts HPC
+performance on AWS.
+
+
 ## Finding contributions to work on
 Looking at the existing issues is a great way to find something to contribute on. As our projects, by default, use the default GitHub issue labels (enhancement/bug/duplicate/help wanted/invalid/question/wontfix), looking at any 'help wanted' issues is a great place to start.
 
