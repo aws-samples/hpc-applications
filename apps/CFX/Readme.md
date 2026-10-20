@@ -144,3 +144,7 @@ largest share of the fastest runs.
   * 48 cores was faster than 24 for both cases on both instance types.
   * Hpc8a took 27-30% less time than Hpc7a on the iterations, and 16-21% on the
     whole run, of which partitioning is a large share.
+
+## Contribute your results
+
+The benchmark scripts in this folder call [`dynamodb/record-benchmark.sh`](dynamodb/record-benchmark.sh) after every successful run. The recorder saves the run as a small JSON record (`<record_id>.json`) and adds it to the shared AI-Powered HPC benchmark dataset when you have write access to it. That dataset trains a model that predicts HPC performance on AWS, so every result you share helps. Set `SOURCE=<YourOrg>` to tag your runs, and see [BENCHMARK-RECORDERS.md](../BENCHMARK-RECORDERS.md) for the options and how to send the record in.

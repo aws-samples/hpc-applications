@@ -91,3 +91,7 @@ Per-instance relative performance (192 cores/node) hpc8a vs hpc7a:
 
 Per-instance performance on AWS EC2 [hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6i/) and [c5n](https://aws.amazon.com/ec2/instance-types/c5/):
 ![ANSYS Fluent f1_racecar_140m X instance Performance](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Fluent/f1_racecar_140mXinstanceINTEL.png?raw=true)
+
+# Contribute your results
+
+The benchmark scripts in this folder call [`dynamodb/record-benchmark.sh`](dynamodb/record-benchmark.sh) after every successful run. The recorder saves the run as a small JSON record (`<record_id>.json`) and adds it to the shared AI-Powered HPC benchmark dataset when you have write access to it. That dataset trains a model that predicts HPC performance on AWS, so every result you share helps. Set `SOURCE=<YourOrg>` to tag your runs, and see [BENCHMARK-RECORDERS.md](../BENCHMARK-RECORDERS.md) for the options and how to send the record in.

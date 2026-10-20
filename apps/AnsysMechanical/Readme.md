@@ -661,3 +661,7 @@ spent outside MAPDL's own clock, and it is not constant: for V26direct-5 on
 2 x hpc6id.32xlarge the wall clock was 9% longer than MAPDL's time when the solve
 ran alone, and 8% to 137% longer on the shared file system above (2.4x MAPDL's
 time at worst).
+
+## Contribute your results
+
+The benchmark scripts in this folder call [`dynamodb/record-benchmark.sh`](dynamodb/record-benchmark.sh) after every successful run. The recorder saves the run as a small JSON record (`<record_id>.json`) and adds it to the shared AI-Powered HPC benchmark dataset when you have write access to it. That dataset trains a model that predicts HPC performance on AWS, so every result you share helps. Set `SOURCE=<YourOrg>` to tag your runs, and see [BENCHMARK-RECORDERS.md](../BENCHMARK-RECORDERS.md) for the options and how to send the record in.
