@@ -164,6 +164,24 @@ All benchmark scripts (x86 and Arm):
 | `TARGET` | `auto` (Arm build only) | Force compile target: `graviton3` or `graviton4` |
 | `PREFIX` | `/fsx/wrf/deps` | Dependency install prefix (x86 Intel build only) |
 
+### Output format
+
+For the CONUS 2.5km forecast, write the history and restart files through [PnetCDF](https://parallel-netcdf.github.io/) (parallel netCDF): in `namelist.input`, `&time_control`, set `io_form_history = 11` and `io_form_restart = 11` (the case ships with 2, serial netCDF). Every build here links PnetCDF, so no rebuild is needed: Option 2 builds it with the other dependencies, and Spack's `wrf` package enables it by default (`+pnetcdf`). A build links it when its `configure.wrf` lists `-DPNETCDF`.
+
+The benchmark scripts copy `namelist.input` from `CONUS_DIR` into each run directory, so edit it there. This keeps the shipped file as `namelist.input.serial`:
+
+```bash
+cd /fsx/wrf/conus_2.5km
+cp -n namelist.input namelist.input.serial
+sed -i -E 's/^([[:space:]]*io_form_(history|restart)[[:space:]]*=[[:space:]]*)2([[:space:]]*,?[[:space:]]*)$/\111\3/' namelist.input
+grep -E '^[[:space:]]*io_form_(history|restart)' namelist.input   # both now 11
+```
+
+- Parallel output is meant for a parallel file system, such as FSx for Lustre, where the measurements under [Performance](#conus-25km--output-format-6-hour-forecast) were made.
+- PnetCDF writes uncompressed CDF-2 (64-bit offset) files: on CONUS 2.5km, about 8.5 GB per history file and 33 GB for the restart. Check that your post-processing reads CDF-2; older versions of UPP did not.
+- With serial output, a build with netCDF-4 support writes compressed netCDF-4 (WRF's default; Spack's `netcdf_classic` variant, off by default, turns compression off at build time). On CONUS 2.5km the compression is most of the serial output's cost. If you keep serial output, `use_netcdf_classic = .true.` in `&time_control` writes uncompressed CDF-2 files instead, with the same post-processing caveat.
+- ADIOS2 output and I/O quilting were not tested here. Post-processing tools such as UPP do not read ADIOS2 files, and quilting needs dedicated I/O ranks and more settings, where PnetCDF is a two-line change.
+
 ## Performance
 
 ### CONUS 2.5km — scaling on six instance types (6-hour forecast)
@@ -192,7 +210,26 @@ Key takeaways:
 - A single hpc8a node delivers **1.38×** the performance of a single hpc7a node, and hpc8a stays at 1.36–1.38× hpc7a at every node count from 1 to 8.
 - On 1 and 2 nodes, c8i is within 4% of hpc8a (1.38× and 2.75× against 1.38× and 2.85×); m8a reaches 1.26× and 2.58× (one run each).
 - m8g (Graviton4, OpenMPI 5) starts ahead of hpc7a (1.13× on one node) but scales at 95–97%, so the two are level at 4 nodes and hpc7a leads at 8 (9.30× against 8.70×).
-- On the total wall time instead, the same runs reach only 3.53× (hpc7a) and 4.68× (hpc8a) on 8 nodes: the hourly history writes and the restart write do not get faster with more nodes, and they take 15–16% of a one-node hpc7a or hpc8a run but 64–66% of an 8-node one.
+- On the total wall time instead, the same runs reach only 3.53× (hpc7a) and 4.68× (hpc8a) on 8 nodes: the hourly history writes and the restart write do not get faster with more nodes, and they take 15–16% of a one-node hpc7a or hpc8a run but 64–66% of an 8-node one. These runs wrote serial, compressed output; [Output format](#output-format) shows how to write it through PnetCDF, and the next section what that changes.
+
+### CONUS 2.5km — output format (6-hour forecast)
+
+The same 6-hour forecast on 1 and 8 `hpc8a.96xlarge` nodes, with its output written three ways: serial compressed netCDF-4 (the default of a build with netCDF-4 support), serial uncompressed CDF-2 (`use_netcdf_classic = .true.`) and PnetCDF (`io_form_history = io_form_restart = 11`). Performance is the whole run's (total wall time, output included), relative to the compressed default on the same node count = 1.00× — higher is better:
+
+| Output | 1 node | 8 nodes |
+|--------|-------:|--------:|
+| Serial, compressed netCDF-4 (default) | 1.00× | 1.00× |
+| Serial, uncompressed CDF-2 (`use_netcdf_classic = .true.`) | 1.11× | 1.81× |
+| PnetCDF (`io_form_history = io_form_restart = 11`) | 1.15× | 2.38× |
+
+The runs used the GCC + Intel MPI build (Option 2, Intel MPI 2021.18) with 192 MPI ranks per node over EFA, on FSx for Lustre in eu-north-1, in October 2026. The values are medians of 2 runs (3 for the compressed default), and each point's runs agree within 3%. Between 1 and 8 other benchmark jobs shared the file system; on 8 nodes the slowest compressed run had the fewest.
+
+Key takeaways:
+
+- Only the output changes: the steady step is the same with all three, within 1%.
+- About three quarters of the time PnetCDF saves comes from not compressing, and writing in parallel does the rest: PnetCDF is 1.03× the uncompressed serial run on 1 node and 1.31× on 8.
+- The time outside the steady step (the output, the input reads and the first step) is 70% of the compressed run on 8 nodes, 45% of the uncompressed serial run and 27% of the PnetCDF run; on 1 node, 18%, 8.5% and 4.8%.
+- Whole-run parallel efficiency on 8 nodes against 1 goes from 42% (compressed) to 69% (uncompressed serial) and 88% (PnetCDF).
 
 ### Arm — Graviton3E (hpc7g) vs Graviton4 (m8g)
 
