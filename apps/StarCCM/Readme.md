@@ -6,24 +6,41 @@
 
 There are 3 releases of STAR-CCM+ per year. There are two platform builds — x86 and Arm — each available for both Linux and Windows. There are also separate mixed precision and double (higher) precision builds available. Each of these have slightly different solve speeds and compute requirements with the double precision version (labelled -R8) having the higher requirements of the two. GPGPU compute capability is included within the x86 build (not a separate build). While submit scripts are mostly common across versions, there are nuances for x86, Arm and GPGPU usage to consider. The submit scripts in this repository are organised by version and architecture under `scripts/`.
 
+The current release is 2606 (21.04.007). The 21.02 scripts run it with `-v 21.04.007`. Its release notes announce two changes for 2610 that affect scripts: `-benchmark` will write JSON instead of XML files, and `-cpubind` will always need a value (for example `-cpubind bandwidth`).
+
 ## OS Compatibility
 
-STAR-CCM+ works on many flavours of Linux, but by default is only supported on a small number of them. Recommended operating systems for running on AWS are Amazon Linux 2023, Ubuntu 20.04+, or RHEL8+. Note that as of STAR-CCM+ 2402 (19.02) and onwards, glibc >= 2.26 is required, and from 21.02 onwards glibc >= 2.28 is required. Amazon Linux 2 is end-of-life and should not be used.
+STAR-CCM+ works on many flavours of Linux, but by default is only supported on a small number of them. Recommended operating systems for running on AWS are Amazon Linux 2023, Ubuntu, or RHEL8+. Note that from STAR-CCM+ 2402 (19.02) onwards glibc >= 2.28 is required, so Amazon Linux 2 (glibc 2.26) runs 2310 (18.06) and earlier only. Amazon Linux 2 is end-of-life and should not be used.
 
-| STAR-CCM+ Version | AL2023 | Ubuntu 20+ | RHEL8+ |
+| STAR-CCM+ Version | AL2023 | Ubuntu | RHEL8+ |
 |-------------------|:-:|:-:|:-:|
-| 18.06 (x86/GPU) | ✓ | ✓ | ✓ |
-| 18.06 (Arm) | ✓ | ✓ | ✓ |
-| 21.02+ (all) | ✓ | ✓ | ✓ |
+| 18.06 (x86/GPU) | ✓ | 20.04+ | ✓ |
+| 18.06 (Arm) | ✓ | 20.04+ | ✓ |
+| 21.02 (all) | ✓ | 20.04+ | ✓ |
+| 2606 (21.04, x86) | ✓ | 24.04 | 8.10, 9.6, 10 |
+
+For 2606, Siemens certifies these Linux x86_64 platforms: Amazon Linux 2023, RHEL 8.10, 9.6 and 10, Rocky and Alma Linux 8.10, 9 and 10, SUSE Linux Enterprise Server 15.7 and 16, and Ubuntu 24.04 (Simcenter STAR-CCM+ 2606 Installation Guide).
 
 ## Installation
 
-To install on a non-GUI based cluster, the following command can be used:
+Since 2410 the Linux installer is a `.aol` executable inside the downloaded archive, and its options changed. To install 2606 on a non-GUI based cluster without prompts:
+
+```
+tar -xzf Simcenter_STAR-CCM+_2606-Linux-x64-mixed.tar.gz
+./starccm+_21.04.007/STAR-CCM+2606_007_linux-x86_64-2.28_clang20.1.aol -i silent \
+    -DPRODUCTEXCELLENCEPROGRAM=decline -DINSTALLDIR=/fsx/Siemens \
+    -DINSTALL_LICENSING=false -DADDSYSTEMPATH=false -DINSTALL_DOC=false
+```
+
+This installs into `/fsx/Siemens/21.04.007/STAR-CCM+21.04.007`, the path the submit scripts build from `-v 21.04.007`, without the license server or documentation (the latter makes up a large chunk of the install size but may be useful; set `-DINSTALL_DOC=true` to keep it). `-i console` asks you to accept the license agreement and choose the location in the console, so it suits an interactive install only. `-DPRODUCTEXCELLENCEPROGRAM` takes `agree` or `decline`; `-DINSTALL_LICENSING` and `-DINSTALL_DOC` replace the older `-DINSTALLFLEX` and `-DNODOC`. `-DADDSYSTEMPATH=false` leaves users' shell profiles unchanged: the scripts call STAR-CCM+ by its full path, so several versions can sit side by side.
+
+For 18.06 and earlier, which ship a `.sh` installer, the command is:
 
 ```
 ./STAR-CCM+_installer_.sh -i console -DPRODUCTEXCELLENCEPROGRAM=0 -DINSTALLDIR=/fsx/Siemens -DINSTALLFLEX=false -DADDSYSTEMPATH=true -DNODOC=false
 ```
-This will provide a fast install to the specified location (`/fsx/Siemens`), without the license server or documentation being installed (the latter of which makes up a large chunk of the install size but may be useful). Please read the STAR-CCM+ installation guide for more information on parameters that can be set at install time.
+
+Please read the STAR-CCM+ installation guide for more information on parameters that can be set at install time.
 
 ## Key Settings
 
@@ -34,14 +51,18 @@ There are multiple ways to license STAR-CCM+. The two most common methods are
 - host a vendor supplied license on a license server
 - use Power on Demand (PoD) which checks out a license from a Siemens hosted license server
 
-Each method has its advantages and disadvantages, however it's worth noting that Power on Demand licenses are significantly easier to use with AWS; the license key can be placed as an argument when launching STAR-CCM+ and — as long as the instance can communicate with the internet — the license gets checked out.
+Each method has its advantages and disadvantages, however it's worth noting that Power on Demand licenses are significantly easier to use with AWS: as long as the instance can reach the Siemens license server (`flex.cd-adapco.com`, ports 1999 and 2099), the license gets checked out.
 
-The submit scripts in this repository use a `PODLIC` environment variable to pass the PoD key to STAR-CCM+. This is our suggested approach for keeping keys out of scripts. Set it in your user's environment variables (e.g. in `~/.bashrc`) or before submitting:
+The 21.02 x86 submit scripts pass the PoD key to STAR-CCM+ in the `LM_PROJECT` environment variable, the variable STAR-CCM+'s launcher sets from `-podkey`, so the key is not on STAR-CCM+'s command line. That matters because STAR-CCM+ writes its command line into its log, and a `-benchmark` run also into its XML and HTML reports, so a key passed with `-podkey` ends up in those files. The scripts take the key from the `PODLIC` environment variable, from `-l`, or, when `PODLIC_SSM_PARAMETER` names an AWS Systems Manager Parameter Store parameter, from that parameter when the job starts. Reading it in the job keeps it out of files and job records:
 
 ```bash
-export PODLIC="your-pod-key-here"
-sbatch submit_batch.sbatch -v 21.02.007 -s /fsx/simulations/model.sim
+# Once: store the key as a SecureString parameter
+aws ssm put-parameter --name /starccm/pod-key --type SecureString --value "your-pod-key-here"
+# Each job: name the parameter; the job reads the key when it starts
+PODLIC_SSM_PARAMETER=/starccm/pod-key sbatch submit_batch.sbatch -v 21.04.007 -s /fsx/simulations/model.sim
 ```
+
+The nodes' instance role then needs `ssm:GetParameter` on that parameter (and `kms:Decrypt` for a customer-managed key). Avoid `-l <key>` on shared clusters, since Slurm keeps a job's arguments in its job record (`scontrol show job`), and avoid plaintext copies of the key such as `~/.bashrc`.
 
 If running a license server on AWS, consider the following:
 
@@ -51,7 +72,7 @@ If running a license server on AWS, consider the following:
 
 ### MPI
 
-OpenMPI is the recommended MPI for Linux per the Siemens STAR-CCM+ user guide, and is required for AMD-based instances (e.g. hpc8a, hpc7a, hpc6a) where Intel MPI is unsupported and can crashes on STAR-CCM+ 21.02+ (e.g. during mesh repartitioning). All 21.02+ scripts in this repository use OpenMPI.
+OpenMPI is the default and recommended MPI for Linux per the Siemens STAR-CCM+ installation guide; 2606 bundles Open MPI 5.0.9 and Intel MPI 2021.16.1. Use OpenMPI on AMD-based instances (e.g. hpc8a, hpc7a, hpc6a): all 21.02+ scripts in this repository use it.
 
 Intel MPI remains viable on Intel instances (hpc6id, c7i, c8i) and is retained in the 18.06 scripts where the version bundled with STAR-CCM+ works reliably across all tested platforms.
 
@@ -78,6 +99,8 @@ export I_MPI_MULTIRAIL=1
 ### CPU Binding
 
 No `-cpubind` flag is needed in the submit scripts. STAR-CCM+ defaults to `-cpubind bandwidth` which maximises memory bandwidth across NUMA nodes. Benchmarking confirmed this is 42–45% faster than `-cpubind off` on AMD multi-CCD architectures (hpc8a, hpc7a).
+
+To run fewer ranks per node than the node has cores, use 24, 48, 72, 96, 120, 144, 168 or 192 ranks per node on hpc7a.96xlarge and hpc8a.96xlarge: these counts give every CCD the same number of cores, as described in [Utils/flexible-cores](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores). STAR-CCM+'s default binding then spreads the ranks evenly over the 24 CCDs: on hpc8a.96xlarge with 2606, `-cpubind bandwidth,v` (the `v` prints each rank's core) showed the same number of ranks on every CCD, 6 at 144 ranks per node (exactly the cores of the flexible-cores list) and 4 at 96 (each CCD's first four cores, where the list takes every other core).
 
 ## Submit Scripts
 
@@ -125,7 +148,7 @@ sbatch scripts/21.02/x86/submit_server.sbatch -v 21.02.007 -s /fsx/simulations/m
 
 A benchmarking macro that runs configurable warmup + timed iterations, measures solve time and memory, exports all simulation reports, and writes results to CSV and JSON. See [`macros/RunAndTimeSimulation.java`](macros/RunAndTimeSimulation.java) for full documentation.
 
-This macro has been used internally at AWS for STAR-CCM+ benchmarking in place of the default `starccm+ -benchmark` flag. It provides more control over the benchmarking process — configurable warmup iterations, per-step timing, memory measurement, and report export — and works with both steady and unsteady simulations.
+This macro has been used internally at AWS for STAR-CCM+ benchmarking in place of the default `starccm+ -benchmark` flag. It provides more control over the benchmarking process — configurable warmup iterations, per-step timing, memory measurement, and report export — and works with both steady and unsteady simulations. For the models of Siemens's own benchmark suite, use `-benchmark` with Siemens's protocol instead (see [Timing Siemens's benchmark models](#timing-siemenss-benchmark-models)). The macro clears the solution before it runs (`clearSolution = true`), unlike Siemens's protocol for the AeroSUV, vtmBenchmark and HlMach10Sou models; set `clearSolution=false` in a `benchmark_config.properties` file in the job directory to continue from the model's solution. It also appends every run's timings to `/fsx/benchmarks/MasterBenchmarkReport.csv` (`masterFileLoc`).
 
 **Use at your own risk.** This is not officially supported by Siemens. It is written in a readable form so is easy to audit.
 
@@ -135,6 +158,27 @@ Usage:
 sbatch scripts/21.02/x86/submit_batch.sbatch -s /fsx/simulations/model.sim -m RunAndTimeSimulation.java
 ```
 
+
+## Timing Siemens's benchmark models
+
+For the models of Siemens's STAR-CCM+ benchmark suite (AeroSUV, LeMans 100M, civil, reactor, TurboCharger7M, vtmBenchmark, ...), Siemens asks for STAR-CCM+'s own `-benchmark` mode with the protocol it gives for each model, performance reported as the `AverageElapsedTime` of the XML file `-benchmark` writes, and 3 or more runs per test point:
+
+| Model | `-benchmark` options |
+|---|---|
+| AeroSUV, steady (coupled and segregated) | `-preits 5 -nits 20` |
+| LeMans 100M (coupled and segregated), civil, reactor, TurboCharger7M, lemans_poly_17m | `-preits 40 -nits 20 -preclear` |
+| vtmBenchmark, HlMach10Sou | `-preits 40 -nits 20` |
+| DrivAer WMLES 128M | `-preits 10 -nits 20` |
+
+For example, on two nodes with the 21.02 x86 script's settings:
+
+```bash
+starccm+ -pio -bs slurm -power -licpath 1999@flex.cd-adapco.com \
+    -mpi openmpi -xsystemlibfabric -ldlibpath /opt/amazon/efa/lib64 -fabric OFI \
+    -benchmark "-preits 5 -nits 20 -nps 384" AeroSUV_Steady_Coupled_106M_V17_04_005.sim
+```
+
+`-benchmark` ignores the model's own stopping criteria, records the time of every timed iteration as well as the first iteration and the pre-iterations, and starts the server twice (once to collect system information), so its log shows two license checkouts and two loads of the model. The pre-iterations matter after `-preclear`: on LeMans 100M segregated (one hpc8a.96xlarge, 2606), iterations 3 to 22 after `-preclear` took 9.3% longer on average than iterations 43 to 102, and iterations 23 to 42 1.4% longer, so Siemens's 40 pre-iterations put the timed iterations on the plateau. Continuing AeroSUV 106M coupled from the solution it ships with, only the first iteration stands apart; after it, the coupled solver's time per iteration follows its AMG cycles per iteration (4 to 9 in these runs) rather than a trend.
 
 ## Benchmarking Summary
 
@@ -153,10 +197,10 @@ The chart above compares average iteration time (lower is better) across three s
 
 ### Key Takeaways
 
-- **OpenMPI is now the default.** Intel MPI is no longer recommended on non-Intel instances. It crashes on AMD Turin/Genoa during mesh repartitioning in STAR-CCM+ 21.02+.
+- **OpenMPI is now the default.** Use it on AMD instances (hpc6a, hpc7a, hpc8a); the 21.02+ scripts do.
 - **CPU binding matters.** The default `-cpubind bandwidth` is optimal; explicitly setting `-cpubind off` costs 42–45% performance on AMD multi-CCD architectures.
-- **Warmup iterations are important for benchmarking.** The first ~100 iterations involve memory allocation overhead and should be discarded for timing purposes.
-- **AL2023 is the recommended OS** for x86 and GPU instances (glibc 2.34). Amazon Linux 2 is no longer compatible with STAR-CCM+ 21.02+.
+- **Discard the warm-up iterations when benchmarking.** How many depends on where the run starts: Siemens's protocols use 40 pre-iterations after `-preclear`, and 5 when a model continues from the solution it ships with (see [Timing Siemens's benchmark models](#timing-siemenss-benchmark-models)).
+- **AL2023 is the recommended OS** for x86 and GPU instances (glibc 2.34). Amazon Linux 2 is no longer compatible with STAR-CCM+ 2402 and later.
 
 ## Contribute your results
 
