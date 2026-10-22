@@ -82,9 +82,8 @@ platforms and versions prior to 21.x.
 ## CPU Binding
 
 No `-cpubind` flag is needed in the submit scripts. STAR-CCM+ defaults to
-`-cpubind bandwidth` which maximises memory bandwidth across NUMA nodes.
-Benchmarking confirmed this is 42-45% faster than `-cpubind off` on AMD
-multi-CCD architectures (hpc8a, hpc7a).
+`-cpubind bandwidth`, which maximises memory bandwidth across NUMA nodes;
+keep that default on AMD multi-CCD architectures (hpc8a, hpc7a).
 
 ## OS Compatibility
 

@@ -24,8 +24,8 @@
 # MPI: OpenMPI (bundled with STAR-CCM+) is the default and recommended MPI for
 #   Linux per the Siemens installation guide; use it on AMD instances.
 #
-# CPU binding: No -cpubind flag needed — STAR-CCM+ defaults to "bandwidth"
-#   which is optimal (42-45% faster than -cpubind off on AMD).
+# CPU binding: No -cpubind flag needed — STAR-CCM+ defaults to "bandwidth",
+#   which maximises memory bandwidth across NUMA nodes; keep that default.
 #
 # IMPORTANT: STAR-CCM+ 21.02+ requires glibc >= 2.28.
 #   AL2023 (glibc 2.34) ✓ | Ubuntu 20+ ✓ | RHEL8+ ✓ | AL2 (2.26) ✗

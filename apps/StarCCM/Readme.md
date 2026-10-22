@@ -98,7 +98,7 @@ export I_MPI_MULTIRAIL=1
 
 ### CPU Binding
 
-No `-cpubind` flag is needed in the submit scripts. STAR-CCM+ defaults to `-cpubind bandwidth` which maximises memory bandwidth across NUMA nodes. Benchmarking confirmed this is 42–45% faster than `-cpubind off` on AMD multi-CCD architectures (hpc8a, hpc7a).
+No `-cpubind` flag is needed in the submit scripts. STAR-CCM+ defaults to `-cpubind bandwidth`, which maximises memory bandwidth across NUMA nodes; keep that default on AMD multi-CCD architectures (hpc8a, hpc7a).
 
 To run fewer ranks per node than the node has cores, use 24, 48, 72, 96, 120, 144, 168 or 192 ranks per node on hpc7a.96xlarge and hpc8a.96xlarge: these counts give every CCD the same number of cores, as described in [Utils/flexible-cores](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores). STAR-CCM+'s default binding then spreads the ranks evenly over the 24 CCDs: on hpc8a.96xlarge with 2606, `-cpubind bandwidth,v` (the `v` prints each rank's core) showed the same number of ranks on every CCD, 6 at 144 ranks per node (exactly the cores of the flexible-cores list) and 4 at 96 (each CCD's first four cores, where the list takes every other core).
 
@@ -198,7 +198,7 @@ The chart above compares average iteration time (lower is better) across three s
 ### Key Takeaways
 
 - **OpenMPI is now the default.** Use it on AMD instances (hpc6a, hpc7a, hpc8a); the 21.02+ scripts do.
-- **CPU binding matters.** The default `-cpubind bandwidth` is optimal; explicitly setting `-cpubind off` costs 42–45% performance on AMD multi-CCD architectures.
+- **Keep the default CPU binding.** STAR-CCM+'s default, `-cpubind bandwidth`, maximises memory bandwidth across NUMA nodes; the submit scripts leave it as is.
 - **Discard the warm-up iterations when benchmarking.** How many depends on where the run starts: Siemens's protocols use 40 pre-iterations after `-preclear`, and 5 when a model continues from the solution it ships with (see [Timing Siemens's benchmark models](#timing-siemenss-benchmark-models)).
 - **AL2023 is the recommended OS** for x86 and GPU instances (glibc 2.34). Amazon Linux 2 is no longer compatible with STAR-CCM+ 2402 and later.
 
