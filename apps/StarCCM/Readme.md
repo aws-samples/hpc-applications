@@ -102,6 +102,10 @@ No `-cpubind` flag is needed in the submit scripts. STAR-CCM+ defaults to `-cpub
 
 To run fewer ranks per node than the node has cores, use 24, 48, 72, 96, 120, 144, 168 or 192 ranks per node on hpc7a.96xlarge and hpc8a.96xlarge: these counts give every CCD the same number of cores, as described in [Utils/flexible-cores](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores). STAR-CCM+'s default binding then spreads the ranks evenly over the 24 CCDs: on hpc8a.96xlarge with 2606, `-cpubind bandwidth,v` (the `v` prints each rank's core) showed the same number of ranks on every CCD, 6 at 144 ranks per node (exactly the cores of the flexible-cores list) and 4 at 96 (each CCD's first four cores, where the list takes every other core).
 
+### Node preparation
+
+Before the solve the submit scripts drop the page cache and set transparent huge pages (THP) to `always` on every node — the same two lines the other apps' scripts use. On one small model (reactor, 192 ranks on hpc8a.96xlarge) THP `always` ran about 2% faster than the `madvise` default (relative to that model at `madvise` = 1.00); the effect may be larger on bigger, more memory-bound models.
+
 ## Submit Scripts
 
 Submit scripts are provided under `scripts/` organised by STAR-CCM+ version and architecture. Each directory contains a `submit_batch.sbatch` for headless batch runs and a `submit_server.sbatch` for interactive server mode (connect via the STAR-CCM+ GUI).

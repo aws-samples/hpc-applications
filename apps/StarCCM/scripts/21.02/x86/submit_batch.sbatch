@@ -73,6 +73,11 @@ fi
 [ -n "${PODKEY}" ] && export LM_PROJECT="${PODKEY}"
 LICENSEOPTS="-power -licpath 1999@flex.cd-adapco.com"
 
+echo "Drop caches on all nodes"
+srun --ntasks=$SLURM_JOB_NUM_NODES --ntasks-per-node=1 /bin/bash -c "sync && echo 3 | sudo tee /proc/sys/vm/drop_caches"
+echo "Enabling Transparent Huge Pages (THP)"
+srun --ntasks=$SLURM_JOB_NUM_NODES --ntasks-per-node=1 /bin/bash -c "echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled"
+
 echo "STAR-CCM+ ${APP_VERSION} — x86 batch (OpenMPI)"
 echo "Nodes: ${SLURM_JOB_NUM_NODES}, Sim: ${SIM_BASENAME}, Batch: ${BATCH_CMD}"
 echo "Start: $(date)"
