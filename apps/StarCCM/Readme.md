@@ -212,6 +212,8 @@ Speed is the reference's time over the shape's time (higher is faster). With the
 
 The 144-rank points' runs spread 8–10%; the others' within 4%. Measured on AeroSUV 106M and LeMans 100M only.
 
+**Binding at 96 ranks per node.** Pinning the 96 ranks to the cores of the flexible-cores list for 96 per node (`-cpubind off`, with a rankfile passed through `-mpiflags`) ran within 0.1% of STAR-CCM+'s default `-cpubind bandwidth` on AeroSUV 106M coupled (one `hpc8a.96xlarge`, 3 runs each), so at these counts the default binding is enough and no rankfile is needed (measured on that model only).
+
 
 ### Key Takeaways
 
