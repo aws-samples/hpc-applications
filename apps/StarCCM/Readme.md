@@ -6,7 +6,7 @@
 
 There are 3 releases of STAR-CCM+ per year. There are two platform builds — x86 and Arm — each available for both Linux and Windows. There are also separate mixed precision and double (higher) precision builds available. Each of these have slightly different solve speeds and compute requirements with the double precision version (labelled -R8) having the higher requirements of the two. GPGPU compute capability is included within the x86 build (not a separate build). While submit scripts are mostly common across versions, there are nuances for x86, Arm and GPGPU usage to consider. The submit scripts in this repository are organised by version and architecture under `scripts/`.
 
-The current release is 2606 (21.04.007). The 21.02 scripts run it with `-v 21.04.007`. Its release notes announce two changes for 2610 that affect scripts: `-benchmark` will write JSON instead of XML files, and `-cpubind` will always need a value (for example `-cpubind bandwidth`).
+The current release is 2606 (21.04.007). The 21.02 scripts run it with `-v 21.04.007`; the x86 scripts were checked on 2510 (20.06.010), 2602 (21.02.007) and 2606 (21.04.007). Its release notes announce two changes for 2610 that affect scripts: `-benchmark` will write JSON instead of XML files, and `-cpubind` will always need a value (for example `-cpubind bandwidth`).
 
 ## OS Compatibility
 
