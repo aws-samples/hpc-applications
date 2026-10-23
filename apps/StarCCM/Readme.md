@@ -56,8 +56,8 @@ Each method has its advantages and disadvantages, however it's worth noting that
 The 21.02 x86 submit scripts pass the PoD key to STAR-CCM+ in the `LM_PROJECT` environment variable, the variable STAR-CCM+'s launcher sets from `-podkey`, so the key is not on STAR-CCM+'s command line. That matters because STAR-CCM+ writes its command line into its log, and a `-benchmark` run also into its XML and HTML reports, so a key passed with `-podkey` ends up in those files. The scripts take the key from the `PODLIC` environment variable, from `-l`, or, when `PODLIC_SSM_PARAMETER` names an AWS Systems Manager Parameter Store parameter, from that parameter when the job starts. Reading it in the job keeps it out of files and job records:
 
 ```bash
-# Once: store the key as a SecureString parameter
-aws ssm put-parameter --name /starccm/pod-key --type SecureString --value "your-pod-key-here"
+# Once: store the key as a SecureString parameter; type the key at the silent prompt
+read -rs PODKEY && printf %s "$PODKEY" | aws ssm put-parameter --name /starccm/pod-key --type SecureString --value file:///dev/stdin; unset PODKEY
 # Each job: name the parameter; the job reads the key when it starts
 PODLIC_SSM_PARAMETER=/starccm/pod-key sbatch submit_batch.sbatch -v 21.04.007 -s /fsx/simulations/model.sim
 ```

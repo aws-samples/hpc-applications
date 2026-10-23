@@ -38,7 +38,7 @@ sbatch submit_batch.sbatch -v 21.02.007 -s /fsx/simulations/model.sim -m RunAndT
 # Chain commands: run a macro, then mesh, then solve
 sbatch submit_batch.sbatch -v 21.02.007 -s model.sim -m "macro.java,mesh,run"
 
-# With an explicit license key
+# With an explicit license key (single-user clusters only)
 sbatch submit_batch.sbatch -v 21.02.007 -s model.sim -l "your-pod-key"
 
 # Server mode (connect via STAR-CCM+ GUI)
