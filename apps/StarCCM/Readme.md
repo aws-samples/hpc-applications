@@ -138,11 +138,11 @@ sbatch scripts/21.02/x86/submit_batch.sbatch -s /fsx/simulations/model.sim -m Ru
 
 ## Benchmarking Summary
 
-AWS ran STAR-CCM+ 2606 (21.04.007, mixed precision) on six models of Siemens's benchmark suite in October 2026, on [hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/), [hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) and [hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) instances. The runs used the 21.02 x86 scripts' MPI options (the bundled Open MPI 5.0.9 over EFA with `-xsystemlibfabric -ldlibpath /opt/amazon/efa/lib64 -fabric OFI`, and the default `-cpubind bandwidth`), with the page cache dropped and THP set to `always` before each run. Each model was timed with STAR-CCM+'s `-benchmark` mode and Siemens's protocol for it (5 or 40 pre-iterations, with `-preclear` where Siemens asks for it, then 20 timed iterations; civil with 120 pre-iterations instead of 40): performance is the `AverageElapsedTime` of the 20 timed iterations, and every value below is the median of 3 runs.
+AWS ran STAR-CCM+ 2606 (21.04.007, mixed precision) on six models of Siemens's benchmark suite in October 2026, on [hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/), [hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) and [hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) instances. The runs used the 21.02 x86 scripts' MPI options (the bundled Open MPI 5.0.9 over EFA with `-xsystemlibfabric -ldlibpath /opt/amazon/efa/lib64 -fabric OFI`, and the default `-cpubind bandwidth`), with the page cache dropped and THP set to `always` before each run. Each model was timed with STAR-CCM+'s `-benchmark` mode and Siemens's protocol for it (5 or 40 pre-iterations, with `-preclear` where Siemens asks for it, then 20 timed iterations; civil with 120 pre-iterations instead of 40): performance is the `AverageElapsedTime` of the 20 timed iterations, and every value below is the median of 3 runs (of 4 at the 10 points whose first 3 runs spread more than 5%).
 
 The results in brief:
 
-- **hpc8a.96xlarge is 1.37–1.50× hpc7a.96xlarge** node for node on Siemens's models, and both keep 82–108% parallel efficiency to 8 nodes.
+- **hpc8a.96xlarge is 1.37–1.48× hpc7a.96xlarge** node for node on Siemens's models, and both keep 82–108% parallel efficiency to 8 nodes.
 - **With a Power licence, populate every node** and add nodes for speed: at the same node count, full nodes ran fastest. **With a licence per core, spread the ranks** at 96 per node on hpc8a and hpc7a: the same ranks ran 1.7–1.9× as fast for 1.08–1.18× the EC2 cost per run.
 
 ### Scaling on hpc8a, hpc7a and hpc6a
@@ -155,27 +155,27 @@ Every node is fully populated: 192 ranks per node on `hpc8a.96xlarge` and `hpc7a
 |---|---|--:|--:|--:|--:|--:|
 | reactor (9M) | hpc8a.96xlarge | 1.43× | 2.92× | 5.71× | — | — |
 | | hpc7a.96xlarge | 1.00× | 2.04× | 3.88× | — | — |
-| | hpc6a.48xlarge | 0.37× | 0.80× | 1.66× | 3.13× | — |
-| civil (20M) | hpc8a.96xlarge | 1.42× | 2.91× | 5.85× | 10.92× | — |
-| | hpc7a.96xlarge | 1.00× | 2.07× | 4.03× | 7.78× | — |
+| | hpc6a.48xlarge | 0.37× | 0.80× | 1.68× | 3.21× | — |
+| civil (20M) | hpc8a.96xlarge | 1.42× | 2.91× | 5.85× | 10.91× | — |
+| | hpc7a.96xlarge | 1.00× | 2.07× | 4.05× | 7.78× | — |
 | | hpc6a.48xlarge | 0.40× | 0.81× | 1.70× | 3.48× | 6.36× |
 | LeMans 100M segregated (106M) | hpc8a.96xlarge | 1.39× | 2.86× | 5.73× | 11.95× | — |
-| | hpc7a.96xlarge | 1.00× | 2.02× | 3.95× | 7.99× | — |
+| | hpc7a.96xlarge | 1.00× | 2.02× | 3.95× | 8.14× | — |
 | | hpc6a.48xlarge | 0.37× | 0.77× | 1.56× | 3.12× | 6.41× |
 | AeroSUV 106M coupled | hpc8a.96xlarge | 1.42× | 2.81× | 5.82× | 11.43× | — |
 | | hpc7a.96xlarge | 1.00× | 1.97× | 4.02× | 7.72× | — |
 | | hpc6a.48xlarge | 0.40× | 0.76× | 1.60× | 3.31× | 5.97× |
 | vtmBenchmark (178M) | hpc8a.96xlarge | 1.37× | 2.75× | 5.35× | 9.70× | — |
 | | hpc7a.96xlarge | 1.00× | 1.99× | 3.81× | 6.57× | — |
-| | hpc6a.48xlarge | 0.39× | 0.70× | 1.55× | 3.03× | 5.50× |
+| | hpc6a.48xlarge | 0.39× | 0.71× | 1.55× | 3.03× | 5.50× |
 | AeroSUV 322M coupled | hpc8a.96xlarge | — | 1.41× | 2.84× | 5.58× | — |
 | | hpc7a.96xlarge | — | 1.00× | 2.01× | 3.87× | — |
 | | hpc6a.48xlarge | — | — | 0.81× | 1.59× | 3.21× |
 
-The runs of 63 of the 71 points agree within 5%, and the median spread of all 71 is 1.1%. At the other 8 the median sets the value: their runs spread 5.5–17%, on civil (4 `hpc7a.96xlarge` and 8 `hpc8a.96xlarge` nodes) and reactor (4 and 8 `hpc6a.48xlarge` nodes), the shortest timed windows, on LeMans 100M (8 `hpc7a.96xlarge` nodes), and on AeroSUV 106M (1 and 2 `hpc6a.48xlarge` nodes) and vtmBenchmark (2 `hpc6a.48xlarge` nodes).
+The runs of 63 of the 71 points agree within 5%, and the median spread of all 71 is 1.1%. The other 8 have a fourth run, and the median of the four sets the value: their runs spread 5.5–17%, on civil (4 `hpc7a.96xlarge` and 8 `hpc8a.96xlarge` nodes) and reactor (4 and 8 `hpc6a.48xlarge` nodes), the shortest timed windows, on LeMans 100M (8 `hpc7a.96xlarge` nodes), and on AeroSUV 106M (1 and 2 `hpc6a.48xlarge` nodes) and vtmBenchmark (2 `hpc6a.48xlarge` nodes).
 
-- `hpc8a.96xlarge` runs these models 1.37–1.43× as fast as `hpc7a.96xlarge` on one node (two for AeroSUV 322M), and 1.40–1.50× as fast on 8 nodes.
-- On 8 nodes (1,536 ranks), parallel efficiency against the first point is 88–108% on `hpc8a.96xlarge` and 82–100% on `hpc7a.96xlarge`; on 16 `hpc6a.48xlarge` nodes (also 1,536 ranks) it is 89–109%. vtmBenchmark scales least of the six.
+- `hpc8a.96xlarge` runs these models 1.37–1.43× as fast as `hpc7a.96xlarge` on one node (two for AeroSUV 322M), and 1.40–1.48× as fast on 8 nodes.
+- On 8 nodes (1,536 ranks), parallel efficiency against the first point is 88–108% on `hpc8a.96xlarge` and 82–102% on `hpc7a.96xlarge`; on 16 `hpc6a.48xlarge` nodes (also 1,536 ranks) it is 89–109%. vtmBenchmark scales least of the six.
 - One `hpc6a.48xlarge` node (96 cores) delivers 0.37–0.40× of one `hpc7a.96xlarge` node (192 cores).
 
 ### Fewer ranks per node
@@ -205,9 +205,9 @@ Speed is the reference's time over the shape's time (higher is faster). With the
 
 | Instance type | Ranks per node | Speed (a Power licence costs in proportion to 1 / speed) | Ranks × time (a licence per core costs in proportion to it) |
 |---|--:|--:|--:|
-| hpc8a.96xlarge | 144 | 0.98× | 0.76× |
+| hpc8a.96xlarge | 144 | 0.97× | 0.78× |
 | | 96 | 0.91× | 0.55× |
-| hpc7a.96xlarge | 144 | 0.97× | 0.77× |
+| hpc7a.96xlarge | 144 | 0.97× | 0.78× |
 | | 96 | 0.98× | 0.51× |
 
 The 144-rank points' runs spread 8–10%; the others' within 4%. Measured on AeroSUV 106M and LeMans 100M only.
