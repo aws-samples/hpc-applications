@@ -157,9 +157,9 @@ def scaling_chart(output="STARCCM-2606-Scaling.png"):
                    for _, r in pts.values()})
     notes = [
         "Each model timed with STAR-CCM+'s -benchmark mode and Siemens's protocol for it (AverageElapsedTime of "
-        "the 20 timed iterations); civil with 120 pre-iterations.",
+        + "the 20 timed iterations); civil with 120 pre-iterations.",
         f"Median of {' or '.join(str(r) for r in runs)} runs per point. Labels: the last point's value and its "
-        "parallel efficiency against the type's own first point. Open MPI 5.0.9 over EFA; AWS runs of October 2026.",
+        + "parallel efficiency against the type's own first point. Open MPI 5.0.9 over EFA; AWS runs of October 2026.",
     ]
     fig.text(0.01, 0.005, "\n".join(notes), fontsize=9, style="italic", color="dimgray", ha="left", va="bottom")
     fig.suptitle("STAR-CCM+ 2606 on six Siemens benchmark models: scaling on hpc8a, hpc7a and hpc6a",
@@ -221,9 +221,9 @@ def flex_chart(output="STARCCM-2606-FlexibleCores.png"):
     ax.legend(loc="lower right", fontsize=8.5)
     notes = [
         "Same instance type and total ranks, more nodes at the flexible-cores counts per node (96 or 48 ranks; 144 "
-        "for 4 x 144). With the same ranks, a licence per core",
+        + "for 4 x 144). With the same ranks, a licence per core",
         "(cost per rank-hour) and a Power licence (cost per run-hour, any core count) both cost in proportion to the "
-        "run time. Median of 3 runs per shape; AWS runs of October 2026.",
+        + "run time. Median of 3 runs per shape; AWS runs of October 2026.",
     ]
     fig.text(0.01, 0.005, "\n".join(notes), fontsize=8.5, style="italic", color="dimgray", ha="left", va="bottom")
     ax.set_title("STAR-CCM+ 2606: the same ranks spread over more nodes", fontsize=13, fontweight="bold")
