@@ -147,6 +147,99 @@ and the same way for the others:
 
 Each fix refuses a file that does not hold exactly the text it edits, refuses to write over its input (or a link to it), and prints the change. 3cars ships one pfile per rank count (`pfile_2` to `pfile_32+`); pass the one for your run's ranks as the script's third argument.
 
+## Benchmarking Summary
+
+AWS ran LS-DYNA with this page's script in October 2026, on [hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/), [hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) and [hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) instances: MPP single precision with the cluster's Intel MPI 2021.18 over EFA, one rank per core, the flexible-cores lists on under-populated `hpc8a` and `hpc7a` nodes, and the page cache dropped and THP set to `always` before each run. The decks ran as shipped (without `lstc_reduce`), with the documented changes of [Model compatibility](#model-compatibility). Performance is LS-DYNA's own elapsed time to the deck's termination time, and every value below is a ratio of medians of 3 runs, except where marked ¹ (a single run). The runs of 48 of the 50 repeated points agree within 5% (median spread 1.0%); the other two are car2car-ver10 on 4 × 96 ranks (see [The same ranks on more nodes](#the-same-ranks-on-more-nodes)). neon's 30 ms is too short a run to compare, and ODB-10M was run on one shape only, so neither is in the tables below.
+
+The results in brief:
+
+- **hpc8a.96xlarge is 1.41–1.57× hpc7a.96xlarge** node for node, on one node and on two.
+- **The same ranks run faster on two nodes:** 192 ranks on 2 × 96 ran 1.09–1.49× as fast as on one full node. LS-DYNA checks out its licence features per rank, so the licence cost per run fell to 0.67–0.91×, for 1.35–1.83× the EC2 cost per run.
+- **car2car-ver10 stops scaling past two full nodes** of `hpc8a` or `hpc7a`: four ran it slower than two.
+- **On one hpc8a.96xlarge, R16.2.1's and R17.0.1's AOCC AVX-512 builds** ran the Camry 1.04× and 3cars 1.13–1.27× as fast as R13.1's AVX2 build, and Ansys's SSE2 builds of R14.1.1 and R16.1.1 0.82–1.05×.
+
+### Scaling on hpc8a, hpc7a and hpc6a
+
+Every node is fully populated: 192 ranks per node on `hpc8a.96xlarge` and `hpc7a.96xlarge`, 96 on `hpc6a.48xlarge`. Performance is relative to one `hpc7a.96xlarge` node running the same model and version = 1.00×; higher is faster. The chart shows car2car-ver10, the Camry and the Yaris, and labels each line's last point with its parallel efficiency against the same instance type's first point; the table adds 3cars on one node.
+
+![LS-DYNA scaling of car2car-ver10, the Camry and the Yaris on hpc8a, hpc7a and hpc6a](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/LS-Dyna/LSDYNA-Scaling.png?raw=true)
+
+| Model | Instance type | 1 node | 2 nodes | 4 nodes |
+|---|---|--:|--:|--:|
+| car2car-ver10, R13.1 | hpc8a.96xlarge | 1.41× | 2.30× | 1.94×¹ |
+| | hpc7a.96xlarge | 1.00× | 1.52× | 1.43×¹ |
+| | hpc6a.48xlarge | 0.48× | 0.78× | 0.96×¹ |
+| Camry v5a, R17.0.1 | hpc8a.96xlarge | 1.41× | 2.51× | — |
+| | hpc7a.96xlarge | 1.00× | 1.75× | — |
+| Yaris v2j, R17.0.1 | hpc8a.96xlarge | 1.52× | 2.46× | — |
+| | hpc7a.96xlarge | 1.00× | 1.57× | — |
+| 3cars, R17.0.1 | hpc8a.96xlarge | 1.52× | — | — |
+| | hpc7a.96xlarge | 1.00× | — | — |
+
+¹ A single run: car2car-ver10 had stopped scaling by 4 nodes, so the point was not repeated.
+
+- `hpc8a.96xlarge` runs these models 1.41–1.57× as fast as `hpc7a.96xlarge`, node for node.
+- On two nodes, parallel efficiency against one node of the same type is 76–89%. car2car-ver10 runs at 34% and 36% efficiency on 4 `hpc8a` and `hpc7a` nodes, slower than on 2; on 4 `hpc6a.48xlarge` nodes, with half the ranks per node, at 51%.
+- One `hpc6a.48xlarge` node (96 cores) delivers 0.48× of one `hpc7a.96xlarge` node (192 cores) on car2car-ver10.
+- 3cars on R17.0.1 was measured on 192 ranks: on one full node here, and on 2 × 96 and 4 × 48 in the next table.
+
+### The same ranks on more nodes
+
+These runs spread a fixed number of ranks over more nodes, at the flexible-cores counts per node (see [Pinning on Hpc8a and Hpc7a](#pinning-on-hpc8a-and-hpc7a)). Values are relative to the fully populated shape of the same total = 1.00× (1 × 192 for 192 ranks, 2 × 192 for 384):
+
+| Model | Instance type | Ranks | Nodes × ranks per node | Speed | EC2 cost per run |
+|---|---|--:|---|--:|--:|
+| car2car-ver10, R13.1 | hpc8a.96xlarge | 192 | 2 × 96 | 1.49× | 1.35× |
+| | | | 4 × 48 | 1.49× | 2.68× |
+| | hpc8a.96xlarge | 384 | 4 × 96 | 0.93× | 2.16× |
+| | | | 8 × 48 | 1.07× | 3.73× |
+| | hpc7a.96xlarge | 192 | 2 × 96 | 1.45× | 1.38× |
+| | | | 4 × 48 | 1.48× | 2.70× |
+| | hpc7a.96xlarge | 384 | 4 × 96 | 1.06× | 1.88× |
+| | | | 8 × 48 | 1.19× | 3.35× |
+| Camry v5a, R17.0.1 | hpc8a.96xlarge | 192 | 2 × 96 | 1.39× | 1.44× |
+| | | | 4 × 48 | 1.54× | 2.60× |
+| | hpc8a.96xlarge | 384 | 4 × 96 | 1.29× | 1.55× |
+| | | | 8 × 48 | 1.33× | 3.00× |
+| | hpc7a.96xlarge | 192 | 2 × 96 | 1.36× | 1.47× |
+| | | | 4 × 48 | 1.45× | 2.76× |
+| | hpc7a.96xlarge | 384 | 4 × 96 | 1.27× | 1.57× |
+| | | | 8 × 48 | 1.28× | 3.14× |
+| Yaris v2j, R17.0.1 | hpc8a.96xlarge | 192 | 2 × 96 | 1.33× | 1.50× |
+| | | | 4 × 48 | 1.37× | 2.91× |
+| | hpc7a.96xlarge | 192 | 2 × 96 | 1.32× | 1.52× |
+| | | | 4 × 48 | 1.31× | 3.05× |
+| 3cars, R17.0.1 | hpc8a.96xlarge | 192 | 2 × 96 | 1.21× | 1.65× |
+| | | | 4 × 48 | 1.05× | 3.79× |
+| | hpc7a.96xlarge | 192 | 2 × 96 | 1.09× | 1.83× |
+| | | | 4 × 48 | 0.88× | 4.56× |
+
+Speed is the reference's time over the shape's time (higher is faster). With the same ranks, the licence cost per run follows the run time, so a speed of 1.49× is 0.67× the licence cost per run. The EC2 cost per run is nodes × time on the same instance type.
+
+![LS-DYNA: the same ranks spread over more nodes](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/LS-Dyna/LSDYNA-FlexibleCores.png?raw=true)
+
+- **192 ranks on 2 × 96** ran 1.09–1.49× as fast as on one full node, for 1.35–1.83× the EC2 cost per run. On 4 × 48 they ran 0.88–1.54× as fast, for 2.60–4.56× the EC2 cost per run: at most 1.11× faster than on 2 × 96 (the Camry on `hpc8a`), and slower for 3cars and for the Yaris on `hpc7a`.
+- **384 ranks:** the Camry ran 1.27–1.29× as fast on 4 × 96 as on 2 × 192, for 1.55–1.57× the EC2 cost per run. car2car-ver10 ran 0.93× (`hpc8a`) and 1.06× (`hpc7a`) on 4 × 96, and 1.07× and 1.19× on 8 × 48.
+- **car2car-ver10 on 4 × 96** is the one shape whose runs spread more than 5%: 11.7% on `hpc8a` and 7.1% on `hpc7a`. They ran within 3% of each other to 70 ms, and after that each at the pace of the solution it reached (see [Reproducible energies](#reproducible-energies-lstc_reduce)), so their median is a median over different solutions.
+
+### Versions on one hpc8a.96xlarge
+
+Each model on one `hpc8a.96xlarge` at 192 ranks, relative to the same model on R13.1 = 1.00×; higher is faster. Each version ran the build named in its column (see [Versions and builds](#versions-and-builds)), so a ratio holds the build's compiler and instruction set as well as the version.
+
+| Model | R13.1 (LSTC AVX2) | R14.1.1 (Ansys SSE2) | R15.0.2 (LSTC AOCC AVX2) | R16.1.1 (Ansys SSE2) | R16.2.1 (LSTC AOCC AVX-512) | R17.0.1 (LSTC AOCC AVX-512) |
+|---|--:|--:|--:|--:|--:|--:|
+| car2car-ver10 | 1.00× | 0.87× | 1.00× | — | — | — |
+| Camry v5a | 1.00× | 0.82× | — | 0.94× | 1.04× | 1.04× |
+| 3cars | 1.00× | 0.94× | — | 1.05× | 1.13× | 1.27× |
+
+A dash: not run on that version. Of these versions, car2car-ver10 runs on R13.1, R14.1.1 and R15.0.2 (see [Model compatibility](#model-compatibility)), and the Camry and 3cars ran on R13.1, R14.1.1, R16.1.1, R16.2.1 and R17.0.1.
+
+![LS-DYNA versions on one hpc8a.96xlarge, each model against its R13.1 run](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/LS-Dyna/LSDYNA-Versions.png?raw=true)
+
+- R16.2.1 and R17.0.1, LSTC's AOCC AVX-512 builds, ran the Camry 1.04× as fast as R13.1, and 3cars 1.13× and 1.27×.
+- Ansys's SSE2 builds ran 0.82–0.94× as fast as R13.1 on R14.1.1, and 0.94–1.05× on R16.1.1.
+- car2car-ver10 ran as fast on R15.0.2 as on R13.1 (1.00×), both on AVX2 builds.
+
 ## Files
 
 | File | |
