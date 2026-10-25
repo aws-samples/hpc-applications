@@ -13,13 +13,15 @@ for t in "${HERE}"/test-*.sh; do
 done
 echo "### syntax check (bash -n)"
 for f in "${HERE}/../LS-Dyna.sbatch" \
+         "${HERE}/../model-fixes.sh" \
          "${HERE}/../lib/lsdyna-run.sh" \
          "${HERE}/../dynamodb/record-benchmark.sh" \
          "${HERE}"/*.sh; do
+    name="${f#"${HERE}/../"}"; name="${name/#"${HERE}"/tests}"
     if bash -n "${f}" 2>/dev/null; then
-        printf '  ok   %s\n' "${f#"${HERE}/../"}"
+        printf '  ok   %s\n' "${name}"
     else
-        printf '  FAIL %s\n' "${f#"${HERE}/../"}"; bash -n "${f}"; rc=1
+        printf '  FAIL %s\n' "${name}"; bash -n "${f}"; rc=1
     fi
 done
 echo
