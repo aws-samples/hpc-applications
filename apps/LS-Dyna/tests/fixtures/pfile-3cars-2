@@ -1,0 +1,3 @@
+gen { nodump nobeamout dboutonly }
+decomp { silist 6 }
+dir { global one_global_dir local /tmp/3cars }
