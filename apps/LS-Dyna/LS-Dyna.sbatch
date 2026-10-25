@@ -46,6 +46,8 @@
 #   BASE_DIR               where the run directory goes (default /fsx)
 #   LOCAL_DIR              the pfile's local directory (default <run dir>/local; created on
 #                          every node)
+#   BENCHMARK_CASE         the case name a recorded run gets (default: the deck's file name
+#                          without its extension; the CCSA models' main deck is combine.key)
 #   DYNAMODB_RECORDER, SOURCE   the benchmark recorder (see "Contribute your results")
 # =============================================================================
 set -uo pipefail
@@ -192,7 +194,7 @@ elif [ "${_rec_rc}" -ne 0 ]; then
 elif [ -n "${ENDTIME:-}" ]; then
     echo "NOTE: ENDTIME=${ENDTIME} ends the run early; skipping benchmark recording." >&2
 elif [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
-    LSDYNA_VERSION="${REVISION%%-*}" BENCHMARK_CASE="$(basename "${INPUT_FILE%.*}")" \
+    LSDYNA_VERSION="${REVISION%%-*}" BENCHMARK_CASE="${BENCHMARK_CASE:-$(basename "${INPUT_FILE%.*}")}" \
     TIME_TO_SOLUTION="${ELAPSED}" NUM_CORES="${NP}" NUM_INSTANCES="${NODES}" CORES_PER_NODE="${RPN}" \
     RUN_DIR="${workdir}" "${_recorder}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2

@@ -142,6 +142,10 @@ has "an LSTC build's directory first on LD_LIBRARY_PATH" "${L}" "LD_LIBRARY_PATH
 has "page cache and THP set on every node" "${L}" "srun: /bin/bash -c sync && echo 3 | sudo tee /proc/sys/vm/drop_caches"
 has "the local directory made on every node" "${L}" "srun: mkdir -p ${W}/local"
 is "the deck's include linked into the run directory" "$(readlink "${W}/car1.k")" "${T}/model/car1.k"
+has "recorded with LS-DYNA's own elapsed time and version" "${L}" "LSDYNA_VERSION=R13.1 BENCHMARK_CASE=deck TIME_TO_SOLUTION=1234"
+has "recorded with the shape" "${L}" "NUM_CORES=144 NUM_INSTANCES=1 CORES_PER_NODE=144"
+run_case named BENCHMARK_CASE=camry-v5a-meshfix -- "${LSTC}" "${T}/model/deck.k"
+has "BENCHMARK_CASE set: recorded under that name, not the deck's" "${T}/named.log" "BENCHMARK_CASE=camry-v5a-meshfix TIME_TO_SOLUTION=1234"
 
 echo "== a copy of a model's directory: links to the shipped files, an edited file of its own =="
 mkdir -p "${T}/model-fixed"
@@ -153,8 +157,6 @@ is "exit 0" "${RC}" "0"
 is "the edited include is the copy's, not the shipped one" "$(readlink "${W}/car1.k")" "${T}/model-fixed/car1.k"
 is "the deck is the copy's link" "$(readlink "${W}/deck.k")" "${T}/model-fixed/deck.k"
 is "no pfile given: the directories only" "$(cat "${W}/run.pfile")" "dir { global ${W} local ${W}/local }"
-has "recorded with LS-DYNA's own elapsed time and version" "${L}" "LSDYNA_VERSION=R13.1 BENCHMARK_CASE=deck TIME_TO_SOLUTION=1234"
-has "recorded with the shape" "${L}" "NUM_CORES=144 NUM_INSTANCES=1 CORES_PER_NODE=144"
 case "${W}" in */deck/Run/4242-1xhpc8a.96xlarge-144-*) ok "run directory named after the deck, job, shape and type" ;;
                *) bad "run directory" "*/deck/Run/4242-1xhpc8a.96xlarge-144-*" "${W}" ;; esac
 
