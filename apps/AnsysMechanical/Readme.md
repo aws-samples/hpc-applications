@@ -292,30 +292,36 @@ before trusting a timing.
     (so it fits in aggregate RAM) can improve runtime by far more than the added
     parallelism alone would explain — the speedup is the memory mode changing,
     not parallel efficiency.
-  * **Once the model fits in memory, adding more memory stopped helping** in the
-    configurations we measured — memory bandwidth and clock speed dominate from
-    there. Size for the documented requirement plus headroom rather than buying
-    the largest memory footprint available.
+  * **Once the model fits in memory, choose the instance for speed, not for more
+    memory.** In the configurations we measured, with the same CPU and more
+    memory the results were mixed (see
+    [Intel instance types](#intel-instance-types)). Size for the documented
+    requirement plus headroom rather than buying the largest memory footprint
+    available.
   * **Instance selection.** The notes below reflect the V26 Cluster models on the
     configurations we tested; treat them as a starting point and verify against
-    your own models rather than as a general ranking. Quantitative comparisons
-    will land in [Performance](#performance).
-      * [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6id/) — 16 GB/core,
-        a cost-effective way to buy memory capacity, **plus 15.2 TB of local
-        NVMe** for solver scratch (see below). A good fit for the large
-        sparse-direct models, and the reference configuration in the sbatch.
+    your own models rather than as a general ranking. The measurements are in
+    [Instance types](#instance-types).
       * [Hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/) /
         [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) — 4 GB/core but
-        high memory bandwidth and core count; these were the quickest of the
-        instances we tried on models that already fit in memory.
+        high memory bandwidth and core count. Of the AMD types we tried, Hpc8a
+        was the quickest per node; Hpc7a took 1.15-1.59x as long at the same
+        layout. Their 768 GiB per node is what to plan around: V26direct-5 needs
+        two nodes to run in-core.
+      * [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6id/) — 16 GB/core,
+        a cost-effective way to buy memory capacity, **plus 15.2 TB of local
+        NVMe** for solver scratch (see below), and the reference configuration in
+        the sbatch. One node holds V26direct-5 in-core, where one c8i.96xlarge
+        (768 GiB) does not, which pays off when the job stays on one node.
       * R-family ([r7i](https://aws.amazon.com/ec2/instance-types/r7i/) /
         [r8i](https://aws.amazon.com/ec2/instance-types/r8i/), or
-        [r7id](https://aws.amazon.com/ec2/instance-types/r7id/) /
         [r8id](https://aws.amazon.com/ec2/instance-types/r8id/) /
         [i7ie](https://aws.amazon.com/ec2/instance-types/i7ie/) for local
-        NVMe) — worth it mainly when a single node must hold a very large model.
-        Per-unit cost is comparatively high, and in our runs they were not faster
-        than the HPC instances once the model already fit in memory.
+        NVMe) — worth it mainly when a single node must hold a very large model:
+        one r8i.96xlarge ran V26direct-6 in-core, while two Hpc6id nodes ran it
+        faster, in-core as well. Per core, r7i and r8i cost the most of the
+        Intel types we ran, and in our runs they were not faster than
+        c8i.96xlarge once the model already fit in memory.
   * **Under-population raises memory per core.** Running fewer cores per node
     gives each rank more memory *and* more bandwidth, which is often a better
     trade than filling the node. See
@@ -371,7 +377,7 @@ constraint:
     any surprising result with an isolated re-run before acting on it.
   * **Prefer local NVMe instance store for the solver scratch when the instance
     has it.** [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6id/)
-    (15.2 TB per node), r7id/r8id and the i-family carry instance-store NVMe
+    (15.2 TB per node), r8id and the i-family carry instance-store NVMe
     that is both faster (local, no network round-trip) and effectively free
     compared to shared-filesystem capacity and throughput. AWS ParallelCluster
     formats and mounts the instance store at **`/scratch`** automatically (the
@@ -600,22 +606,36 @@ MPI over EFA, in eu-north-1. Scratch is the working directory on FSx for Lustre
 unless stated. Under-populated Hpc8a/Hpc7a nodes were pinned with the lists from
 [Utils/flexible-cores](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores)
 (`I_MPI_PIN_PROCESSOR_LIST`, checked in Intel MPI's pinning table with
-`I_MPI_DEBUG=5`). Treat the numbers as measurements of these models on these
+`I_MPI_DEBUG=5`), and those of the other types with an even stride over all
+their cores. On hpc6a.48xlarge that stride does not balance the 16 and 32 cores
+per node of the tables below: its 96 cores share 12 L3 caches, so balanced
+counts there are multiples of 12 (the flexible-cores page, "Other AMD instance
+types"). The runs are from 2026-08-29 to 2026-10-04, each with at most three
+other MAPDL solves of the campaign running at the same time
+([Shared-filesystem contention](#shared-filesystem-contention) shows what more
+did). Treat the numbers as measurements of these models on these
 configurations, not as a general ranking.
 
 > Every figure below is relative performance, computed from MAPDL's own
-> `Elapsed Time (sec)`, one run per cell: the reference run's time divided by
-> each run's time, so the reference is 1.00 and higher is faster. These models
-> ran at most 96 cores per node, so the instance comparison uses one
-> hpc7a.96xlarge node at 96 cores as its reference, not a fully populated node.
+> `Elapsed Time (sec)`: the reference's time divided by each configuration's, so
+> the reference is 1.00 and higher is faster. A cell is one run unless it gives a
+> run count, and then the median of those runs. Each instance table holds one
+> CPU vendor's instance types, against a reference of the same vendor. These
+> models ran at most 96 cores per node, so the first AMD instance table uses one
+> hpc7a.96xlarge node at 96 cores as its reference, not a fully populated node,
+> and the core-count table and the second AMD table one hpc8a.96xlarge node at
+> 96 cores. The first Intel table uses one c8i.96xlarge node at 32 cores, a
+> layout every Intel type ran, and the second one hpc6id.32xlarge node at 64
+> cores. The NVMe and contention tables state their own reference below them,
+> and the contention table lists each shared run.
 
-## Balanced core counts on Hpc8a and Hpc7a
+## Balanced core counts on Hpc8a
 
 Every layout below gives each of the 24 CCDs the same number of ranks. The runs
 are from 2026-10-04, with at most two other MAPDL solves running at the same time.
-The 1 x 96 cells marked * are earlier runs: V26iter-5 and V26iter-6 ran alone
-(2026-08-31), V26iter-4 with at most two other solves (2026-08-31), and
-V26direct-5 on Hpc7a with at most three (2026-08-30).
+The 1 x 96 cells marked * are earlier runs (2026-08-31): V26iter-5 ran alone,
+V26iter-4 with at most two other solves, and V26iter-6 is the median of two
+runs, one alone and one with at most two others.
 
 Core counts and nodes on hpc8a.96xlarge, each model against one node at 96 cores
 = 1.00:
@@ -627,31 +647,125 @@ Core counts and nodes on hpc8a.96xlarge, each model against one node at 96 cores
 | V26direct-6 | 0.52 | 0.80 | 1.00 | 1.47 | 1.97 |
 | V26iter-4 | 0.76 | 0.97 | 1.00* | 1.22 | 1.23 |
 | V26iter-5 | 0.80 | 0.94 | 1.00* | | |
-| V26iter-6 | 0.66 | 0.85 | 1.00* | 1.22 | 1.20 |
-
-Hpc8a against Hpc7a, each model against one hpc7a.96xlarge node at 96 cores =
-1.00:
-
-| Model | Instance | 1 x 24 | 1 x 48 | 1 x 96 |
-|---|---|--:|--:|--:|
-| V26direct-5 | hpc7a.96xlarge | 0.47 | 0.76 | 1.00* |
-| V26direct-5 | hpc8a.96xlarge | 0.75 | 1.04 | 1.15 |
-| V26iter-5 | hpc7a.96xlarge | 0.83 | 0.95 | 1.00* |
-| V26iter-5 | hpc8a.96xlarge | 0.99 | 1.17 | 1.24* |
+| V26iter-6 | 0.66 | 0.86 | 1.00* (2 runs) | 1.23 | 1.21 |
 
 Nodes x cores per node; relative performance, higher is faster.
 
   * On one node, 96 cores was the fastest of the three counts for every model.
   * On two nodes, the iterative models ran as fast at 48 cores per node as at 96
-    (V26iter-6: 1.22 and 1.20; V26iter-4: 1.22 and 1.23), while the sparse-direct
+    (V26iter-6: 1.23 and 1.21; V26iter-4: 1.22 and 1.23), while the sparse-direct
     models still gained from 96 (V26direct-6: 1.47 to 1.97).
   * The memory mode explains the largest steps. V26direct-5 ran Optimal
     Out-of-Core on one hpc8a.96xlarge and In-Core on two, so 2 x 48 was 2.9x
     faster than 1 x 96 on the same 96 cores. V26direct-6 stayed out-of-core on
     two hpc8a nodes, and V26direct-4 was in-core throughout (see
     [Memory mode and node count](#memory-mode-and-node-count)).
-  * At the same layout, hpc8a.96xlarge was 1.15-1.59x as fast as
-    hpc7a.96xlarge (13-37% less time).
+  * **Where a second node pays.** At 96 cores per node, a second node ran
+    V26direct-6 1.97x as fast (98% parallel efficiency), and V26direct-5, which
+    it brought in-core, 3.65x (182%). For V26direct-4, V26iter-4 and V26iter-6,
+    which already fit on one node, it bought 20-23%, at 60-62% efficiency.
+
+## Instance types
+
+The tables below give every instance type we ran the V26 Cluster models on, each
+CPU vendor's types against a reference of the same vendor. "in" and "out" give
+MAPDL's memory mode (In-Core, Optimal Out-of-Core), and "NVMe" marks scratch on
+local instance store.
+
+### AMD instance types
+
+V26direct-5, which fits in memory on only some of these configurations, and
+V26iter-5, which fits on all of them, each against one hpc7a.96xlarge node at 96
+cores = 1.00:
+
+| Instance | Nodes x cores per node | V26direct-5 | V26iter-5 (PCG) |
+|---|---|--:|--:|
+| hpc7a.96xlarge | 1 x 24 | 0.47 out | 0.83 |
+| hpc7a.96xlarge | 1 x 48 | 0.76 out | 0.96 |
+| hpc7a.96xlarge | 1 x 96 | 1.00 out | 1.00 (2 runs) |
+| hpc8a.96xlarge | 1 x 24 | 0.75 out | 0.99 |
+| hpc8a.96xlarge | 1 x 48 | 1.04 out | 1.17 |
+| hpc8a.96xlarge | 1 x 96 | 1.15 out | 1.24 |
+| hpc8a.96xlarge | 2 x 48 | 3.35 in | |
+| hpc8a.96xlarge | 2 x 96 | 4.19 in | |
+| hpc6a.48xlarge | 1 x 32 | | 0.74 |
+
+V26direct-4, V26iter-4 and V26iter-6 on hpc6a.48xlarge, each against one
+hpc8a.96xlarge node at 96 cores = 1.00 (their hpc8a layouts are in
+[Balanced core counts on Hpc8a](#balanced-core-counts-on-hpc8a); V26direct-6 ran
+on no other AMD type):
+
+| Instance | Nodes x cores per node | V26direct-4 | V26iter-4 | V26iter-6 |
+|---|---|--:|--:|--:|
+| hpc6a.48xlarge | 1 x 16 | 0.10 out | 0.36 | |
+| hpc6a.48xlarge | 1 x 32 | 0.13 out | 0.50 | |
+| hpc6a.48xlarge | 2 x 32 | 0.35 in (2 runs) | | 0.69 |
+
+Nodes x cores per node; relative performance, higher is faster.
+
+  * **Hpc8a was the fastest per node of the AMD types.** At the same layout it
+    was 1.15-1.59x as fast as hpc7a.96xlarge (13-37% less time), and one
+    hpc8a.96xlarge at 24 cores ran V26iter-5 faster than one hpc6a.48xlarge at
+    32 (0.99 against 0.74).
+  * **Two hpc8a nodes hold V26direct-5 in-core.** One hpc8a.96xlarge or
+    hpc7a.96xlarge (768 GiB) ran it out-of-core, and two hpc8a.96xlarge in-core
+    (4.19 against 1.15 at 96 cores per node).
+  * **Hpc6a was slower per core.** With the model in-core, two hpc6a.48xlarge at
+    32 cores per node ran V26direct-4 at about the speed of one hpc8a.96xlarge at
+    24 (0.35 against 0.37), a count that loads hpc6a's L3 caches unevenly (see
+    [Performance](#performance)).
+
+### Intel instance types
+
+V26direct-5 and V26iter-5, each against one c8i.96xlarge node at 32 cores =
+1.00:
+
+| Instance | Nodes x cores per node | V26direct-5 | V26iter-5 (PCG) |
+|---|---|--:|--:|
+| c8i.96xlarge | 1 x 32 | 1.00 out | 1.00 |
+| c8i.96xlarge | 1 x 96 | 1.29 out | 1.24 |
+| hpc6id.32xlarge | 1 x 16 | 0.84 in | 0.70 |
+| hpc6id.32xlarge | 1 x 32 | 1.29 in | 0.91 |
+| hpc6id.32xlarge | 1 x 64 | 1.97 in, NVMe | 1.00 |
+| hpc6id.32xlarge | 2 x 64 | 3.02 in | |
+| c7i.48xlarge | 1 x 32 | | 0.89 |
+| m7i.48xlarge | 1 x 32 | | 0.93 |
+| r7i.48xlarge | 1 x 32 | | 0.98 |
+| r8i.96xlarge | 1 x 32 | | 0.93 |
+
+V26direct-6, against one hpc6id.32xlarge node at 64 cores = 1.00:
+
+| Instance | Nodes x cores per node | V26direct-6 |
+|---|---|--:|
+| hpc6id.32xlarge | 1 x 16 | 0.33 out |
+| hpc6id.32xlarge | 1 x 32 | 0.55 out |
+| hpc6id.32xlarge | 1 x 64 | 1.00 out, NVMe (2 runs) |
+| hpc6id.32xlarge | 2 x 64 | 2.12 in, NVMe (2 runs) |
+| r8i.96xlarge | 1 x 64 | 1.39 in |
+
+Nodes x cores per node; relative performance, higher is faster. V26direct-4,
+V26iter-4 and V26iter-6 ran on one Intel configuration each, one hpc6id.32xlarge
+node at 64 cores, so these tables leave them out; V26direct-4 ran in-core there
+(see [Memory mode and node count](#memory-mode-and-node-count)).
+
+  * **Memory per node sets the node count of a sparse-direct model.** One
+    hpc6id.32xlarge (1,024 GiB) holds V26direct-5 in-core, where one
+    c8i.96xlarge (768 GiB) does not: at 64 cores it ran V26direct-5 1.53x as
+    fast as one c8i.96xlarge at 96 cores (1.97 against 1.29). One r8i.96xlarge
+    (3,072 GiB) holds V26direct-6 in-core, where one hpc6id.32xlarge does not
+    (1.39 against 1.00, at 64 cores each), and two hpc6id.32xlarge, in-core as
+    well, ran it 1.53x as fast as the r8i.96xlarge node (2.12 against 1.39).
+  * **No Intel type with more memory per core beat c8i.96xlarge on a model that
+    fit.** On V26iter-5, which fits on every one of these nodes, one
+    c8i.96xlarge at 32 cores (1.00) was faster than every other Intel type at 32
+    cores (0.89-0.98), the large-memory r7i.48xlarge and r8i.96xlarge included.
+    With the same CPU and more memory the results were mixed, one run each: at
+    32 cores, c7i, m7i and r7i.48xlarge (1, 2 and 4 times the memory) ran at
+    0.89, 0.93 and 0.98, and c8i.96xlarge and r8i.96xlarge (1 and 4 times) at
+    1.00 and 0.93.
+  * **Hpc6id was slower per core than c8i.96xlarge on a model that fit.** On
+    V26iter-5, one hpc6id.32xlarge at 32 cores ran at 0.91, and with all 64 of
+    its cores at about the speed of one c8i.96xlarge at 32 (1.00).
 
 ## Memory mode and node count
 
@@ -727,7 +841,8 @@ The sbatch records two times: the wall clock around the `mapdl` command
 spent outside MAPDL's own clock, and it is not constant: for V26direct-5 on
 2 x hpc6id.32xlarge the wall clock was 9% longer than MAPDL's time when the solve
 ran alone, and 8% to 137% longer on the shared file system above (2.4x MAPDL's
-time at worst).
+time at worst). Over the 66 runs of the core-count and instance tables above,
+it was 0.5% to 16% longer, 2% at the median.
 
 ## Contribute your results
 
