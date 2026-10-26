@@ -611,11 +611,26 @@ top of its output as `BATCH MODE REQUESTED (-b) = NOLIST`,
 [dynamodb/record-benchmark.sh](https://github.com/aws-samples/hpc-applications/blob/main/apps/AnsysMechanical/dynamodb/record-benchmark.sh)
 records a run into the shared AI-Powered HPC dataset. Beyond the auto-detected
 fields, `--mdofs` (model size) is the key size driver and worth always passing.
-There is no dedicated flag for the solver family, so record it as a
-characteristic — for example
-`--char solver_type=sparse-direct-symmetric` or `--char solver_type=pcg-iterative`,
-and `--char memory_mode=InCore|OutOfCore` — since those two attributes explain
-most of the runtime variation between otherwise identical configurations.
+Give the solver family with `--solver-type` (for the V26 Cluster models,
+`sparse-direct-nonsymmetric` for V26direct-4, `sparse-direct-symmetric` for
+V26direct-5, `sparse-direct-complex` for V26direct-6, `jcg-iterative` for
+V26iter-4 and `pcg-iterative` for V26iter-5 and V26iter-6) and the memory mode
+with `--char memory_mode=InCore|OutOfCore` (the sbatch records it from MAPDL's
+`Memory Option:` line): those two attributes explain most of the runtime
+variation between otherwise identical configurations. With the sbatch, set
+`SOLVER_TYPE` on the submission rather than exporting it, so that it does not
+carry over to the next model:
+
+```bash
+SOLVER_TYPE=pcg-iterative sbatch AnsysMechanical.sbatch v261 /fsx/V26/V26iter-5.dat
+```
+
+The recorder reads `SOLVER_TYPE` from its environment, and a value on its
+command line wins: `--solver-type` over `--char solver_type=`, and either over
+the environment. It reads the model size from `MDOFS` the same way, so
+`MDOFS=<x> SOLVER_TYPE=<family> sbatch AnsysMechanical.sbatch ...` records both
+the size and the solver family (for the V26 Cluster models, `<x>` is the MDOF
+column of the table in [Benchmarks](#benchmarks)).
 
 # Performance
 

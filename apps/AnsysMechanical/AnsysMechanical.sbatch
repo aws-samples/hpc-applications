@@ -28,6 +28,11 @@
 #     ANSYS_COMPAT_DIR  dir with the legacy libs AL2023 lacks (see Readme.md);
 #                       default ${BASE_DIR}/ansys_compat, used when it exists.
 #     ANSYSLMD_LICENSE_FILE, SOURCE, DYNAMODB_RECORDER    see recorder section.
+#     SOLVER_TYPE       solver family the recorder stores with the run, e.g.
+#                       sparse-direct-symmetric or pcg-iterative. Set it on
+#                       the submission, SOLVER_TYPE=pcg-iterative sbatch ...,
+#                       so it does not carry over to the next model (Readme.md,
+#                       "Recording results").
 #
 # IMPORTANT: submit as a regular user, NEVER root. The -ssh start method
 # authenticates with the submitting user's inter-node SSH identity, and on

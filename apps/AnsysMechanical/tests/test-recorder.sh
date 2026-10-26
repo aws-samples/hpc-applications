@@ -263,6 +263,92 @@ if command -v python3 >/dev/null 2>&1; then
 fi
 rm -rf "${tmp}"
 
+echo "== the solver family has its own field =="
+
+unset SOLVER_TYPE   # the cases below set it themselves
+# The value of a string attribute in the emitted item, or nothing.
+attr_s() { grep -o "\"$2\": {\"S\": \"[^\"]*\"}" <<<"$1" | sed -E 's/.*"S": "([^"]*)".*/\1/'; }
+count_attr() { grep -c "\"$2\": " <<<"$1"; }
+
+tmp="$(mktemp -d)"
+out="$(run_rec "${tmp}" --time-to-solution 100 --solver-type pcg-iterative)"
+got="$(attr_s "${out}" solver_type)"
+[ "${got}" = "pcg-iterative" ] && ok "--solver-type pcg-iterative is recorded as solver_type" \
+    || bad "--solver-type recorded" "pcg-iterative" "${got:-<absent>}"
+
+# run_rec with SOLVER_TYPE in the recorder's environment, as the sbatch passes it on.
+run_rec_env() {
+    local st="$1" rd="$2"; shift 2
+    SOLVER_TYPE="$st" RUN_DIR="$rd" "${REC}" "${base_args[@]}" --run-dir "$rd" "$@" 2>/tmp/rec-stderr.$$
+}
+
+out="$(run_rec_env sparse-direct-symmetric "${tmp}" --time-to-solution 100)"
+got="$(attr_s "${out}" solver_type)"
+[ "${got}" = "sparse-direct-symmetric" ] && ok "SOLVER_TYPE in the environment is recorded (what the sbatch passes on)" \
+    || bad "SOLVER_TYPE from the environment" "sparse-direct-symmetric" "${got:-<absent>}"
+
+# The command line beats the environment: a SOLVER_TYPE left exported from an
+# earlier submission must not replace the family a command line gives.
+out="$(run_rec_env sparse-direct-symmetric "${tmp}" --time-to-solution 100 \
+        --char solver_type=pcg-iterative)"
+n="$(count_attr "${out}" solver_type)"; got="$(attr_s "${out}" solver_type)"
+if [ "${n}" = "1" ] && [ "${got}" = "pcg-iterative" ]; then
+    ok "SOLVER_TYPE and --char solver_type: one solver_type, the --char's"
+else
+    bad "--char solver_type beats SOLVER_TYPE" "1 x pcg-iterative" "${n} x ${got:-<absent>}"
+fi
+if grep -q 'ignoring SOLVER_TYPE from the environment' /tmp/rec-stderr.$$ \
+   && ! grep -q -- '--solver-type given' /tmp/rec-stderr.$$; then
+    ok "the NOTE names the environment's SOLVER_TYPE as the value set aside"
+else
+    bad "NOTE names its source" "ignoring SOLVER_TYPE from the environment" "$(grep NOTE /tmp/rec-stderr.$$)"
+fi
+
+out="$(run_rec_env sparse-direct-symmetric "${tmp}" --time-to-solution 100 --solver-type pcg-iterative)"
+got="$(attr_s "${out}" solver_type)"
+[ "${got}" = "pcg-iterative" ] && ok "--solver-type beats SOLVER_TYPE in the environment" \
+    || bad "--solver-type beats SOLVER_TYPE" "pcg-iterative" "${got:-<absent>}"
+
+out="$(run_rec_env sparse-direct-symmetric "${tmp}" --time-to-solution 100 --solver-type pcg-iterative \
+        --char solver_type=jcg-iterative)"
+n="$(count_attr "${out}" solver_type)"; got="$(attr_s "${out}" solver_type)"
+if [ "${n}" = "1" ] && [ "${got}" = "pcg-iterative" ]; then
+    ok "SOLVER_TYPE, --solver-type and --char solver_type: one solver_type, the flag's"
+else
+    bad "all three sources" "1 x pcg-iterative" "${n} x ${got:-<absent>}"
+fi
+
+out="$(run_rec "${tmp}" --time-to-solution 100 --solver-type pcg-iterative \
+        --char solver_type=jcg-iterative)"
+n="$(count_attr "${out}" solver_type)"; got="$(attr_s "${out}" solver_type)"
+if [ "${n}" = "1" ] && [ "${got}" = "pcg-iterative" ]; then
+    ok "--solver-type and --char solver_type: one solver_type, the flag's"
+else
+    bad "one solver_type per item" "1 x pcg-iterative" "${n} x ${got:-<absent>}"
+fi
+grep -q 'ignoring --char solver_type' /tmp/rec-stderr.$$ \
+    && ok "the ignored --char solver_type is reported on stderr" \
+    || bad "ignored --char solver_type reported" "a NOTE" "$(head -2 /tmp/rec-stderr.$$)"
+
+out="$(run_rec "${tmp}" --time-to-solution 100 --char solver_type=jcg-iterative)"
+got="$(attr_s "${out}" solver_type)"
+[ "${got}" = "jcg-iterative" ] && ok "--char solver_type alone still works (unchanged behaviour)" \
+    || bad "--char solver_type alone" "jcg-iterative" "${got:-<absent>}"
+
+out="$(run_rec "${tmp}" --time-to-solution 100)"
+if has_attr "${out}" solver_type; then
+    bad "no solver family given, no solver_type" "absent" "$(attr_s "${out}" solver_type)"
+else
+    ok "no solver family given -> no solver_type attribute"
+fi
+rm -rf "${tmp}"
+
+if "${REC}" --help 2>/dev/null | grep -q -- '--solver-type'; then
+    ok "--help lists --solver-type"
+else
+    bad "--help lists --solver-type" "listed" "absent"
+fi
+
 rm -f /tmp/rec-stderr.$$
 echo
 printf 'recorder tests: %d passed, %d failed\n' "${pass}" "${fail}"

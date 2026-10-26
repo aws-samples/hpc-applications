@@ -405,8 +405,8 @@ fi
 
 echo "== heterogeneous placement is not recorded as a uniform cores_per_node =="
 
-run_case_het() {   # <recorder path>
-    local recorder="$1"
+run_case_het() {   # <recorder path> [SOLVER_TYPE given at submission] [MDOFS given at submission]
+    local recorder="$1" solver_type="${2:-}" mdofs="${3:-}"
     local base; base="$(mktemp -d)"
     local vdir="${base}/ansys_inc/v261/ansys/bin"
     mkdir -p "${vdir}" "${base}/inputs"
@@ -423,7 +423,7 @@ EOF
     RECJSON="${base}/recorder-item.json"; : > "${RECJSON}"
     OUT="$(
       PATH="${STUBS}/bin:${PATH}" RECORDER_LOG="${RECLOG}" RECORDER_JSON="${RECJSON}" \
-      DYNAMODB_RECORDER="${recorder}" \
+      DYNAMODB_RECORDER="${recorder}" SOLVER_TYPE="${solver_type}" MDOFS="${mdofs}" \
       MAPDL_VERDICT_LIB="${HERE}/../lib/mapdl-verdict.sh" \
       BASE_DIR="${base}" SCRATCH_MODE="shared" \
       SLURM_JOB_ID=93000 SLURM_JOB_NAME="AnsysMechanical.sbatch" \
@@ -458,7 +458,7 @@ echo "== the PRODUCTION recorder's final JSON, not just the launcher's arguments
 # own, and previously re-derived a bogus uniform cores_per_node = ceil(85/2) = 43
 # even though the launcher deliberately omitted it. Only the emitted item proves
 # what would actually be stored.
-run_case_het "${STUBS}/bin/real-recorder.sh"
+run_case_het "${STUBS}/bin/real-recorder.sh" sparse-direct-symmetric 20.7
 [ "${RC}" -eq 0 ] && ok "heterogeneous run with the real recorder exits 0" \
     || bad "real-recorder het run" "0" "${RC}"
 
@@ -474,6 +474,12 @@ else
     grep -q '"task_placement": {"S": "node1:43:node2:42"}' "${RECJSON}" \
         && ok "stored item carries the real task_placement" \
         || bad "task_placement in stored item" 'node1:43:node2:42' "$(grep -o '"task_placement".*' "${RECJSON}")"
+    grep -q '"solver_type": {"S": "sparse-direct-symmetric"}' "${RECJSON}" \
+        && ok "SOLVER_TYPE given at submission reaches the stored item as solver_type" \
+        || bad "solver_type in stored item" 'sparse-direct-symmetric' "$(grep -o '"solver_type".*' "${RECJSON}")"
+    grep -q '"mdofs": {"N": "20.7"}' "${RECJSON}" \
+        && ok "MDOFS given at submission reaches the stored item as mdofs" \
+        || bad "mdofs in stored item" '20.7' "$(grep -o '"mdofs".*' "${RECJSON}")"
     grep -q '"num_cores": {"N": "85"}' "${RECJSON}" \
         && ok "stored item keeps the true total core count (85)" \
         || bad "num_cores in stored item" "85" "$(grep -o '"num_cores".*' "${RECJSON}")"

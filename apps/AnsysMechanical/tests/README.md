@@ -70,7 +70,11 @@ accepting a run live that replay rejects.
 replay discovery of `output.log`, `output-<jobid>.log` and `*.out`; rejection of
 zero, negative and non-numeric timings whether explicit or derived; refusal to
 derive timing from an unverified solve; explicit values winning over derived ones;
-the emitted item being valid JSON carrying the canonical attributes; and the
+the emitted item being valid JSON carrying the canonical attributes; the solver
+family stored as a single `solver_type` whichever of `--solver-type`,
+`--char solver_type=` and `SOLVER_TYPE` give it (`--solver-type` wins over
+`--char`, either over the environment, with a NOTE when `--solver-type` sets a
+`--char` aside or a `--char` sets `SOLVER_TYPE` aside); and the
 **no-derive contract for `cores_per_node`** — it is omitted when `task_placement`
 is supplied and when the core count is not an exact multiple of the node count,
 derived only for a genuinely uniform layout, and never overridden when passed
@@ -95,6 +99,8 @@ really executes rather than only passing `bash -n`. It asserts:
     recorder stub, and once on the **production recorder's emitted JSON** (via a
     wrapper that runs the real script in `--dry-run`), because the recorder derives
     fields of its own and arguments alone do not prove what would be stored;
+  * `SOLVER_TYPE` and `MDOFS` given at submission reach that stored item as
+    `solver_type` and `mdofs`;
   * **NVMe stage-out failure at the integration boundary** — with the shared
     filesystem made read-only mid-solve, the job fails, the reclaim step does not
     run, the retained scratch path is printed, the log survives on scratch, and no
