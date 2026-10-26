@@ -261,9 +261,21 @@ The runs used the GCC + Intel MPI build (Option 2, Intel MPI 2021.18) with 192 M
 Key takeaways:
 
 - Only the output changes: the steady step is the same with all three, within 1%.
-- About three quarters of the time PnetCDF saves comes from not compressing, and writing in parallel does the rest: PnetCDF is 1.03× the uncompressed serial run on 1 node and 1.31× on 8.
+- About three quarters of the time PnetCDF saves comes from not compressing (78% of it on 1 node, 77% on 8), and writing in parallel does the rest: PnetCDF is 1.03× the uncompressed serial run on 1 node and 1.31× on 8.
 - The time outside the steady step (the output, the input reads and the first step) is 70% of the compressed run on 8 nodes, 45% of the uncompressed serial run and 27% of the PnetCDF run; on 1 node, 18%, 8.5% and 4.8%.
 - Whole-run parallel efficiency on 8 nodes against 1 goes from 42% (compressed) to 69% (uncompressed serial) and 88% (PnetCDF).
+
+Every configuration of [Whole run with PnetCDF output](#conus-25km--whole-run-with-pnetcdf-output-6-hour-forecast) also has serial, compressed runs, under [Compute scaling](#conus-25km--compute-scaling-on-six-instance-types-6-hour-forecast). PnetCDF against serial, compressed output on the same configuration (whole run, the serial runs = 1.00×, higher is better):
+
+| Nodes | hpc8a.96xlarge | c8i.96xlarge | hpc7a.96xlarge | hpc6a.48xlarge |
+|------:|---------------:|-------------:|---------------:|---------------:|
+| 1 | 1.15× | 1.21× | 1.14× | 1.06× |
+| 2 | 1.30× | 1.46× | 1.32× | 1.13× |
+| 4 | 1.61× | — | 1.62× | 1.28× |
+| 8 | 2.38× | — | 2.35× | 1.56× |
+| 16 | — | — | — | 2.21× |
+
+Each value compares the medians of the two sections' runs: 2 with PnetCDF, and 3 with serial output (4 on 16 `hpc6a.48xlarge` nodes). The PnetCDF runs were all made in eu-north-1; on `hpc7a.96xlarge` and `hpc6a.48xlarge` the serial runs include runs made in us-east-2, and with the eu-north-1 serial runs alone every value is within 0.02 of the table's. The gain grows with the node count, because the time steps get faster with more nodes while the serial output does not, so the output takes a growing share of the serial run. It is smallest on `hpc6a.48xlarge`, whose time steps take longest, so that the output is a smaller share of its runs. How much of the gain comes from not compressing was measured on `hpc8a.96xlarge` only, in the first table of this section.
 
 ### Arm — Graviton3E (hpc7g) vs Graviton4 (m8g)
 
