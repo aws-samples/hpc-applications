@@ -22,7 +22,7 @@
 #   instance_type, operating_system, num_cores, num_instances, libraries
 # Strongly recommended (this is what makes the row USEFUL for training):
 #   benchmark_case            the dataset/case name (e.g. V24sp-1)
-#   time_to_solution_seconds  total solver wall-clock time (the model's target)
+#   time_to_solution_seconds  solve time: MAPDL's Elapsed Time (sec), the model's target
 #   analysis_type             static | modal | transient | thermal | ...
 #   solver_type               solver family: sparse-direct-* | pcg-iterative | jcg-iterative
 #   mdofs                     model size in millions of degrees of freedom
@@ -121,7 +121,7 @@ OPTIONS
 
   Result + dataset description (recommended):
     --case NAME               Benchmark case / dataset id (e.g. V24sp-1).
-    --time-to-solution SEC    Total solver wall-clock seconds (the model target).
+    --time-to-solution SEC    Solve time: MAPDL's Elapsed Time (sec), the model target.
     --analysis-type T         static | modal | transient | thermal | harmonic.
     --solver-type T           Solver family: sparse-direct-symmetric,
                               sparse-direct-nonsymmetric, sparse-direct-complex,

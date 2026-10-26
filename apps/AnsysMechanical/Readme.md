@@ -869,9 +869,14 @@ concurrent solves and to re-run a surprising result alone.
 
 ## Which time to compare
 
-The sbatch records two times: the wall clock around the `mapdl` command
-(`time_to_solution_seconds`) and MAPDL's own `Elapsed Time (sec)`
-(`mapdl_elapsed_seconds`). Compare runs on MAPDL's. The difference is the time
+For a run it accepts, the sbatch takes MAPDL's own `Elapsed Time (sec)` as the
+run's time: it prints it first on its `Time to solution:` line and records it as
+`time_to_solution_seconds` (and as `mapdl_elapsed_seconds`), with the wall clock
+around the `mapdl` command beside it (`wall_clock_seconds`). For a run it does
+not accept, the line reads `Time to solution: none`, even when MAPDL printed a
+positive Elapsed Time, as a disk-full abort does (see
+[Exit codes](#exit-codes-do-not-use-them-to-decide-success)). Compare runs on
+MAPDL's time. The difference is the time
 spent outside MAPDL's own clock, and it is not constant: for V26direct-5 on
 2 x hpc6id.32xlarge the wall clock was 9% longer than MAPDL's time when the solve
 ran alone, and 8% to 137% longer on the shared file system above (2.4x MAPDL's

@@ -283,6 +283,54 @@ grep -q 'cores-per-node 64'             "${RECLOG}" && ok "cores-per-node passed
 grep -q 'memory_mode=InCore'            "${RECLOG}" && ok "memory mode read from MAPDL's Memory Option line (InCore)" \
     || bad "memory_mode" "InCore" "$(grep ARGS "${RECLOG}")"
 
+echo "== the run's time is MAPDL's Elapsed Time, with the wall clock beside it =="
+
+# The job log's "Time to solution:" line(s) of the last run.
+tts() { grep '^Time to solution:' <<<"${OUT}"; }
+# none_line <final_rc>: the log's only Time to solution line says the run has none.
+none_line() {
+    [ "$(tts | grep -c .)" = "1" ] && tts | grep -qE \
+        "^Time to solution: none \(run not accepted, final_rc=$1\); wall clock around mapdl: [0-9]+ s\$"
+}
+
+run_case "${FIX}/normal-success.log" 0
+grep -qx 'TIME_TO_SOLUTION=600.000' "${RECLOG}" \
+    && ok "the recorder gets MAPDL's Elapsed Time (600.000) as the time to solution" \
+    || bad "time to solution is MAPDL's" "TIME_TO_SOLUTION=600.000" "$(grep TIME_TO_SOLUTION "${RECLOG}")"
+grep -qE 'wall_clock_seconds=[0-9]+( |$)' "${RECLOG}" \
+    && ok "the wall clock around mapdl goes beside it as wall_clock_seconds" \
+    || bad "wall_clock_seconds metric" "wall_clock_seconds=<seconds>" "$(grep ARGS "${RECLOG}")"
+if [ "$(tts | grep -c .)" = "1" ] && tts | grep -qE \
+       '^Time to solution: 600\.000 s \(MAPDL Elapsed Time\); wall clock around mapdl: [0-9]+ s$'; then
+    ok "an accepted run's log gives MAPDL's time as its time to solution, the wall clock beside it"
+else
+    bad "Time to solution line, accepted run" "one line: Time to solution: 600.000 s (MAPDL Elapsed Time); ..." \
+        "$(tts)"
+fi
+
+run_case "${FIX}/benign-iteration-stop.log" 1
+grep -qx 'TIME_TO_SOLUTION=1200.000' "${RECLOG}" \
+    && ok "fixed-iteration deck: the time to solution is its Elapsed Time (1200.000)" \
+    || bad "benign stop time to solution" "TIME_TO_SOLUTION=1200.000" "$(grep TIME_TO_SOLUTION "${RECLOG}")"
+
+# A run the launcher does not accept gets no time, even when MAPDL printed a
+# positive Elapsed Time: a disk-full abort does (with RUN COMPLETED and rc=255), and
+# so does clean output that exits with an unrelated rc=42.
+run_case "${FIX}/disk-full-abort.log" 255
+none_line 255 && ok "disk-full abort (positive Elapsed Time, rc=255): no time to solution in its log" \
+    || bad "Time to solution line, disk-full abort" \
+           "one line: Time to solution: none (run not accepted, final_rc=255); ..." "$(tts)"
+
+run_case "${FIX}/normal-success.log" 42
+none_line 42 && ok "clean output with rc=42: no time to solution in its log" \
+    || bad "Time to solution line, rc=42" "one line: Time to solution: none (run not accepted, final_rc=42); ..." \
+           "$(tts)"
+
+run_case "${FIX}/truncated-no-completion.log" 0
+none_line 3 && ok "truncated output with rc=0 (final status 3): no time to solution in its log" \
+    || bad "Time to solution line, truncated run" \
+           "one line: Time to solution: none (run not accepted, final_rc=3); ..." "$(tts)"
+
 echo "== NVMe mode: a failed stage-out must retain scratch and fail the job =="
 
 # Runs the real launcher in nvme mode against a fake instance-store root, and makes
@@ -353,6 +401,9 @@ else
     fi
     [ -s "${RECLOG}" ] && bad "failed stage-out records nothing" "recorder not called" "recorder called" \
         || ok "failed stage-out records NO benchmark row"
+    none_line 4 && ok "failed stage-out (final status 4): no time to solution in its log" \
+        || bad "Time to solution line, failed stage-out" \
+               "one line: Time to solution: none (run not accepted, final_rc=4); ..." "$(tts)"
     rm -rf "${BASEDIR}"
 
     # Control: same path, working shared filesystem -> success and cleanup runs.
@@ -365,6 +416,9 @@ else
     grep -q 'TIME_TO_SOLUTION=' "${RECLOG}" \
         && ok "control: healthy nvme run records a row" \
         || bad "control records" "recorder called" "not called"
+    tts | grep -qE '^Time to solution: 600\.000 s \(MAPDL Elapsed Time\); ' \
+        && ok "control: the healthy nvme run's log gives MAPDL's time as its time to solution" \
+        || bad "control Time to solution line" "Time to solution: 600.000 s (MAPDL Elapsed Time); ..." "$(tts)"
     rm -rf "${BASEDIR}"
 fi
 
@@ -410,11 +464,14 @@ run_case_het() {   # <recorder path> [SOLVER_TYPE given at submission] [MDOFS gi
     local base; base="$(mktemp -d)"
     local vdir="${base}/ansys_inc/v261/ansys/bin"
     mkdir -p "${vdir}" "${base}/inputs"
+    # The solve takes a second, so the wall clock around it (1 s or more) cannot be
+    # mistaken for the fixture's MAPDL Elapsed Time (600.000) in the stored item.
     cat > "${vdir}/mapdl" <<EOF
 #!/bin/bash
 outfile=""; prev=""
 for a in "\$@"; do [ "\$prev" = "-o" ] && outfile="\$a"; prev="\$a"; done
 [ -n "\${outfile}" ] && cp "${FIX}/normal-success.log" "\${outfile}"
+sleep 1
 exit 0
 EOF
     chmod +x "${vdir}/mapdl"
@@ -483,6 +540,14 @@ else
     grep -q '"num_cores": {"N": "85"}' "${RECJSON}" \
         && ok "stored item keeps the true total core count (85)" \
         || bad "num_cores in stored item" "85" "$(grep -o '"num_cores".*' "${RECJSON}")"
+    grep -q '"time_to_solution_seconds": {"N": "600.000"}' "${RECJSON}" \
+        && ok "stored item's time_to_solution_seconds is MAPDL's Elapsed Time (600.000)" \
+        || bad "time_to_solution_seconds in stored item" "600.000" \
+               "$(grep -o '"time_to_solution_seconds".*' "${RECJSON}")"
+    grep -qE '"wall_clock_seconds": \{"N": "[1-9][0-9]*"\}' "${RECJSON}" \
+        && ok "stored item carries the wall clock around mapdl as wall_clock_seconds" \
+        || bad "wall_clock_seconds in stored item" "a whole number of seconds >= 1" \
+               "$(grep -o '"wall_clock_seconds".*' "${RECJSON}")"
     if command -v python3 >/dev/null 2>&1; then
         python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "${RECJSON}" 2>/dev/null \
             && ok "the stored item is valid JSON" \

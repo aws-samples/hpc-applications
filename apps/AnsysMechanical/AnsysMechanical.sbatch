@@ -424,6 +424,21 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# The run's time is MAPDL's own Elapsed Time (sec): the time Ansys publishes, and
+# the one to compare runs on. The wall clock around the mapdl command also counts
+# the time outside MAPDL's clock, which is not constant (Readme.md, "Which time to
+# compare"), so it is kept beside it, not instead of it. Only a run accepted
+# overall gets a time - verified output, a final status of zero and a durable
+# stage-out, the gate the recorder uses below - because a rejected solve can still
+# print a positive Elapsed Time (a disk-full abort does).
+# ---------------------------------------------------------------------------
+if [ "${final_rc}" -eq 0 ] && [ "${solve_ok}" -eq 1 ]; then
+    echo "Time to solution: ${mapdl_elapsed} s (MAPDL Elapsed Time); wall clock around mapdl: ${_rec_secs} s"
+else
+    echo "Time to solution: none (run not accepted, final_rc=${final_rc}); wall clock around mapdl: ${_rec_secs} s"
+fi
+
+# ---------------------------------------------------------------------------
 # Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal).
 # Recording is gated on the OUTPUT-based success test above, not the exit code
 # (which discards valid fixed-iteration benchmark runs). See
@@ -443,9 +458,12 @@ done
 if [ "${final_rc}" -eq 0 ] && [ "${solve_ok}" -eq 1 ] \
    && [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
     _rec_args=( --char memory_mode="${memory_mode}" --char scratch_mode="${scratch_mode}" )
-    # Only pass the MAPDL-reported solver time when it is actually valid; the
-    # verdict above already guarantees it is positive when solve_ok=1.
+    # The recorded time_to_solution_seconds is MAPDL's own Elapsed Time (sec); the
+    # verdict above guarantees it is positive when solve_ok=1. It is also stored as
+    # mapdl_elapsed_seconds, and the wall clock around the mapdl command beside it
+    # as wall_clock_seconds.
     [ -n "${mapdl_elapsed}" ] && _rec_args+=( --metric mapdl_elapsed_seconds="${mapdl_elapsed}" )
+    _rec_args+=( --metric wall_clock_seconds="${_rec_secs}" )
     # cores_per_node is only meaningful when EVERY node got the same count.
     # Recording one node's share as if it were uniform would misdescribe a
     # heterogeneous allocation, so record the real layout instead.
@@ -456,7 +474,7 @@ if [ "${final_rc}" -eq 0 ] && [ "${solve_ok}" -eq 1 ] \
         echo "NOTE: heterogeneous task placement; recording task_placement instead of cores_per_node." >&2
     fi
     MECHANICAL_VERSION="${mechanicalversion}" BENCHMARK_CASE="$(basename "${input_file%.*}")" \
-    TIME_TO_SOLUTION="${_rec_secs}" RUN_DIR="${shared_dir}" "${_recorder}" "${_rec_args[@]}" \
+    TIME_TO_SOLUTION="${mapdl_elapsed}" RUN_DIR="${shared_dir}" "${_recorder}" "${_rec_args[@]}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 elif [ "${final_rc}" -ne 0 ]; then
     echo "NOTE: run not accepted (solver rc=${_rec_rc}, final rc=${final_rc}); skipping benchmark recording." >&2

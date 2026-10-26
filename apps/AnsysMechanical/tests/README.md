@@ -89,6 +89,13 @@ really executes rather than only passing `bash -n`. It asserts:
     truncated `rc=0` run exits non-zero; a disk-full abort keeps its 255);
   * the memory mode handed to the recorder is the one on MAPDL's `Memory Option:`
     line;
+  * the run's time is MAPDL's `Elapsed Time (sec)`: the recorder gets it as the
+    time to solution, with the wall clock around `mapdl` beside it as
+    `wall_clock_seconds` (checked in the stored item too), and an accepted run's
+    job log prints both on its `Time to solution:` line; for a run the launcher
+    does not accept, the line reads `Time to solution: none`, including a
+    disk-full abort and clean output with `rc=42`, which both print a positive
+    Elapsed Time, and a failed NVMe stage-out;
   * **recorder eligibility** — a run that exits non-zero writes no benchmark row,
     including the subtle `clean output + rc=42` and `benign block + rc=42` cases;
   * `-machines` is built from `SLURM_TASKS_PER_NODE` and totals `SLURM_NPROCS`;
