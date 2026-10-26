@@ -10,15 +10,20 @@ For Fluent 2019 (v195) and older please refer to this [blog post](https://aws.am
 
 # Launch scripts
 
-Pick a script depending on whether you want to run a benchmark or a journal file, and whether you want to use IntelMPI or OpenMPI. All scripts target hpc8a by default; edit the `#SBATCH` header to run on other instances.
+Pick a script depending on whether you want to run a benchmark or a journal file, and whether you want to use IntelMPI or OpenMPI. The x86 scripts target hpc8a by default, the GPU and Arm scripts their own instance types; edit the `#SBATCH` header to run on other instances.
 
 | Script | Purpose | MPI |
 |---|---|---|
 | [`x86/Fluent-Benchmark.IMPI.sbatch`](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/x86/Fluent-Benchmark.IMPI.sbatch) | Ansys benchmark suite runner (e.g. `f1_racecar_140m`) | IntelMPI |
+| [`x86/Fluent-Benchmark.2026R1.sbatch`](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/x86/Fluent-Benchmark.2026R1.sbatch) | Ansys benchmark suite runner with the 2026 R1 harness (MIUPS), CPU solver; see [Fluent-Benchmark-2026R1.md](Fluent-Benchmark-2026R1.md) | IntelMPI |
 | [`x86/Fluent.IMPI.sbatch`](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/x86/Fluent.IMPI.sbatch) | Run your own journal file | IntelMPI |
 | [`x86/Fluent-Benchmark.OMPI.sbatch`](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/x86/Fluent-Benchmark.OMPI.sbatch) | Ansys benchmark suite runner | OpenMPI |
 | [`x86/Fluent.OMPI.sbatch`](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/x86/Fluent.OMPI.sbatch) | Run your own journal file | OpenMPI |
-| [`gpu/Fluent-GPU.sbatch`](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/gpu/Fluent-GPU.sbatch) | GPU-based simulation | — |
+| [`gpu/Fluent-GPU.sbatch`](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/gpu/Fluent-GPU.sbatch) | GPU-based simulation | IntelMPI |
+| [`gpu/Fluent-GPU.OMPI.sbatch`](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/gpu/Fluent-GPU.OMPI.sbatch) | GPU-based simulation | OpenMPI |
+| [`gpu/Fluent-Benchmark-GPU.sbatch`](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/gpu/Fluent-Benchmark-GPU.sbatch) | GPU solver benchmark with the 2026 R1 harness | IntelMPI |
+| [`Arm/Fluent-benchmark.sbatch`](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/Arm/Fluent-benchmark.sbatch) | Ansys benchmark suite runner on Graviton | OpenMPI |
+| [`Arm/Fluent.sbatch`](https://github.com/aws-samples/hpc-applications/blob/main/apps/Fluent/Arm/Fluent.sbatch) | Run your own journal file on Graviton | OpenMPI |
 
 IntelMPI and OpenMPI deliver similar performance on AWS EFA for Fluent (within ~1% on the `f1_racecar_140m` benchmark on hpc8a at 2 and 10 nodes). IntelMPI is the most mature path and the default recommendation. OpenMPI is a solid alternative — useful when you prefer a non-proprietary stack or need a specific OpenMPI feature.
 
@@ -57,9 +62,20 @@ For multi-node runs Fluent must live on a shared filesystem. We recommend [Amazo
 ### Env vars the scripts set
 
 - **`I_MPI_OFI_LIBRARY_INTERNAL=0`** (IntelMPI only) — export *before* `module load intelmpi` so that `mpivars.sh` picks up the system `libfabric-aws` instead of the one bundled with IntelMPI.
-- **`I_MPI_MULTIRAIL=1`** (IntelMPI only, multi-NIC EFA instances only) — needed on hpc7a / hpc8a to use both EFA NICs. Omit on single-NIC instances.
-- **`FI_EFA_SHM_AV_SIZE=${SLURM_NTASKS_PER_NODE}`** — required whenever ranks-per-node exceeds 128 (e.g. 192 ranks/node on hpc7a / hpc8a).
+- **`I_MPI_MULTIRAIL=1`** (IntelMPI only, multi-NIC EFA instances only) — turns on IntelMPI's multi-NIC support, which shares the two EFA NICs of hpc7a / hpc8a out among the ranks. Omit on single-NIC instances. IntelMPI 2021.18 shared them out without it too: in runs of the 2026 R1 benchmark script, which does not set it, half of each node's ranks used each NIC (see [Checking the MPI setup](#checking-the-mpi-setup)).
+- **`FI_EFA_SHM_AV_SIZE=${SLURM_NTASKS_PER_NODE}`** — the maximum number of entries in the EFA provider's shared-memory address vector, set for more than 128 ranks per node (e.g. 192 ranks/node on hpc7a / hpc8a). The 2026 R1 benchmark script does not set it, and ran 192 ranks per node with IntelMPI 2021.18 and libfabric 2.4 without it.
 - **`SCHEDULER_TIGHT_COUPLING=1`** — tells Fluent v222..v242 not to inject `--rsh=ssh` under Slurm; v251+ already behaves this way. Prevents a `hydra_bstrap_proxy` crash on AL2023 when Fluent's wrapper fights IntelMPI's Slurm integration.
+
+The 2026 R1 benchmark script, `x86/Fluent-Benchmark.2026R1.sbatch`, sets `I_MPI_OFI_LIBRARY_INTERNAL=0`, `I_MPI_FABRICS=shm:ofi`, `I_MPI_OFI_PROVIDER=efa` and `I_MPI_DEBUG=5`, and none of the other three.
+
+### Checking the MPI setup
+
+Add `-mpiopt="-genv I_MPI_DEBUG 5"` to the Fluent command line, as `x86/Fluent-Benchmark.2026R1.sbatch` does. The run's Fluent transcript (the 2026 R1 harness writes it as `fluent-<date>-<time>-<pid>.trn` in the case's working directory) then shows:
+
+- the `mpirun` line Fluent builds, with the settings `-peth.efa` adds (`I_MPI_OFI_PROVIDER efa`, `I_MPI_FABRICS shm:ofi`, `FI_EFA_RECVWIN_SIZE 65536`, `FI_MR_CACHE_MONITOR memhooks`) and the placement it leaves to IntelMPI (`FLUENT_AFFINITY 0`, `I_MPI_PIN enable`);
+- `libfabric provider: efa`;
+- a NIC pinning table: on `hpc8a.96xlarge` and `hpc7a.96xlarge`, half of each node's ranks on each of the two EFA NICs;
+- a CPU pinning table with the cores of each rank: with IntelMPI's own placement, at 96 ranks per node on `hpc8a.96xlarge`, two consecutive cores per rank, so four ranks on each 8-core CCD.
 
 ### OpenMPI-specific notes
 
