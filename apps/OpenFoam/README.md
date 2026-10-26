@@ -144,6 +144,7 @@ All benchmark scripts:
 - Create a unique run directory under `/fsx/openfoam/Run/`
 - Drop page caches and enable transparent huge pages before the run
 - Use EFA for inter-node communication (plus MULTIRAIL for Intel MPI)
+- Run `decomposePar` in the job, or copy a decomposition an earlier run saved (`DECOMP_CACHE`, see [Reusing a decomposition](#reusing-a-decomposition))
 - Report timings for `decomposePar`, `renumberMesh`, `potentialFoam`, and `simpleFoam` separately
 
 ### Overrides
@@ -154,7 +155,23 @@ All benchmark scripts:
 | `MESH_SIZE` | `65` (Arm only) | Mesh resolution: `65`, `110`, or `236` million cells |
 | `CASE_SRC` | `/fsx/openfoam/occ-drivaer/occDrivAerStaticMesh[-${MESH_SIZE}M]` | Case and mesh source directory |
 | `BASE_DIR` | `/fsx/openfoam` | Root for run output directories |
+| `DECOMP_CACHE` | unset | Directory (absolute path) to save each case and layout's decomposition in and reuse it from: see [Reusing a decomposition](#reusing-a-decomposition) |
 | `TARGET` | `auto` (Arm build only) | Force compile target: `graviton3` or `graviton4` |
+
+### Reusing a decomposition
+
+`decomposePar` is serial, takes longer the more subdomains it writes (see [Key Metrics](#key-metrics)), and runs while the job holds all its nodes. To run it once per layout, set `DECOMP_CACHE` to a directory on the shared file system:
+
+```bash
+sbatch --nodes=8 --export=ALL,DECOMP_CACHE=/fsx/openfoam/decomposed x86/openfoam-benchmark-openmpi.sbatch
+```
+
+- A run that finds no saved decomposition of its case and layout runs `decomposePar` as before, then saves its `processor*` directories to `$DECOMP_CACHE/<case directory name>/<nodes>x<ranks per node>/`, before `renumberMesh` changes them. The decomposition time that run reports is `decomposePar`'s alone; its `Total` also includes the copy into `DECOMP_CACHE`, which no phase reports.
+- A later run of the same case and layout copies them into its run directory instead of running `decomposePar`, with any of the benchmark scripts: the decomposition does not depend on the MPI, and the October runs under [Performance](#performance) used the same decompositions on x86 and Graviton instances. The decomposition time it reports is then the copy's.
+- A saved decomposition is used only if it was made from the same `decomposeParDict` and from case files of the same names, sizes and modification times: `0.orig`, `constant/polyMesh`, and `system/include` if the case has one (the OCC DrivAer fields include `system/include/caseDefinition`, and `decomposePar` writes its values into the decomposed fields). Any other, or an incomplete one, is left as it is and the run decomposes in the job; delete its directory to save a new one.
+- The report says which: `Decomposed: decomposePar in this job` (with `, saved to <directory>` when the run saved its decomposition) or `Decomposed: reused from <directory>`.
+- A saved decomposition takes as much space as the `processor*` directories of a run. The run copies them into a directory it creates, `<directory>.partial.<cluster>.<job id>.<process id>`, and renames it once the copy is complete. If the save cannot be completed, the run removes that directory and goes on. A job ended while it saves (at its time limit, for example) removes it when Slurm signals the end, as far as it gets before Slurm stops the job: delete any such directory that is left by hand.
+- Keep `DECOMP_CACHE` in a directory that only the people who run these benchmarks can write: a later run copies a saved decomposition into its case as it is, and OpenFOAM reads it, and runs any code its dictionaries hold (`#codeStream`), as it does the case's own files.
 
 ### Iterations
 
@@ -252,7 +269,7 @@ Compare runs on the `simpleFoam` time, which the benchmark scripts pass to the r
 
 From 8 nodes on, decomposing took longer than solving, and the total makes 16 nodes look slower than 4 while the solve is twice as fast. The runs shared the cluster's FSx for Lustre file system with other runs of the same study, launched in waves whose `decomposePar` phases overlapped: each 1-node run and six of the seven 2-node runs had 13 others alongside, each 4-node run 6, each 8-node run 2 or 3, and the 16-node run 1. Contention was heaviest at the low node counts, so it does not explain the growth; the seventh 2-node run, made alone, decomposed in 13% less time than the 2-node median. `decomposePar` also runs on a single core while the job holds all its nodes, so for a multi-node study it is cheaper to decompose each layout once, in a single-node job, and copy the decomposed case into each run.
 
-The October runs under [Performance](#performance) were made that way: each layout (mesh, nodes and ranks per node) was decomposed once in a single-node job, and every run copied the decomposed case into its run directory. The copy took 0.2–4.7% as long as `simpleFoam` (at most 3.2% on 236M; 4.7% on 65M on 8 `hpc8a.96xlarge` nodes), where in the May runs above `decomposePar` took 0.13 to 3.92 times as long as `simpleFoam`. The time to compare is the whole `simpleFoam` phase the scripts time, from the `mpirun` that starts it to its exit, so it includes reading the decomposed mesh: OpenFOAM's own final `ClockTime` in `log.solver` was 0.97–1.00 of it in the October runs.
+The October runs under [Performance](#performance) were made that way: each layout (mesh, nodes and ranks per node) was decomposed once in a single-node job, and every run copied the decomposed case into its run directory. The copy took 0.2–4.7% as long as `simpleFoam` (at most 3.2% on 236M; 4.7% on 65M on 8 `hpc8a.96xlarge` nodes), where in the May runs above `decomposePar` took 0.13 to 3.92 times as long as `simpleFoam`. With `DECOMP_CACHE`, the benchmark scripts do the same from the second run of each layout on (see [Reusing a decomposition](#reusing-a-decomposition)). The time to compare is the whole `simpleFoam` phase the scripts time, from the `mpirun` that starts it to its exit, so it includes reading the decomposed mesh: OpenFOAM's own final `ClockTime` in `log.solver` was 0.97–1.00 of it in the October runs.
 
 ## Files
 

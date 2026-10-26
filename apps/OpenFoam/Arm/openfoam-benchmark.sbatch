@@ -160,6 +160,15 @@ elapsed_seconds() { echo "$2 $1" | awk '{printf "%.2f", $1 - $2}'; }
 
 # ---------------------------------------------------------------------------
 # Decomposition
+# decomposePar is serial and takes longer the more subdomains it writes, while
+# the job holds all its nodes. With DECOMP_CACHE set to a directory on the
+# shared file system, a run copies the decomposition that an earlier run of the
+# same case and layout saved there instead of running decomposePar, and a run
+# that finds none saves its own there, before renumberMesh changes it. A saved
+# decomposition is used only if it was made from this decomposeParDict and from
+# case files (0.orig, constant/polyMesh, and system/include if the case has
+# one, whose values decomposePar writes into the decomposed fields) of the same
+# names, sizes and modification times; any other is left as it is.
 # ---------------------------------------------------------------------------
 echo "=== Decomposition ==="
 T_DECOMP_START=$(get_timestamp)
@@ -171,9 +180,67 @@ method simple;
 simpleCoeffs { n (${SLURM_JOB_NUM_NODES} 1 $(( SLURM_NTASKS_PER_NODE ))); }
 EOF
 
-decomposePar 2>&1 | tee log.decomposePar
+copy_processor_dirs() {  # <from> <to>: the processor* directories, 16 copies at a time
+    find "$1" -mindepth 1 -maxdepth 1 -type d -name 'processor*' -print0 | xargs -0 -r -n 16 -P 16 cp -a -t "$2"
+}
+count_processor_dirs() {
+    find "$1" -mindepth 1 -maxdepth 1 -type d -name 'processor*' | wc -l
+}
+decomposition_inputs() {  # what a decomposition is made from (see above)
+    local inputs=(0.orig constant/polyMesh)
+    if [ -d "${CASE_SRC}/system/include" ]; then inputs+=(system/include); fi
+    cat system/decomposeParDict
+    (cd "${CASE_SRC}" && find -L "${inputs[@]}" -type f -printf '%p %s %T@\n' | LC_ALL=C sort)
+}
+DECOMP_CACHE="${DECOMP_CACHE:-}"
+DECOMP_SAVED=""
+DECOMPOSED="decomposePar in this job"
+case "${DECOMP_CACHE}" in
+    "") ;;
+    /*) DECOMP_SAVED="${DECOMP_CACHE}/$(basename "${CASE_SRC}")/${SLURM_JOB_NUM_NODES}x${SLURM_NTASKS_PER_NODE}"
+        if ! DECOMP_INPUTS="$(decomposition_inputs)"; then
+            echo "NOTE: cannot read the case files the decomposition is made from; not using DECOMP_CACHE." >&2
+            DECOMP_SAVED=""
+        fi ;;
+    *)  echo "NOTE: DECOMP_CACHE must be an absolute path (got '${DECOMP_CACHE}'); not using it." >&2 ;;
+esac
 
-T_DECOMP_END=$(get_timestamp)
+if [ -n "${DECOMP_SAVED}" ] && [ -f "${DECOMP_SAVED}/.complete" ] \
+        && [ "$(cat "${DECOMP_SAVED}/inputs.txt" 2>/dev/null)" = "${DECOMP_INPUTS}" ] \
+        && [ "$(count_processor_dirs "${DECOMP_SAVED}")" -eq "${TOTAL_CORES}" ]; then
+    echo "Reusing the decomposition saved in ${DECOMP_SAVED}"
+    copy_processor_dirs "${DECOMP_SAVED}" .
+    DECOMPOSED="reused from ${DECOMP_SAVED}"
+    T_DECOMP_END=$(get_timestamp)
+else
+    if [ -n "${DECOMP_SAVED}" ] && [ -e "${DECOMP_SAVED}" ]; then
+        echo "NOTE: ${DECOMP_SAVED} holds no decomposition of this case and layout; decomposing in this job and leaving it as it is." >&2
+    fi
+    decomposePar 2>&1 | tee log.decomposePar
+    T_DECOMP_END=$(get_timestamp)
+    if [ -n "${DECOMP_SAVED}" ] && [ ! -e "${DECOMP_SAVED}" ]; then
+        # Saved into a directory this job creates (never one that exists), and
+        # renamed into place once complete. A job ended with SIGTERM while it
+        # saves (its time limit, for example) removes it first, as best it can.
+        DECOMP_PARTIAL="${DECOMP_SAVED}.partial.${SLURM_CLUSTER_NAME:-cluster}.${SLURM_JOB_ID}.$$"
+        DECOMP_MINE=""
+        if mkdir -p "${DECOMP_SAVED%/*}" && mkdir "${DECOMP_PARTIAL}"; then
+            DECOMP_MINE=1
+            trap 'rm -rf "${DECOMP_PARTIAL}"; exit 143' TERM
+        fi
+        if [ -n "${DECOMP_MINE}" ] && copy_processor_dirs . "${DECOMP_PARTIAL}" \
+                && printf '%s\n' "${DECOMP_INPUTS}" > "${DECOMP_PARTIAL}/inputs.txt" \
+                && date -u +%FT%TZ > "${DECOMP_PARTIAL}/.complete" \
+                && mv -T "${DECOMP_PARTIAL}" "${DECOMP_SAVED}" 2>/dev/null; then
+            DECOMPOSED="decomposePar in this job, saved to ${DECOMP_SAVED}"
+            echo "Decomposition saved to ${DECOMP_SAVED}"
+        else
+            if [ -n "${DECOMP_MINE}" ]; then rm -rf "${DECOMP_PARTIAL}"; fi
+            echo "NOTE: the decomposition was not saved to ${DECOMP_SAVED}; the run goes on." >&2
+        fi
+        trap - TERM
+    fi
+fi
 DECOMP_TIME=$(elapsed_seconds "$T_DECOMP_START" "$T_DECOMP_END")
 echo "Decomposition time: ${DECOMP_TIME}s"
 
@@ -218,6 +285,7 @@ OPENFOAM_ENV:     ${OPENFOAM_ENV}
 Working dir:      ${workdir}
 
 Decomposition:    ${DECOMP_TIME}s
+Decomposed:       ${DECOMPOSED}
 Renumber:         ${RENUMBER_TIME}s
 potentialFoam:    ${POTENTIAL_TIME}s
 simpleFoam:       ${SOLVE_TIME}s
