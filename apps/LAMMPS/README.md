@@ -7,7 +7,7 @@ The scripts are organised by CPU architecture:
 - [`x86/`](x86/) — builds and benchmarks for x86_64 (`hpc8a`, `hpc7a`)
 - [`Arm/`](Arm/) — builds and benchmarks for aarch64 (`hpc7g` / Graviton3E, `m8g` / Graviton4)
 
-LAMMPS is a single-binary code: one executable (`lmp`) covers serial, MPI, OpenMP, and hybrid MPI+OpenMP execution. The binary is selected at build time via CMake package flags, and the input deck (the `.lj`, `.rhodo`, `.eam` scripts in this repo's benchmark cache) drives all run-time behaviour.
+LAMMPS is a single-binary code: one executable (`lmp`) covers serial, MPI, OpenMP, and hybrid MPI+OpenMP execution. The binary is selected at build time via CMake package flags, and the input deck drives all run-time behaviour: the benchmarks run LAMMPS's own `bench/` decks (see [Benchmark](#benchmark)).
 
 ## x86 build
 
@@ -34,6 +34,8 @@ Override via `--export=ALL,...`:
 | `TARGET_CPU` | `hpc8a` | `hpc8a` / `hpc7a` (AVX-512 Zen 4/5) or `generic-avx2` (portable Zen 3+) |
 | `BASE_DIR` | `/fsx/lammps` | Install root |
 | `COMPILE_CORES` | `48` | Parallel compile threads |
+
+The x86 results under [Performance](#performance) were measured with a build made the same way: this script's default tag and `TARGET_CPU`, compiler, flags, packages and OpenMPI. One binary ran on both `hpc8a` and `hpc7a`.
 
 ## Arm build
 
@@ -76,7 +78,7 @@ Override via `--export=ALL,...`:
 
 ### Enabled CMake packages
 
-Both build scripts enable the same package set, sufficient to run all three benchmarks below plus most common LAMMPS workloads:
+Both build scripts enable the same package set, sufficient to run all the benchmarks below plus most common LAMMPS workloads:
 
 | Package | Enables |
 |---------|---------|
@@ -90,17 +92,26 @@ Both build scripts enable the same package set, sufficient to run all three benc
 
 ## Benchmark
 
-Three standard LAMMPS benchmarks from the upstream [`bench/`](https://github.com/lammps/lammps/tree/stable/bench) directory are supported via the `MODEL` environment variable:
+Four models from the upstream LAMMPS [`bench/`](https://github.com/lammps/lammps/tree/stable/bench) directory are supported via the `MODEL` environment variable:
 
-| `MODEL` | Workload | Force field | Default atoms (s=1) | Notes |
-|---------|----------|-------------|--------------------:|-------|
-| `lj` | Lennard-Jones melt | Pair potential only | 32,000 | Pure compute + nearest-neighbour MPI |
-| `rhodo` | Rhodopsin protein in water | CHARMM + PPPM | 32,000 | Exercises long-range electrostatics |
-| `eam` | Cu metal | EAM many-body | 32,000 | Exercises many-body potentials. **Use `SCALE>=2` at high rank counts** — at 32k atoms the EAM neighbour-list build does not parallelise well past ~64 ranks and the run can hang on collective calls |
+| `MODEL` | Deck | Workload | Force field | Atoms at `SCALE=1` |
+|---------|------|----------|-------------|-------------------:|
+| `lj` (default) | `in.lj` | Lennard-Jones melt | Pair potential only | 32,000 |
+| `rhodo_scaled` | `in.rhodo.scaled` | Rhodopsin protein in water | CHARMM + PPPM | 32,000 |
+| `eam` | `in.eam` | Cu metal | EAM many-body | 32,000 |
+| `rhodo` | `in.rhodo` | Rhodopsin protein in water | CHARMM + PPPM | 32,000 at any `SCALE` |
 
-Atom count scales as `SCALE^3` via lattice replication — `SCALE=2` gives ~256k atoms, `SCALE=4` gives ~2M atoms. Useful for weak-scaling studies.
+The atom count is 32,000 × `SCALE`³: `in.lj`, `in.eam` and `in.rhodo.scaled` replicate their box `SCALE` times along each axis, which makes `SCALE` the knob for weak-scaling studies. `in.rhodo` has no `replicate` command, so `MODEL=rhodo` runs its 32,000 atoms whatever `SCALE` is; to scale the rhodopsin model, use `MODEL=rhodo_scaled` (at `SCALE=1` it is the same 32,000 atoms). For `eam` at `SCALE=1` (32,000 atoms), the EAM neighbour-list build does not parallelise well past about 64 ranks: use `SCALE=2` or more at higher rank counts.
 
 Input decks are tiny (~1 KB each) and are auto-fetched from the LAMMPS GitHub repo on first run, then cached on FSx at `/fsx/lammps/benchmarks/<model>/`.
+
+### Run length
+
+The `bench/` decks end with `run 100`. At the sizes most runs use, a 100-step loop is short and the wall time is mostly start-up: in 56 runs of `lj` (`SCALE=1` and `4`), `rhodo` and `eam` (`SCALE=1`) on 1 to 4 nodes of `hpc8a.96xlarge`, `hpc7a.96xlarge`, `c7gn.16xlarge`, `m8g.48xlarge`, `hpc6id.32xlarge`, `r8i.96xlarge` and `i7i.48xlarge` (May and June 2026), the loop was a median 4.3% of the launcher's wall time, and at most 45%. Most of these runs overlapped 1 to 6 others of the same study on a shared FSx for Lustre file system; the 13 that ran alone gave a median of 5.0%. With `MODEL=rhodo_scaled` at `SCALE=16` (2 runs) the 100-step loop was 95% of the launcher's wall time.
+
+None of the decks reads a step-count variable, so a `-var` on the command line alone does not change their 100 steps: the benchmark scripts pass `TIMESTEPS` as `-var t`, and a run is 100 timesteps whatever `TIMESTEPS` is. To run longer, edit the `run 100` line of the cached deck under `/fsx/lammps/benchmarks/<model>/`, which the scripts copy into each run directory.
+
+The runs under [Performance](#performance) set that line to `run ${nsteps}` and passed `-var nsteps`: 15,000 timesteps for `lj` at `SCALE=8` (16,384,000 atoms), and 6,000 for `rhodo_scaled` and 30,000 for `eam`, both at `SCALE=4` (2,048,000 atoms). Their loop was 97–100% of LAMMPS's `Total wall time` in every run, on 1 to 8 nodes. A run's work grows with atoms × timesteps, so change the number of timesteps when you change `SCALE`: a larger `SCALE` at the same number runs longer (raise `sbatch --time`, or run fewer timesteps), and a smaller one may need more timesteps for the loop to dominate. To check any run, compare `Loop time` with `Total wall time` in its `log.lammps`.
 
 ### x86
 
@@ -143,14 +154,16 @@ All benchmark launchers:
 - Extract `Loop time of N on M procs for K steps with L atoms` from `log.lammps` and compute timesteps/sec and atom-steps/sec
 - Record results to DynamoDB (see below)
 
+With fewer MPI ranks per node than cores on `hpc8a.96xlarge` or `hpc7a.96xlarge` (pure MPI), the x86 launcher pins the ranks with the [flexible-cores](../../Utils/flexible-cores/) lists, which spread 24, 48, 72, 96, 120, 144 or 168 ranks evenly over the node's 24 CCDs; at any other count it falls back to `--map-by slot`, so use one of those counts. The lists are for these 192-core nodes, but the launcher applies them on any instance type with fewer ranks per node than cores, so on other types run full nodes. The results under [Performance](#performance) are for full nodes.
+
 ### Overrides
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LAMMPS_ENV` | see script | Path to environment setup script (select the build you want) |
-| `MODEL` | `lj` | `lj` / `rhodo` / `eam` |
-| `SCALE` | `1` | Lattice replication factor — atom count scales as `SCALE^3` |
-| `TIMESTEPS` | model default | Override the deck's `-var t` value (number of timesteps) |
+| `MODEL` | `lj` | `lj` / `rhodo_scaled` / `eam` / `rhodo` (see [Benchmark](#benchmark)) |
+| `SCALE` | `1` | Lattice replication factor — atom count scales as `SCALE^3` (`MODEL=rhodo` ignores it) |
+| `TIMESTEPS` | `100` | Passed to LAMMPS as `-var t`, which none of the decks reads: a run is the deck's 100 timesteps (see [Run length](#run-length)) |
 | `THREADS_PER_RANK` | `1` | OpenMP threads per MPI rank. Pure MPI (default) is fastest for these models on this hardware |
 | `BASE_DIR` | `/fsx/lammps` | Root for run output directories |
 | `EFA_VERBOSE` | `0` | Set to `1` to add `--mca mtl_base_verbose 5 --mca pml_base_verbose 5` — useful once to confirm the EFA path, very noisy |
@@ -159,27 +172,46 @@ To record each run to a centralised DynamoDB table, see [`dynamodb/`](dynamodb/)
 
 ## Performance
 
-All performance charts use the same methodology: **Lennard-Jones melt** input deck (`in.lj` from the LAMMPS `bench/` directory) with `SCALE=4` (lattice replication) producing **2,048,000 atoms**, run for **100 timesteps**, pure MPI (1 OpenMP thread per rank). Performance is expressed as **speedup over a 1-node baseline** computed from the LAMMPS-reported `Loop time` (mean of replicates).
+### x86 — hpc8a (Zen5) vs hpc7a (Zen4), 1 to 8 nodes
 
-### x86 — hpc8a (Zen5) vs hpc7a (Zen4)
+This chart shows the scaling of LAMMPS `stable_2Aug2023_update3` on three `bench/` decks, each run long enough for its loop to dominate (see [Run length](#run-length)), on 1 to 8 nodes of [hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/) and [hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) instances: `lj` at `SCALE=8` (16,384,000 atoms, 15,000 timesteps), `rhodo_scaled` at `SCALE=4` (2,048,000 atoms, 6,000 timesteps) and `eam` at `SCALE=4` (2,048,000 atoms, 30,000 timesteps).
 
-The same binary (built with `-march=x86-64-v4 -mtune=znver4`) runs on both instance families, so the comparison isolates the hardware contribution from any compiler-driven differences. Performance is normalised to a single `hpc7a.96xlarge` node — higher is better.
+Every node is fully populated with 192 MPI ranks and one OpenMP thread per rank, bound with `--bind-to core --map-by slot`, over EFA with OpenMPI 4.1.7 (`pml cm`, `mtl ofi`); one binary of the [x86 build](#x86-build) ran on both instance types. Performance is LAMMPS's own `Total wall time` (see [Key metrics](#key-metrics)), the median over each configuration's runs, relative to one `hpc7a.96xlarge` node running the same deck = 1.00× — higher is better. The percentages are each instance type's parallel efficiency against its own single node.
 
-![LAMMPS LJ hpc8a vs hpc7a](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/LAMMPS/LAMMPS-LJ-Hpc8aVsHpc7a.png?raw=true)
+![LAMMPS bench decks on hpc8a and hpc7a, 1 to 8 nodes](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/LAMMPS/LAMMPS-Hpc8aVsHpc7a-Scaling.png?raw=true)
 
-| Nodes | Cores | hpc7a | hpc8a |
-|------:|------:|------:|------:|
-| 1 | 192 | 1.00× | **1.39×** |
-| 2 | 384 | 1.49× | 1.76× |
-| 4 | 768 | 1.21× | **1.88×** |
+Relative performance (1 node `hpc7a.96xlarge` running the same deck = 1.00×), with parallel efficiency:
+
+| Deck | Instance type | 1 node | 2 nodes | 4 nodes | 8 nodes |
+|------|---------------|-------:|--------:|--------:|--------:|
+| `lj`, `SCALE=8` | hpc8a.96xlarge | 1.39× | 2.97× (107%) | 6.31× (113%) | 11.71× (105%) |
+| | hpc7a.96xlarge | 1.00× | 2.16× (108%) | 4.41× (110%) | 7.96× (100%) |
+| `rhodo_scaled`, `SCALE=4` | hpc8a.96xlarge | 1.46× | 2.65× (90%) | 4.21× (72%) | 4.68× (40%)¹ |
+| | hpc7a.96xlarge | 1.00× | 1.80× (90%) | 2.76× (69%) | 2.92× (37%)¹ |
+| `eam`, `SCALE=4` | hpc8a.96xlarge | 1.31× | 2.41× (92%) | 4.01× (76%) | 7.46× (71%) |
+| | hpc7a.96xlarge | 1.00× | 1.82× (91%) | 2.95× (74%) | 4.94× (62%) |
+
+¹ A single run, where `rhodo_scaled` runs at 40% parallel efficiency or less; every other value is the median of 3 runs.
+
+`hpc8a.96xlarge` against `hpc7a.96xlarge` at the same node count (the `hpc7a` time over the `hpc8a` time):
+
+| Deck | 1 node | 2 nodes | 4 nodes | 8 nodes |
+|------|-------:|--------:|--------:|--------:|
+| `lj`, `SCALE=8` | 1.39× | 1.38× | 1.43× | 1.47× |
+| `rhodo_scaled`, `SCALE=4` | 1.46× | 1.47× | 1.53× | 1.60×¹ |
+| `eam`, `SCALE=4` | 1.31× | 1.33× | 1.36× | 1.51× |
+
+The runs were made in October 2026 on one AWS ParallelCluster 3.16 cluster in eu-north-1, each run its own Slurm job on exclusive nodes, after the page cache was dropped and THP set to `always`. The runs of each configuration agree within 5%. Up to 4 other benchmark jobs shared the cluster's FSx for Lustre file system at a run's start or end; these decks write no trajectory or restart files.
 
 Key takeaways:
 
-- A single hpc8a node delivers **1.39×** the performance of a single hpc7a node on the LJ benchmark
-- hpc8a scales smoothly: **1.39× → 1.76× → 1.88×** from 1N → 2N → 4N
-- LJ at 2M atoms saturates around 4N on both families — communication overhead grows quickly past 768 ranks for this workload. The Rhodopsin and EAM benchmarks (with PPPM and many-body potentials respectively) sustain scaling further
+- **`lj` scales near-linearly to 8 nodes:** 100–113% parallel efficiency on 2 to 8 nodes of either type, above 100% on 2 and 4 nodes, where the run time fell more than in proportion to the node count. Its EC2 time per run (nodes × time) on 2 to 8 nodes is 0.88–1.00× that of one node.
+- **`eam` and `rhodo_scaled`, with an eighth of `lj`'s atoms (2,048,000 each), scale less.** `eam` keeps 91–92% on 2 nodes, 74–76% on 4 and 62–71% on 8. `rhodo_scaled` keeps 90% on 2 nodes and 69–72% on 4, but 8 nodes (a single run on each type¹) run it only 1.06–1.11× as fast as 4: at 37–40% efficiency, a run takes 2.5–2.7× the EC2 time of a one-node run.
+- **hpc8a against hpc7a:** one `hpc8a.96xlarge` node runs these decks 1.31–1.46× as fast as one `hpc7a.96xlarge` node, and 8 `hpc8a` nodes run them 1.47–1.60× as fast as 8 `hpc7a` nodes (the 1.60× is `rhodo_scaled`'s, from single runs¹).
 
 ### Arm — Graviton3E (hpc7g) vs Graviton4 (m8g)
+
+These runs measured the decks' own 100-step loop: the Lennard-Jones melt deck (`in.lj`) at `SCALE=4` (2,048,000 atoms) for 100 timesteps, pure MPI (1 OpenMP thread per rank), compared on the LAMMPS-reported `Loop time` (the mean of 3 runs per point), which leaves the start-up out. To run the same, add `SCALE=4` to `--export`.
 
 Both Arm builds use OpenMPI 5.0.9 (required for Graviton4 at 192 rpn) and CPU-tuned flags (`-mcpu=neoverse-v1` on hpc7g, `-mcpu=neoverse-v2` on m8g). hpc7g runs 64 ranks/node; m8g runs 192 ranks/node. Performance is normalised to a single `hpc7g.16xlarge` node — higher is better.
 
@@ -198,12 +230,13 @@ Key takeaways:
 
 ## Key metrics
 
-- **Loop time** — LAMMPS' internal wall-clock measurement inside the time-integration loop, excluding setup and final I/O. Reported as `Loop time of <X> on <Y> procs for <Z> steps with <W> atoms` near the end of the run. Primary scaling metric.
+- **Loop time** — LAMMPS' internal wall-clock measurement inside the time-integration loop, excluding setup and final I/O. Reported as `Loop time of <X> on <Y> procs for <Z> steps with <W> atoms` near the end of the run.
+- **Total wall time** — LAMMPS's own total, the last line of `log.lammps` (`Total wall time: H:MM:SS`): setup, the loop and the final output, without the MPI start-up. The x86 results under [Performance](#performance) compare it.
 - **Timesteps/sec** — derived as `timesteps / loop_time` — useful for comparing across models with different timestep budgets.
 - **Atom-steps/sec** — derived as `atoms * timesteps / loop_time` — the workload-normalised metric, useful when comparing different atom counts (e.g. `SCALE` sweeps).
 - **Wall time** — total mpirun wall time including MPI startup and final output, measured by the launcher.
 
-With the default 100 timesteps the loop is short and the wall time is mostly start-up. In 56 runs of `lj` (`SCALE=1` and `4`), `rhodo` and `eam` (`SCALE=1`) on 1 to 4 nodes of `hpc8a.96xlarge`, `hpc7a.96xlarge`, `c7gn.16xlarge`, `m8g.48xlarge`, `hpc6id.32xlarge`, `r8i.96xlarge` and `i7i.48xlarge` (May and June 2026), the loop was a median 4.3% of the wall time, and at most 45%. Most of these runs overlapped 1 to 6 others of the same study on a shared FSx for Lustre file system; the 13 that ran alone gave a median of 5.0%. With `MODEL=rhodo_scaled` at `SCALE=16` (2 runs) the 100-step loop was 95% of the wall time. Compare runs on Loop time, which leaves the start-up out; if you compare wall time, raise `TIMESTEPS` (or `SCALE`) until the loop dominates it.
+At a run length where the loop dominates (see [Run length](#run-length)), `Loop time` and `Total wall time` give the same comparison: on either one, the x86 results under Performance agree within 3%. The launcher's `Wall time` also holds the MPI start-up, so compare it only once the loop dominates it too.
 
 ## Files
 

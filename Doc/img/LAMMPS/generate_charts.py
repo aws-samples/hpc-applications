@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """
-Generate the LAMMPS performance charts:
-
-1. x86 chart: hpc8a (AMD EPYC Zen5) vs hpc7a (AMD EPYC Zen4)
-2. Arm chart: hpc7g (Graviton3E / Neoverse V1) vs m8g (Graviton4 / Neoverse V2)
+Generate the LAMMPS Arm chart: Graviton3E (Neoverse V1) against Graviton4
+(Neoverse V2). The x86 chart (hpc8a vs hpc7a) is written by
+generate_scaling_chart.py.
 
 Benchmark: Lennard-Jones melt (in.lj from LAMMPS bench/), SCALE=4
 (2,048,000 atoms, 100 timesteps).
 
-Speedup is normalised to a single-node baseline of the same architecture
-(1N hpc7a for x86, 1N hpc7g for Arm), matching the OpenRadioss / WRF
-convention used elsewhere in this repo.
+Speedup is normalised to a single Graviton3E node, matching the
+OpenRadioss / WRF convention used elsewhere in this repo.
 
 Usage:
     python3 generate_charts.py
@@ -23,25 +21,6 @@ import numpy as np
 # Measured data — LAMMPS LJ s=4, Loop time (s), means of N replicas.
 # Pulled from DynamoDB table LAMMPS_Benchmarks (us-east-1).
 # ---------------------------------------------------------------------------
-
-# x86 ---------------------------------------------------------------------
-nodes_x86 = np.array([1, 2, 4])
-
-# hpc8a (Zen5, OpenMPI 4): 3 replicas at every node count
-t_hpc8a_1n = [0.391572, 0.395581, 0.402321]
-t_hpc8a_2n = [0.312648, 0.313637, 0.31551]
-t_hpc8a_4n = [0.290457, 0.292853, 0.298338]
-t_hpc8a = np.array([np.mean(t_hpc8a_1n),
-                    np.mean(t_hpc8a_2n),
-                    np.mean(t_hpc8a_4n)])
-
-# hpc7a (Zen4, OpenMPI 4): 3 replicas at 1N, 1 replica at 2N and 4N
-t_hpc7a_1n = [0.534396, 0.546186, 0.574357]
-t_hpc7a_2n = [0.370285]
-t_hpc7a_4n = [0.457722]
-t_hpc7a = np.array([np.mean(t_hpc7a_1n),
-                    np.mean(t_hpc7a_2n),
-                    np.mean(t_hpc7a_4n)])
 
 # Arm ---------------------------------------------------------------------
 nodes_arm = np.array([1, 2, 4])
@@ -65,11 +44,8 @@ t_m8g = np.array([np.mean(t_m8g_1n),
 # ---------------------------------------------------------------------------
 # Speedups
 # ---------------------------------------------------------------------------
-baseline_x86 = t_hpc7a[0]   # 1N hpc7a
 baseline_arm = t_hpc7g[0]   # 1N hpc7g
 
-su_hpc8a = baseline_x86 / t_hpc8a
-su_hpc7a = baseline_x86 / t_hpc7a
 su_hpc7g = baseline_arm / t_hpc7g
 su_m8g   = baseline_arm / t_m8g
 
@@ -77,48 +53,11 @@ su_m8g   = baseline_arm / t_m8g
 # Styling — match WRF / OpenRadioss convention
 # ---------------------------------------------------------------------------
 BAR_W = 0.35
-HPC7A_COLOR = "#4E79A7"
-HPC8A_COLOR = "#F28E2B"
 HPC7G_COLOR = "#4E79A7"
 M8G_COLOR   = "#F28E2B"
 
 # ---------------------------------------------------------------------------
-# Chart 1 — x86 hpc8a vs hpc7a
-# ---------------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(9, 6))
-x_pos = np.arange(len(nodes_x86))
-
-ax.bar(x_pos - BAR_W/2, su_hpc7a, BAR_W, color=HPC7A_COLOR,
-       edgecolor='black', label='hpc7a (AMD EPYC Zen4)')
-ax.bar(x_pos + BAR_W/2, su_hpc8a, BAR_W, color=HPC8A_COLOR,
-       edgecolor='black', label='hpc8a (AMD EPYC Zen5)')
-
-for i, v in enumerate(su_hpc7a):
-    ax.text(i - BAR_W/2, v + 0.04, f"{v:.2f}x",
-            ha='center', va='bottom', fontsize=9, fontweight='bold')
-for i, v in enumerate(su_hpc8a):
-    ax.text(i + BAR_W/2, v + 0.04, f"{v:.2f}x",
-            ha='center', va='bottom', fontsize=9, fontweight='bold')
-
-ax.set_xticks(x_pos)
-ax.set_xticklabels([f"{n}N" for n in nodes_x86])
-ax.set_xlabel("Number of nodes (192 cores/node)")
-ax.set_ylabel("Speedup vs 1 node hpc7a  (higher is better)")
-ax.set_title("LAMMPS — Lennard-Jones melt (2,048,000 atoms, 100 timesteps)",
-             fontsize=12)
-ax.grid(True, axis='y', linestyle='--', alpha=0.5)
-ax.legend(loc='upper left')
-ax.set_ylim(0, max(su_hpc8a.max(), su_hpc7a.max()) * 1.15)
-
-fig.suptitle("LAMMPS — hpc8a (Zen5) vs hpc7a (Zen4)   "
-             "[GCC + OpenMPI 4 + EFA]",
-             fontsize=13, fontweight='bold', y=1.00)
-plt.tight_layout()
-plt.savefig("LAMMPS-LJ-Hpc8aVsHpc7a.png", dpi=150, bbox_inches='tight')
-print("Wrote LAMMPS-LJ-Hpc8aVsHpc7a.png")
-
-# ---------------------------------------------------------------------------
-# Chart 2 — Arm Graviton3E vs Graviton4
+# Chart — Arm Graviton3E vs Graviton4
 # ---------------------------------------------------------------------------
 fig, ax = plt.subplots(figsize=(9, 6))
 x_pos = np.arange(len(nodes_arm))
@@ -162,14 +101,8 @@ plt.savefig("LAMMPS-LJ-Graviton3VsGraviton4.png",
 print("Wrote LAMMPS-LJ-Graviton3VsGraviton4.png")
 
 # ---------------------------------------------------------------------------
-# Summary tables
+# Summary table
 # ---------------------------------------------------------------------------
-print("\n=== x86 LJ s=4 Loop time (s) ===")
-print(f"{'Nodes':<6}{'hpc7a':>10}{'hpc8a':>10}{'hpc7a_su':>12}{'hpc8a_su':>12}")
-for i, n in enumerate(nodes_x86):
-    print(f"{n}N    {t_hpc7a[i]:>10.4f}{t_hpc8a[i]:>10.4f}"
-          f"{su_hpc7a[i]:>11.2f}x{su_hpc8a[i]:>11.2f}x")
-
 print("\n=== Arm LJ s=4 Loop time (s) ===")
 print(f"{'Nodes':<6}{'hpc7g':>10}{'m8g':>10}{'hpc7g_su':>12}{'m8g_su':>12}")
 for i, n in enumerate(nodes_arm):
