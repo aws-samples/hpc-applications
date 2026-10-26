@@ -273,6 +273,14 @@ The October runs under [Performance](#performance) were made that way: each layo
 | `build_openfoam_com_v2512_arm.sbatch` | Build OpenFOAM v2512 with GCC 14 + OpenMPI (auto-detects Graviton3E or Graviton4) |
 | `openfoam-benchmark.sbatch` | OCC DrivAer benchmark with OpenMPI 5 + EFA (Graviton3E/4; mesh selectable via `MESH_SIZE`, default 65M) |
 
+### Tests (`tests/`)
+
+| File | Description |
+|------|-------------|
+| `run-tests.sh` | Runs every `test-*.sh` file of this directory and a syntax check (`bash -n`) of every script; no Slurm, OpenFOAM, MPI or AWS access needed |
+| `stubs.sh` | The stubbed Slurm, IMDS, MPI and OpenFOAM commands, and the tiny case laid out like OCC DrivAer's, that the tests run the benchmark scripts with |
+| `test-*.sh` | One file per behaviour of the benchmark scripts, named after it (`test-benchmark-scripts.sh`: a run from start to end), each running every script the behaviour applies to |
+
 ## Contribute your results
 
 The benchmark scripts in this folder call [`dynamodb/record-benchmark.sh`](dynamodb/record-benchmark.sh) after every successful run. The recorder saves the run as a small JSON record (`<record_id>.json`) and adds it to the shared AI-Powered HPC benchmark dataset when you have write access to it. That dataset trains a model that predicts HPC performance on AWS, so every result you share helps. Set `SOURCE=<YourOrg>` to tag your runs, and see [BENCHMARK-RECORDERS.md](../BENCHMARK-RECORDERS.md) for the options and how to send the record in.
