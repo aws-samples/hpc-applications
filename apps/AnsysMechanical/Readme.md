@@ -108,6 +108,10 @@ echo "4bd4b5ce04ce634c281ae76174714fa02b053b573ac2181c985db06aa57e1e9e  libpng-1
 tar xzf libpng-1.2.59.tar.gz && cd libpng-1.2.59
 ./configure --prefix=/fsx/libpng12 --disable-static && make -j && make install
 ln -sf /fsx/libpng12/lib/libpng12.so.0 $COMPAT/libpng12.so.0
+
+# The bundled Motif needs libpng 1.2's versioned symbols: check the build has them.
+readelf -V /fsx/libpng12/lib/libpng12.so.0 | grep -q PNG12_0 && echo "libpng12: PNG12_0 present" \
+    || { echo "libpng12: PNG12_0 MISSING - do not use this build"; exit 1; }
 ```
 
 That digest matches the value published in SourceForge's file metadata for
@@ -326,9 +330,10 @@ before trusting a timing.
     gives each rank more memory *and* more bandwidth, which is often a better
     trade than filling the node. See
     [Utils/flexible-cores](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores)
-    for the pinning lists — and note that lowering `--ntasks-per-node` alone is
-    not enough: without explicit pinning the ranks pack onto the first socket and
-    you lose half the cache and memory controllers.
+    for the pinning lists — and note that lowering `--ntasks-per-node` alone does
+    not guarantee an even spread over the CCDs: pin with the lists, and check the
+    placement in Intel MPI's pinning table (`I_MPI_DEBUG=5`, which the sbatch
+    sets).
 
 ## Scratch space and concurrency
 
@@ -574,6 +579,8 @@ cache carrying the same number of ranks — prefer increments of
 **24, 48, 96, 192** (1, 2, 4, 8 cores per CCD), set via the `INCREMENT LIST`
 line in `DMPJOBS.DAT`, combined with the explicit pinning from
 [Utils/flexible-cores](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores).
+Any multiple of 24 up to 192 loads the CCDs evenly (72, 120, 144 and 168 cores
+per node as well); the flexible-cores page lists all eight counts.
 
 Note that the bundled `runBench.py` is explicitly *not* intended for scheduler
 environments. Run the models under your scheduler using the command line it
@@ -586,6 +593,18 @@ ansys261 -b nolist -perf on -dis -machines <host:cores:...> -nt 1 -mpi intelmpi 
 
 Each `.dat` resumes a matching `<job>geom.db`, so both files (and `checkver.mac`)
 must be present in the run directory.
+
+To run one of them with
+[AnsysMechanical.sbatch](https://github.com/aws-samples/hpc-applications/blob/main/apps/AnsysMechanical/AnsysMechanical.sbatch),
+give it the `.dat` from the unpacked package
+(`sbatch AnsysMechanical.sbatch v261 /fsx/V26/V26direct-5.dat`): it links every
+`.db` next to the input, and `checkver.mac`, into the working directory, and
+builds `-machines` from the allocation. It launches
+`mapdl -b -dis -mpi intelmpi -ssh -machines <host:cores:...>`; the command line
+above also passes `nolist`, `-perf on` and `-nt 1`, which MAPDL reports at the
+top of its output as `BATCH MODE REQUESTED (-b) = NOLIST`,
+`PERFORMANCE STATS TRACKING REQUESTED` and
+`... WITH SINGLE THREAD PER PROCESS (FORCED)`.
 
 # Recording results
 
