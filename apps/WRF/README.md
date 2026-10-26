@@ -4,8 +4,19 @@ This directory contains scripts for building and benchmarking [WRF 4.6.1](https:
 
 The scripts are organised by CPU architecture:
 
-- [`x86/`](x86/) — builds and benchmarks for x86_64 (`hpc8a`, `hpc7a`)
+- [`x86/`](x86/) — builds and benchmarks for x86_64 (`hpc8a`, `hpc7a`, `hpc6a`, `c8i`, `m8a`)
 - [`Arm/`](Arm/) — builds and benchmarks for aarch64 (`hpc7g` / Graviton3E, `m8g` / `r8g` / Graviton4)
+
+## Best practice in brief
+
+For the CONUS 2.5km forecast, as measured under [Performance](#performance):
+
+- **Build:** on x86, the GCC + Intel MPI build ([Option 2](#option-2--gcc--intel-mpi-from-source)); on Graviton4, the [Arm build](#arm-builds) with `OMPI_VERSION=5`.
+- **Ranks and threads:** pure MPI, one rank per core (`OMP_NUM_THREADS=1`), every node fully populated: 192 ranks per node on `hpc8a.96xlarge`, `hpc7a.96xlarge`, `c8i.96xlarge`, `m8a.48xlarge` and `m8g.48xlarge`, 96 on `hpc6a.48xlarge`. `c8i.96xlarge` ran with SMT disabled (in ParallelCluster, `DisableSimultaneousMultithreading: true`), so each of its 192 ranks had a physical core to itself. The Intel MPI scripts pin one rank to each core in order (`I_MPI_PIN_DOMAIN=core`, `I_MPI_PIN_ORDER=compact`), and the x86 OpenMPI scripts bind with `--bind-to core --map-by slot`.
+- **Fewer ranks per node:** every WRF result in this README was measured on full nodes, and the scripts' pinning is for full nodes. To run fewer ranks per node on `hpc8a.96xlarge` or `hpc7a.96xlarge`, submit with one of the core counts of [flexible cores](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores) as `--ntasks-per-node`, and replace the scripts' pinning with its list for that count: in the Intel MPI scripts, `I_MPI_PIN_PROCESSOR_LIST` instead of the `I_MPI_PIN_DOMAIN` and `I_MPI_PIN_ORDER` exports (Intel MPI ignores the list while `I_MPI_PIN_DOMAIN` is set); in the x86 OpenMPI scripts, `--bind-to cpu-list:ordered --cpu-list <list>` instead of `--bind-to core --map-by slot`.
+- **Output:** the history and restart files through PnetCDF ([Output format](#output-format)), on a parallel file system such as FSx for Lustre (measured on `hpc8a`, `c8i`, `hpc7a` and `hpc6a`; `m8a` and `m8g` were run with serial output only).
+- **Instance type and node count:** from [Whole run with PnetCDF output](#conus-25km--whole-run-with-pnetcdf-output-6-hour-forecast). `hpc8a.96xlarge` is the fastest node measured (1.34–1.39× `hpc7a.96xlarge` from 1 to 8 nodes), and the whole run keeps 88–97% parallel efficiency on 8 nodes.
+- **Timing:** run the full 6-hour forecast, not a shortened one. Compare configurations on the total wall time with the output settings you will use, and the scaling of the time steps on the median or the steady step ([Key Metrics](#key-metrics)).
 
 ## x86 builds
 
@@ -105,11 +116,16 @@ sbatch --nodes=4 x86/wrf-benchmark-intel.sbatch
 
 # CONUS 2.5km — Intel MPI, scaling test
 for N in 1 2 4 8; do sbatch --nodes=$N x86/wrf-benchmark-conus2.5km-intel.sbatch; done
+
+# The same on hpc6a.48xlarge (96 cores per node)
+for N in 1 2 4 8 16; do sbatch -p hpc6a --ntasks-per-node=96 --nodes=$N x86/wrf-benchmark-conus2.5km-intel.sbatch; done
 ```
+
+The x86 scripts ask for the `hpc8a` partition and 192 tasks per node (`hpc8a.96xlarge`). On another instance type, pass its partition and its core count per node, as in the `hpc6a` line above.
 
 > **Note:** The CONUS 12km grid (425×300) requires a minimum of 10 cells per MPI rank in each direction. With 192 cores/node, runs beyond 4 nodes (768 cores) will hit decomposition errors. Use the CONUS 2.5km case for larger scaling tests.
 
-### CONUS 2.5km data download (one-time, x86)
+### CONUS 2.5km data download (one-time)
 
 ```bash
 mkdir -p /fsx/wrf/conus_2.5km && cd /fsx/wrf/conus_2.5km
@@ -149,7 +165,7 @@ All benchmark scripts (x86 and Arm):
 - Use EFA for inter-node communication
 - Create a unique run directory under `/fsx/wrf/Run/`
 - Drop page caches and enable transparent huge pages
-- Report average time per timestep and total wall time (extracted from `rsl.error.0000`)
+- Report the total WRF time (the wall time of `mpirun`) and the average, median and steady time per timestep (from `rsl.error.0000`; see [Key Metrics](#key-metrics))
 
 ### Overrides
 
@@ -163,6 +179,9 @@ All benchmark scripts (x86 and Arm):
 | `BASE_DIR` | `/fsx/wrf` | Root for run output directories |
 | `TARGET` | `auto` (Arm build only) | Force compile target: `graviton3` or `graviton4` |
 | `PREFIX` | `/fsx/wrf/deps` | Dependency install prefix (x86 Intel build only) |
+| `WRF_STEP_TIMING_LIB` | found from the submit directory | Path to `lib/wrf-step-timing.sh` (median and steady step), for a job submitted from outside `x86/`, `Arm/`, `apps/WRF` and the repository root |
+| `DYNAMODB_RECORDER` | found from the submit directory | Path to `dynamodb/record-benchmark.sh`, found the same way (see [Contribute your results](#contribute-your-results)) |
+| `SOURCE` | `Community` | Your organisation's tag on the runs you record |
 
 ### Output format
 
@@ -177,7 +196,7 @@ sed -i -E 's/^([[:space:]]*io_form_(history|restart)[[:space:]]*=[[:space:]]*)2(
 grep -E '^[[:space:]]*io_form_(history|restart)' namelist.input   # both now 11
 ```
 
-- Parallel output is meant for a parallel file system, such as FSx for Lustre, where the measurements under [Performance](#conus-25km--output-format-6-hour-forecast) were made.
+- Parallel output is meant for a parallel file system, such as FSx for Lustre, where the measurements under [Performance](#performance) were made, with the file system's default striping layout.
 - PnetCDF writes uncompressed CDF-2 (64-bit offset) files: on CONUS 2.5km, about 8.5 GB per history file and 33 GB for the restart. Check that your post-processing reads CDF-2; older versions of UPP did not.
 - With serial output, a build with netCDF-4 support writes compressed netCDF-4 (WRF's default; Spack's `netcdf_classic` variant, off by default, turns compression off at build time). On CONUS 2.5km the compression is most of the serial output's cost. If you keep serial output, `use_netcdf_classic = .true.` in `&time_control` writes uncompressed CDF-2 files instead, with the same post-processing caveat.
 - ADIOS2 output and I/O quilting were not tested here. Post-processing tools such as UPP do not read ADIOS2 files, and quilting needs dedicated I/O ranks and more settings, where PnetCDF is a two-line change.
@@ -256,7 +275,7 @@ The same 6-hour forecast on 1 and 8 `hpc8a.96xlarge` nodes, with its output writ
 | Serial, uncompressed CDF-2 (`use_netcdf_classic = .true.`) | 1.11× | 1.81× |
 | PnetCDF (`io_form_history = io_form_restart = 11`) | 1.15× | 2.38× |
 
-The runs used the GCC + Intel MPI build (Option 2, Intel MPI 2021.18) with 192 MPI ranks per node over EFA, on FSx for Lustre in eu-north-1, in October 2026. The values are medians of 2 runs (3 for the compressed default), and each point's runs agree within 3%. Between 1 and 8 other benchmark jobs shared the file system; on 8 nodes the slowest compressed run had the fewest.
+The runs used the GCC + Intel MPI build (Option 2, Intel MPI 2021.18) with 192 MPI ranks per node over EFA, on FSx for Lustre in eu-north-1, in October 2026. The values are medians of 2 runs (3 for the compressed default), and each point's runs agree within 3%. Up to 7 other benchmark jobs shared the file system; on 8 nodes the slowest compressed run had the fewest.
 
 Key takeaways:
 
@@ -311,14 +330,14 @@ Key takeaways:
 
 ## Key Metrics
 
-- **Average time per timestep** — extracted from `rsl.error.0000`; it includes the output writes, so compare node counts on the median or the steady step (below)
+- **Average time per timestep** — extracted from `rsl.error.0000`; it includes the output writes, so to see how the time steps scale with the node count use the median or the steady step (below)
 - **Median and steady time per timestep** — printed by every benchmark script next to the average (`Median timestep:`, `Steady timestep:`) and recorded with it; the steady step leaves out the first step and every step that follows an output write or a boundary read ([`lib/wrf-step-timing.sh`](lib/wrf-step-timing.sh))
-- **Total wall time** — end-to-end execution time including MPI startup and I/O
+- **Total wall time** — end-to-end execution time including MPI startup and I/O: the time a run takes
 
-Run the full forecast the case ships with (6 hours, 1,440 steps of 15 s for CONUS 2.5km), not a shortened one, and to compare node counts use the median time per step, or the steady step: the average without the first step and the steps that write output or read boundaries. The average per step and the total wall time both include output, which does not get faster with more nodes: WRF counts each history or restart write in the `Timing for main` line of the step that makes it.
+Run the full forecast the case ships with (6 hours, 1,440 steps of 15 s for CONUS 2.5km), not a shortened one. To see how the time steps scale with the node count, use the median time per step, or the steady step: the average without the first step and the steps that write output or read boundaries. The average per step and the total wall time both include output, which does not get faster in proportion to the node count: WRF counts each history or restart write in the `Timing for main` line of the step that makes it. To choose an instance type and a node count, compare the total wall time instead, with the output settings you will use ([Whole run with PnetCDF output](#conus-25km--whole-run-with-pnetcdf-output-6-hour-forecast)).
 
 - **A shortened run mostly measures start-up.** A 5-minute window (20 steps) on 1, 2, 4 and 8 `hpc8a.96xlarge` nodes (Intel MPI, June 2026, medians of 3 to 7 runs) ran 1.22, 1.34 and 1.20 times as fast on 2, 4 and 8 nodes as on one, so 8 nodes looked slower than 4, while the median step ran 2.09, 4.31 and 9.47 times as fast. The first step took about the same time at every node count, most of it the history write at t=0, so it grew from 46-47% of the run on 1 node to 55-58% on 8, and it dominates the average over the 20 steps (only 1.47 times as fast on 8 nodes as on one).
-- **The full forecast writes output every hour.** On one `hpc7a.96xlarge`, `m8g.48xlarge` or `hpc6a.48xlarge` node (October 2026) its first step is under 2% of the run, but the 7 hourly history writes and the restart write took 7-17% of it, all but the last of them inside step timings, so the average step was 17-30% above the median step. On 8 nodes of `hpc7a.96xlarge` or `hpc8a.96xlarge` the same writes took about two thirds of the run, so the more nodes, the larger the share of the output in the average and in the wall time.
+- **The full forecast writes output every hour.** With the serial output the case ships with, on one `hpc7a.96xlarge`, `m8g.48xlarge` or `hpc6a.48xlarge` node (October 2026) its first step is under 2% of the run, but the 7 hourly history writes and the restart write took 7-17% of it, all but the last of them inside step timings, so the average step was 17-30% above the median step. On 8 nodes of `hpc7a.96xlarge` or `hpc8a.96xlarge` the same writes took about two thirds of the run, so the more nodes, the larger the share of the output in the average and in the wall time. With PnetCDF output the writes took 1-3% of a one-node run and 16% of an 8-node `hpc7a.96xlarge` or `hpc8a.96xlarge` run: much less, but they do not shrink as the time steps do: on 8 `hpc8a.96xlarge` nodes they took 5% longer than on one, and on 8 `hpc7a.96xlarge` nodes 30% less.
 
 The 5-minute runs were launched a few at a time: 21 of the 22 overlapped 1 to 4 of the others on the cluster and its FSx for Lustre file system, and the one made alone (4 nodes) matched the other 4-node runs within 1%. The one-node 6-hour runs had up to 6 other benchmark jobs running on the same file system when they started or ended.
 
