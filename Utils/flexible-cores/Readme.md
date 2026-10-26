@@ -109,6 +109,16 @@ node and 6 per socket. Balanced counts per node there are multiples of 12 (12, 2
 lscpu -e=CPU,CORE,SOCKET,NODE,CACHE   # the last field of CACHE is the L3 id
 ```
 
+Every list in the explicit scripts follows one rule, so you can build the list for
+another layout. With g cores per L3 group (8 on these instances, one group per CCD)
+and k ranks per group (here the count per node divided by 24), a list takes every
+(g/k)-th core when k divides g (every 8th, 4th, 2nd or every core: the lists for 24,
+48, 96 and 192), and each group's first k cores otherwise (72, 120, 144 and 168). On
+an hpc6a.48xlarge the same rule over its 12 L3 groups gives, for example,
+`0,8,16,...,88` for 12 cores per node. The explicit scripts hold the
+Hpc8a/Hpc7a.96xlarge lists only: replace them before you run the scripts on another
+instance type, and check the placement with `hello-cpu`.
+
 ## Script Comparison
 
 ### Intel MPI Scripts
