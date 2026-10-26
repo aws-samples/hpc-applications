@@ -4,8 +4,8 @@
 # =============================================================================
 # Runs every benchmark script with stubbed Slurm, IMDS, MPI and wrf.exe
 # commands, so the whole script executes: the run directory, a stubbed solve
-# that leaves a fixture as rsl.error.0000, the timing extraction, the report and
-# the recorder call.
+# that leaves a fixture as rsl.error.0000 and the output files it names, the
+# timing extraction, the report, the run check and the recorder call.
 #
 # No Slurm, no EC2, no WRF, no MPI, no AWS credentials, no network. The stubs
 # never run a command on the host: the cache drops and THP settings the scripts
@@ -116,11 +116,26 @@ cat > "${STUBS}/bin/real-recorder.sh" <<EOF
 EOF
 
 # Stub solve: leave the chosen fixture as rsl.error.0000 in the run directory
-# (none when WRF_FIXTURE is empty).
+# (none when WRF_FIXTURE is empty), and the output files its log says WRF
+# wrote: a file for every history write it names, and one for every restart
+# write. WRF_OUTPUT=none writes none of them, =empty writes them all empty, and
+# =no-restart writes the history files only.
 cat > "${STUBS}/WRF/test/em_real/wrf.exe" <<'EOF'
 #!/bin/bash
 echo " starting wrf task 0 of 8"
-if [ -n "${WRF_FIXTURE:-}" ]; then cp "${WRF_FIXTURE}" rsl.error.0000; fi
+[ -n "${WRF_FIXTURE:-}" ] || exit 0
+cp "${WRF_FIXTURE}" rsl.error.0000
+mode="${WRF_OUTPUT:-all}"
+[ "${mode}" = none ] && exit 0
+n=0
+while read -r w1 w2 w3 name _; do
+  [ "${w1} ${w2} ${w3}" = "Timing for Writing" ] || continue
+  if [ "${name}" = restart ]; then
+    [ "${mode}" = no-restart ] && continue
+    n=$((n + 1)); name="wrfrst_d01_restart-${n}"
+  fi
+  if [ "${mode}" = empty ]; then : > "${name}"; else echo "stub output" > "${name}"; fi
+done < rsl.error.0000
 exit 0
 EOF
 chmod +x "${STUBS}"/bin/* "${STUBS}/WRF/test/em_real/wrf.exe"
@@ -135,6 +150,11 @@ mkdir -p "${STUBS}/stub-lib"
 cat > "${STUBS}/stub-lib/wrf-step-timing.sh" <<'EOF'
 wrf_median_step() { echo "7.77777"; }
 wrf_steady_step() { echo "8.88888"; }
+EOF
+# A stand-in for lib/wrf-run-check.sh that refuses every run, with a sentinel
+# reason: a NOTE that gives it shows the script loaded this file.
+cat > "${STUBS}/stub-lib/wrf-run-check.sh" <<'EOF'
+wrf_run_check() { echo "stub check refused"; return 1; }
 EOF
 
 : > "${STUBS}/conus/wrfinput_d01"
@@ -169,6 +189,14 @@ run_script() {
 has() {
     if grep -qxF -- "$2" <<<"${OUT}"; then ok "$1"
     else bad "$1" "$2" "$(grep -E 'timestep|NOTE' <<<"${OUT}" | head -8 | tr '\n' '|')"; fi
+}
+
+# recorded <label>: the run passed the run check, so the recorder was called
+recorded() {
+    if grep -q -- '--metric avg_timestep_seconds=' "${RECLOG}" \
+            && ! grep -q 'NOTE: not recording this run' <<<"${OUT}"; then ok "$1"
+    else bad "$1" "the recorder called, and no 'NOTE: not recording'" \
+             "$(grep NOTE <<<"${OUT}" | head -3 | tr '\n' '|')$(head -1 "${RECLOG}")"; fi
 }
 
 for s in "${SCRIPTS[@]}"; do
@@ -223,8 +251,10 @@ for s in "${SCRIPTS[@]}"; do
 
     run_script "${s}" "${FIX}/hourly-history.rsl" SLURM_SUBMIT_DIR="${WRF_APP}"
     has "submitted from apps/WRF: the library is found" "Median timestep:  1.15000s"
+    recorded "submitted from apps/WRF: the run check is found and the run is recorded"
     run_script "${s}" "${FIX}/hourly-history.rsl" SLURM_SUBMIT_DIR="$(cd "${WRF_APP}/../.." && pwd)"
     has "submitted from the repository root: the library is found" "Median timestep:  1.15000s"
+    recorded "submitted from the repository root: the run check is found and the run is recorded"
 
     run_script "${s}" ""
     [ "${RC}" -eq 0 ] && ok "no rsl.error.0000: completes (exit 0), as before" \
@@ -232,9 +262,10 @@ for s in "${SCRIPTS[@]}"; do
     has "no rsl.error.0000: the average is N/A, as before" "Avg timestep:     N/As"
     has "no rsl.error.0000: the median step is N/A" "Median timestep:  N/As"
     has "no rsl.error.0000: the steady step is N/A" "Steady timestep:  N/As"
-    grep -q -- '--metric median_timestep_seconds=N/A --metric steady_timestep_seconds=N/A' "${RECLOG}" \
-        && ok "no rsl.error.0000: the recorder gets N/A for both, as for the average" \
-        || bad "no rsl.error.0000: recorder arguments" "median/steady =N/A" "$(head -1 "${RECLOG}")"
+    has "no rsl.error.0000: a NOTE says why the run is not recorded" \
+        "NOTE: not recording this run: no readable rsl.error.0000"
+    [ -s "${RECLOG}" ] && bad "no rsl.error.0000: not recorded" "recorder not called" "$(head -1 "${RECLOG}")" \
+        || ok "no rsl.error.0000: the run is not recorded"
 
     # This repository's recorder, in --dry-run: the item it would store.
     run_script "${s}" "${FIX}/hourly-history.rsl" \
@@ -252,16 +283,22 @@ for s in "${SCRIPTS[@]}"; do
     else
         skipt "the stored item is valid JSON" "no python3"
     fi
-    run_script "${s}" "" DYNAMODB_RECORDER="${STUBS}/bin/real-recorder.sh" OPERATING_SYSTEM="Test OS"
+    # Without lib/wrf-step-timing.sh (submitted from elsewhere, with the run
+    # check pointed at through its variable) the median and the steady step are
+    # N/A: the recorder skips them with a warning, as it skips any N/A value.
+    run_script "${s}" "${FIX}/hourly-history.rsl" SLURM_SUBMIT_DIR="${STUBS}/elsewhere" \
+        WRF_RUN_CHECK_LIB="${WRF_APP}/lib/wrf-run-check.sh" \
+        DYNAMODB_RECORDER="${STUBS}/bin/real-recorder.sh" OPERATING_SYSTEM="Test OS"
     item="$(sed -n '/^{/,$p' "${RECJSON}")"
-    if [ -n "${item}" ] && ! grep -q 'timestep_seconds' <<<"${item}"; then
-        ok "no rsl.error.0000: the stored item has no timestep attribute (N/A is skipped), as for the average"
+    if grep -qF '"avg_timestep_seconds": {"N": "2.25"}' <<<"${item}" \
+            && ! grep -qE '(median|steady)_timestep_seconds' <<<"${item}"; then
+        ok "N/A median and steady step: the stored item keeps the average and has neither"
     else
-        bad "no rsl.error.0000: no timestep attribute" "an item without one" "$(grep timestep <<<"${item:-<no item>}")"
+        bad "N/A median and steady step: skipped" "the average only" "$(grep timestep <<<"${item:-<no item>}" | tr '\n' '|')"
     fi
     grep -q "WARN: ignoring non-numeric value for 'steady_timestep_seconds': 'N/A'" "${RECLOG}" \
-        && ok "no rsl.error.0000: the recorder says it skipped them" \
-        || bad "no rsl.error.0000: recorder WARN" "WARN ... 'N/A'" "$(grep WARN "${RECLOG}" | head -3 | tr '\n' '|')"
+        && ok "N/A median and steady step: the recorder says it skipped them" \
+        || bad "N/A median and steady step: recorder WARN" "WARN ... 'N/A'" "$(grep WARN "${RECLOG}" | head -3 | tr '\n' '|')"
 
     # The existing "grep 'Timing for main' | tail -5" stops the script under
     # pipefail when no step was timed, before the report and the recorder.
@@ -283,6 +320,10 @@ for s in "${SCRIPTS[@]}"; do
     has "library not found: the average is unchanged" "Avg timestep:     2.25s"
     has "library not found: the median step is N/A" "Median timestep:  N/As"
     has "library not found: the steady step is N/A" "Steady timestep:  N/As"
+    has "the run check not found either: a NOTE says how to point at it" \
+        "NOTE: not recording this run: lib/wrf-run-check.sh not found; set WRF_RUN_CHECK_LIB=/path/to/apps/WRF/lib/wrf-run-check.sh"
+    [ -s "${RECLOG}" ] && bad "the run check not found: not recorded" "recorder not called" "$(head -1 "${RECLOG}")" \
+        || ok "the run check not found: the run is not recorded"
 
     run_script "${s}" "${FIX}/hourly-history.rsl" SLURM_SUBMIT_DIR="${STUBS}/elsewhere" \
         WRF_STEP_TIMING_LIB="${WRF_APP}/lib/wrf-step-timing.sh"
@@ -296,6 +337,52 @@ for s in "${SCRIPTS[@]}"; do
         && ok "WRF_STEP_TIMING_LIB takes precedence over a submit-directory copy" \
         || bad "WRF_STEP_TIMING_LIB takes precedence over a submit-directory copy" \
                "Avg timestep:     2.25s|Median timestep:  7.77777s|Steady timestep:  8.88888s|" "${got}"
+
+    # The run check (lib/wrf-run-check.sh) comes before the recorder: a run is
+    # recorded only when WRF completed and every output file it wrote is there.
+    # The job's exit status does not change.
+    run_script "${s}" "${FIX}/no-success.rsl"
+    [ "${RC}" -eq 0 ] && ok "no SUCCESS COMPLETE WRF: the job completes (exit 0)" \
+        || bad "no SUCCESS COMPLETE WRF: the job completes" "exit 0" "exit ${RC}"
+    has "no SUCCESS COMPLETE WRF: a NOTE says why the run is not recorded" \
+        "NOTE: not recording this run: rsl.error.0000 does not say SUCCESS COMPLETE WRF"
+    [ -s "${RECLOG}" ] && bad "no SUCCESS COMPLETE WRF: not recorded" "recorder not called" "$(head -1 "${RECLOG}")" \
+        || ok "no SUCCESS COMPLETE WRF: the run is not recorded"
+
+    # Two problems at once: one NOTE names both, joined with "; ".
+    run_script "${s}" "${FIX}/no-success.rsl" WRF_OUTPUT=none
+    has "two problems: the NOTE names both" \
+        "NOTE: not recording this run: rsl.error.0000 does not say SUCCESS COMPLETE WRF; history file wrfout_d01_2000-01-01_00:00:00 is missing"
+    [ -s "${RECLOG}" ] && bad "two problems: not recorded" "recorder not called" "$(head -1 "${RECLOG}")" \
+        || ok "two problems: the run is not recorded"
+
+    run_script "${s}" "${FIX}/hourly-history.rsl" WRF_OUTPUT=none
+    has "a history file missing: a NOTE names it" \
+        "NOTE: not recording this run: history file wrfout_d01_2000-01-01_00:00:00 is missing"
+    [ -s "${RECLOG}" ] && bad "a history file missing: not recorded" "recorder not called" "$(head -1 "${RECLOG}")" \
+        || ok "a history file missing: the run is not recorded"
+
+    run_script "${s}" "${FIX}/hourly-history.rsl" WRF_OUTPUT=empty
+    has "an empty history file: a NOTE names it" \
+        "NOTE: not recording this run: history file wrfout_d01_2000-01-01_00:00:00 is empty"
+    [ -s "${RECLOG}" ] && bad "an empty history file: not recorded" "recorder not called" "$(head -1 "${RECLOG}")" \
+        || ok "an empty history file: the run is not recorded"
+
+    run_script "${s}" "${FIX}/restart-write.rsl" WRF_OUTPUT=no-restart
+    has "restart files missing: a NOTE says so" \
+        "NOTE: not recording this run: 2 restart write(s) in rsl.error.0000 but 0 wrfrst_d01_* file(s)"
+    [ -s "${RECLOG}" ] && bad "restart files missing: not recorded" "recorder not called" "$(head -1 "${RECLOG}")" \
+        || ok "restart files missing: the run is not recorded"
+    run_script "${s}" "${FIX}/restart-write.rsl"
+    grep -q -- '--metric avg_timestep_seconds=' "${RECLOG}" \
+        && ok "history and restart files all in place: the run is recorded" \
+        || bad "history and restart files all in place: recorded" "the recorder called" "not called"
+
+    run_script "${s}" "${FIX}/hourly-history.rsl" WRF_RUN_CHECK_LIB="${STUBS}/stub-lib/wrf-run-check.sh"
+    has "WRF_RUN_CHECK_LIB takes precedence over a submit-directory copy" \
+        "NOTE: not recording this run: stub check refused"
+    [ -s "${RECLOG}" ] && bad "WRF_RUN_CHECK_LIB's refusal: not recorded" "recorder not called" "$(head -1 "${RECLOG}")" \
+        || ok "WRF_RUN_CHECK_LIB's refusal: the run is not recorded"
 done
 
 echo "== the stubs kept AWS out of it =="

@@ -166,6 +166,9 @@ All benchmark scripts (x86 and Arm):
 - Create a unique run directory under `/fsx/wrf/Run/`
 - Drop page caches and enable transparent huge pages
 - Report the total WRF time (the wall time of `mpirun`) and the average, median and steady time per timestep (from `rsl.error.0000`; see [Key Metrics](#key-metrics))
+- Record the run (see [Contribute your results](#contribute-your-results)) only when `rsl.error.0000` says `SUCCESS COMPLETE WRF` and every history and restart file WRF wrote is in the run directory and not empty ([`lib/wrf-run-check.sh`](lib/wrf-run-check.sh)); otherwise they print a NOTE that says why, and the job's exit status is unchanged
+
+The run check assumes WRF's default output file names (`history_outname`, `rst_outname`), in the run directory, and every write in a single file (`io_form` 2 or 11), not in a file per rank (`io_form` 102); it reads domain 1 only. It reads `frames_per_outfile` from the line that sets it, which must start with it (`frames_per_outfile = <n>, ...`), and refuses a run whose `namelist.input` sets it in any other form, or on more than one line, rather than assume WRF's default of 10. The scripts look for it as they look for `lib/wrf-step-timing.sh`, from the submit directory: for a job submitted from anywhere but the script's directory, `apps/WRF` or the repository root, for example with a copy of a script, set `WRF_RUN_CHECK_LIB` ([Overrides](#overrides)), or the run is not recorded.
 
 ### Overrides
 
@@ -180,6 +183,7 @@ All benchmark scripts (x86 and Arm):
 | `TARGET` | `auto` (Arm build only) | Force compile target: `graviton3` or `graviton4` |
 | `PREFIX` | `/fsx/wrf/deps` | Dependency install prefix (x86 Intel build only) |
 | `WRF_STEP_TIMING_LIB` | found from the submit directory | Path to `lib/wrf-step-timing.sh` (median and steady step), for a job submitted from outside `x86/`, `Arm/`, `apps/WRF` and the repository root |
+| `WRF_RUN_CHECK_LIB` | found from the submit directory | Path to `lib/wrf-run-check.sh` (the check before a run is recorded), found the same way |
 | `DYNAMODB_RECORDER` | found from the submit directory | Path to `dynamodb/record-benchmark.sh`, found the same way (see [Contribute your results](#contribute-your-results)) |
 | `SOURCE` | `Community` | Your organisation's tag on the runs you record |
 
@@ -367,8 +371,9 @@ The 5-minute runs were launched a few at a time: 21 of the 22 overlapped 1 to 4 
 | File | Description |
 |------|-------------|
 | `lib/wrf-step-timing.sh` | Median and steady time per timestep from `rsl.error.0000`, used by every benchmark script |
-| `tests/run-tests.sh` | The helper's tests and the benchmark scripts' end-to-end tests (see [`tests/README.md`](tests/README.md)) |
+| `lib/wrf-run-check.sh` | The check every benchmark script runs before it records a run: `SUCCESS COMPLETE WRF`, and the history and restart files in place |
+| `tests/run-tests.sh` | The helpers' tests and the benchmark scripts' end-to-end tests (see [`tests/README.md`](tests/README.md)) |
 
 ## Contribute your results
 
-The benchmark scripts in this folder call [`dynamodb/record-benchmark.sh`](dynamodb/record-benchmark.sh) after every successful run. The recorder saves the run as a small JSON record (`<record_id>.json`) and adds it to the shared AI-Powered HPC benchmark dataset when you have write access to it. That dataset trains a model that predicts HPC performance on AWS, so every result you share helps. Set `SOURCE=<YourOrg>` to tag your runs, and see [BENCHMARK-RECORDERS.md](../BENCHMARK-RECORDERS.md) for the options and how to send the record in.
+The benchmark scripts in this folder call [`dynamodb/record-benchmark.sh`](dynamodb/record-benchmark.sh) after every run that completed and wrote its output (see [Benchmark](#benchmark)). The recorder saves the run as a small JSON record (`<record_id>.json`) and adds it to the shared AI-Powered HPC benchmark dataset when you have write access to it. That dataset trains a model that predicts HPC performance on AWS, so every result you share helps. Set `SOURCE=<YourOrg>` to tag your runs, and see [BENCHMARK-RECORDERS.md](../BENCHMARK-RECORDERS.md) for the options and how to send the record in.

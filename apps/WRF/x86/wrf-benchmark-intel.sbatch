@@ -190,6 +190,24 @@ REPORT
 # automatically, and set SOURCE=<YourOrg> to tag your contributions.
 # See apps/WRF/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
 # ---------------------------------------------------------------------------
+# Record only a run that completed and wrote its output: lib/wrf-run-check.sh
+# checks that rsl.error.0000 says SUCCESS COMPLETE WRF and that every history
+# and restart file WRF wrote is in the run directory and not empty. Point
+# WRF_RUN_CHECK_LIB at it if it isn't found automatically.
+_check_lib="${WRF_RUN_CHECK_LIB:-}"
+for _c in "${_check_lib}" \
+          "${SLURM_SUBMIT_DIR:-.}/../lib/wrf-run-check.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/lib/wrf-run-check.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/apps/WRF/lib/wrf-run-check.sh"; do
+    if [ -n "${_c}" ] && [ -r "${_c}" ]; then _check_lib="${_c}"; break; fi
+done
+_run_ok=0
+_run_problems="lib/wrf-run-check.sh not found; set WRF_RUN_CHECK_LIB=/path/to/apps/WRF/lib/wrf-run-check.sh"
+# shellcheck source=../lib/wrf-run-check.sh
+if [ -n "${_check_lib}" ] && [ -r "${_check_lib}" ] && . "${_check_lib}" \
+        && declare -F wrf_run_check > /dev/null; then
+    if _run_problems="$(wrf_run_check "${workdir}")"; then _run_ok=1; fi
+fi
 _wrf_version="$(basename "${WRF_ENV}" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
 _recorder="${DYNAMODB_RECORDER:-}"
 for _c in "${_recorder}" \
@@ -198,7 +216,9 @@ for _c in "${_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/apps/WRF/dynamodb/record-benchmark.sh"; do
     if [ -n "${_c}" ] && [ -x "${_c}" ]; then _recorder="${_c}"; break; fi
 done
-if [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
+if [ "${_run_ok}" -ne 1 ]; then
+    echo "NOTE: not recording this run: ${_run_problems//$'\n'/; }" >&2
+elif [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
     WRF_VERSION="${_wrf_version}" BENCHMARK_CASE="CONUS-12km" ANALYSIS_TYPE="forecast" \
     TIME_TO_SOLUTION="${WRF_TIME}" RUN_DIR="${workdir}" "${_recorder}" \
         --metric "avg_timestep_seconds=${AVG_STEP}" \
