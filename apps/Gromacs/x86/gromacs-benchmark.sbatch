@@ -42,6 +42,8 @@
 #                       (range 1..10,000,000)
 #   NSTLIST             neighbour-list rebuild interval (default 100,
 #                       range 1..1,000)
+#   TUNEPME             on | off: PME tuning (mdrun -tunepme). Default off
+#                       (-notunepme) for benchPEP-h, on for the others
 #   THREADS_PER_RANK    OpenMP threads per MPI rank
 #                       (default 1 = pure MPI, range 1..192)
 #   BASE_DIR            run output root (default: /fsx/gromacs)
@@ -91,6 +93,8 @@ DYNAMODB_RECORDER="${DYNAMODB_RECORDER:-/fsx/gromacs/scripts/dynamodb/record_to_
 # Pages serve .tpr.gz archives — fetched, gunzipped, validated non-empty,
 # then cached at /fsx/gromacs/benchmarks/<MODEL>/<MODEL>.tpr.
 # ---------------------------------------------------------------------------
+# PME tuning stays on unless the model below turns it off (TUNEPME overrides).
+DEFAULT_TUNEPME=on
 case "${MODEL}" in
     benchMEM)
         TPR_FILE="benchMEM.tpr"
@@ -101,6 +105,7 @@ case "${MODEL}" in
         TPR_FILE="benchPEP-h.tpr"
         DEFAULT_TIMESTEPS=5000
         MODEL_URL="https://www.mpinat.mpg.de/benchPEP-h"
+        DEFAULT_TUNEPME=off
         ;;
     STMV)
         TPR_FILE="STMV.tpr"
@@ -120,6 +125,13 @@ case "${MODEL}" in
 esac
 
 TIMESTEPS="${TIMESTEPS:-${DEFAULT_TIMESTEPS}}"
+# PME tuning (mdrun -tunepme) is off by default for benchPEP-h: on a 12M-atom
+# system it can still be running at the -resethway midpoint, and mdrun then
+# stops ("PME tuning was still active when attempting to reset mdrun
+# counters"); with -notunepme every run also computes the same thing. Smaller
+# systems finish tuning well before the midpoint and keep it on. TUNEPME=on or
+# off overrides the default for any model.
+TUNEPME="${TUNEPME:-${DEFAULT_TUNEPME}}"
 
 # ---------------------------------------------------------------------------
 # Override validation (Requirements 2.13, 2.14, 7.2). Each check identifies
@@ -139,6 +151,10 @@ if ! is_positive_int "${NSTLIST}" || (( NSTLIST < 1 || NSTLIST > 1000 )); then
 fi
 if ! is_positive_int "${THREADS_PER_RANK}" || (( THREADS_PER_RANK < 1 || THREADS_PER_RANK > 192 )); then
     echo "ERROR: THREADS_PER_RANK='${THREADS_PER_RANK}' invalid (expected integer in 1..192)" >&2
+    exit 1
+fi
+if [ "${TUNEPME}" != "on" ] && [ "${TUNEPME}" != "off" ]; then
+    echo "ERROR: TUNEPME='${TUNEPME}' invalid (expected on or off)" >&2
     exit 1
 fi
 if [[ "${BASE_DIR}" != /* ]]; then
@@ -252,6 +268,7 @@ echo "MPI ranks:     ${NRANK_TOTAL} total (${NRANK_PER_NODE}/node)"
 echo "OMP threads:   ${THREADS_PER_RANK}/rank -> ${NPROC_TOTAL} cores total"
 echo "Timesteps:     ${TIMESTEPS}"
 echo "NSTLIST:       ${NSTLIST}"
+echo "PME tuning:    ${TUNEPME}"
 echo "ENV_VARIANT:   ${ENV_VARIANT}"
 echo "GROMACS_ENV:   ${GROMACS_ENV}"
 echo "Workdir:       ${WORKDIR}"
@@ -462,6 +479,9 @@ echo "provider=efa"
 # ---------------------------------------------------------------------------
 MDRUN_ARGS=(mdrun -s "${TPR_FILE}" -nsteps "${TIMESTEPS}" -resethway -noconfout
     -nstlist "${NSTLIST}" -deffnm md)
+if [ "${TUNEPME}" = "off" ]; then
+    MDRUN_ARGS+=(-notunepme)
+fi
 
 # ---------------------------------------------------------------------------
 # Run

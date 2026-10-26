@@ -164,7 +164,7 @@ The launchers select the benchmark with the `MODEL` environment variable. benchM
 | `MODEL` | System | Atoms | Time step | Default `nsteps` | Notes |
 |---------|--------|------:|----------:|-----------------:|-------|
 | `benchMEM` | Aquaporin in a lipid membrane, in water | 81,743 | 2 fs | 50,000 | PME; the small reference: it gains little beyond one node |
-| `benchPEP-h` | Peptides in water, h-bonds constrained | 12,495,503 | 2 fs | 5,000 | PME; the strong-scaling reference |
+| `benchPEP-h` | Peptides in water, h-bonds constrained | 12,495,503 | 2 fs | 5,000 | PME, `-notunepme`; the strong-scaling reference |
 | `STMV` | Satellite Tobacco Mosaic Virus capsid in water | ~1,000,000 | | 10,000 | Not part of the MPI-NAT set: stage its `.tpr` yourself |
 | `RNAse` | RNAse small protein in water | ~24,000 | | 100,000 | Not part of the MPI-NAT set: stage its `.tpr` yourself |
 
@@ -273,6 +273,7 @@ The launcher also auto-discovers the most recently modified env script under `x8
 | `MODEL` | `benchMEM` | `benchMEM` / `benchPEP-h` / `STMV` / `RNAse` |
 | `TIMESTEPS` | model default (see Benchmark Models) | `-nsteps` value passed to `mdrun` (1..10,000,000) |
 | `NSTLIST` | `100` | `-nstlist` value (neighbour-list rebuild interval, 1..1,000) |
+| `TUNEPME` | `off` for benchPEP-h, `on` otherwise | PME tuning (`mdrun -tunepme`): `off` passes `-notunepme` (see [PME settings](#pme-settings)). The GPU launcher takes `TUNEPME=on` to keep tuning for benchPEP-h |
 | `THREADS_PER_RANK` | `1` | OpenMP threads per MPI rank (1..192). `1` enables pure-MPI placement; `>1` switches to hybrid binding |
 | `OMPI_VERSION` | `4` (x86) / `5` (Arm) | OpenMPI generation linked at build time. Arm-only knob — Graviton3E accepts 4 or 5; Graviton4 forces 5 |
 | `GPU_COUNT` | `1` | GPU launcher only. Number of GPUs to use (`1..min(8, nvidia-smi -L count)`). `1` selects single-GPU Thread_MPI; `1 < GPU_COUNT <= GPUs/node` selects single-node multi-GPU Thread_MPI; `GPU_COUNT > GPUs/node` selects multi-node Library_MPI under `mpirun` |
@@ -286,6 +287,7 @@ All benchmark launchers:
 - Create a unique run directory under `/fsx/gromacs/Run/` (collision detection refuses to overwrite)
 - Drop page caches and enable transparent huge pages on every allocated node before the run
 - Pass `-resethway -noconfout -nstlist ${NSTLIST}` so warm-up cost is excluded from the reported `Performance:` value and per-rank trajectory writes are suppressed
+- Pass `-notunepme` for benchPEP-h, so PME tuning cannot outlast the `-resethway` midpoint (`TUNEPME`)
 - Extract `Performance: <ns/day> <hour/ns>` and `Wall t (s):` from `md.log` and print a results block to the slurm log
 - Optionally record results to DynamoDB (off by default — see [`dynamodb/`](dynamodb/))
 
@@ -310,7 +312,7 @@ GROMACS computes the long-range electrostatics with PME (particle-mesh Ewald), o
 
 **What mdrun picks on its own.** In the October 2026 runs, mdrun put a third of the ranks on PME for benchMEM on the 192-core x86 types (64 of 192 per node) and a quarter on hpc6a and m8g; for benchPEP-h, a sixth on the 192-core x86 types and an eighth on hpc6a and m8g. md.log says how many it used (`Using 64 separate PME ranks, as guessed by mdrun`), and its end how much the PP/PME balance cost (`NOTE: ... % performance was lost because the PME ranks had less work to do than the PP ranks`).
 
-**Benchmark large systems with `-notunepme`.** PME tuning runs during the first part of a run, and `-resethway` resets mdrun's counters half way: if tuning is still running at that point, mdrun stops with `PME tuning was still active when attempting to reset mdrun counters`. On large systems such as benchPEP-h and benchRIB, tuning can outlast the first half of a benchmark-length run. Tuning also settles on a cut-off of its own in each run and on each instance type, so the work timed differs between runs; with `-notunepme`, every run computes the same thing. The October 2026 runs used `-notunepme` for benchPEP-h and benchRIB and kept tuning on for benchMEM, which finished tuning within the first half in every run. For production runs, leave tuning on.
+**Benchmark large systems with `-notunepme`.** PME tuning runs during the first part of a run, and `-resethway` resets mdrun's counters half way: if tuning is still running at that point, mdrun stops with `PME tuning was still active when attempting to reset mdrun counters`. On large systems such as benchPEP-h and benchRIB, tuning can outlast the first half of a benchmark-length run. Tuning also settles on a cut-off of its own in each run and on each instance type, so the work timed differs between runs; with `-notunepme`, every run computes the same thing. The October 2026 runs used `-notunepme` for benchPEP-h and benchRIB and kept tuning on for benchMEM, which finished tuning within the first half in every run. The launchers pass `-notunepme` for benchPEP-h; on the CPU launchers, `TUNEPME=on` keeps tuning and `TUNEPME=off` turns it off for any model. For production runs, leave tuning on.
 
 **benchRIB: a quarter of the ranks on PME.** mdrun's own choice for benchRIB was a quarter of the ranks on hpc7a, m8a and hpc6a (48 of 192, 24 of 96). On `m8g.48xlarge` it chose 32 of 192 (`Guess for relative PME load: 0.16`), and benchRIB's box has no domain decomposition for the remaining 160 PP ranks, so mdrun stops. Every October 2026 benchRIB run had a quarter of its ranks on PME. That split is not balanced on every type. On hpc8a the PME ranks had more work than the PP ranks (`Average PME mesh/force load` 1.24–1.30, 3 runs), and md.log puts the PP/PME imbalance loss at 12.4–14.7%. On hpc7a the split was close to balanced (1.01, 2 runs), and md.log puts the loss at 0.4–0.7%.
 
