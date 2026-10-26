@@ -18,36 +18,21 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # ---------------------------------------------------------------------------
-# Measured data — LAMMPS LJ s=4, Loop time (s), means of N replicas.
-# Pulled from DynamoDB table LAMMPS_Benchmarks (us-east-1).
+# Measured data: in.lj at SCALE=4 for 100 timesteps, pure MPI, compared on
+# the LAMMPS-reported Loop time. Each value is the mean Loop time of 3 runs on
+# one Graviton3E node over the mean of the configuration's 3 runs, so higher
+# is faster. Only relative values and run counts are embedded here.
 # ---------------------------------------------------------------------------
+RUNS = 3  # runs per configuration
 
-# Arm ---------------------------------------------------------------------
+# Graviton3E (64 cores per node, OpenMPI 4): 1, 2 and 4 nodes
 nodes_arm = np.array([1, 2, 4])
+su_hpc7g = np.array([1.0000, 1.8846, 3.2274])
 
-# hpc7g (Graviton3E, OpenMPI 4): 3 replicas at every node count
-t_hpc7g_1n = [1.93697, 1.94593, 1.94921]
-t_hpc7g_2n = [1.01968, 1.03134, 1.04365]
-t_hpc7g_4n = [0.594353, 0.600465, 0.612252]
-t_hpc7g = np.array([np.mean(t_hpc7g_1n),
-                    np.mean(t_hpc7g_2n),
-                    np.mean(t_hpc7g_4n)])
-
-# m8g (Graviton4, OpenMPI 5): 3 replicas at 1N and 2N; 4N data not collected
-# in this sweep. Plotted as a partial curve.
-t_m8g_1n = [0.473154, 0.475054, 0.479638]
-t_m8g_2n = [0.352756, 0.352925, 0.359313]
+# Graviton4 (192 cores per node, OpenMPI 5): 1 and 2 nodes; 4N data not
+# collected in this sweep. Plotted as a partial curve.
 nodes_m8g = np.array([1, 2])
-t_m8g = np.array([np.mean(t_m8g_1n),
-                  np.mean(t_m8g_2n)])
-
-# ---------------------------------------------------------------------------
-# Speedups
-# ---------------------------------------------------------------------------
-baseline_arm = t_hpc7g[0]   # 1N hpc7g
-
-su_hpc7g = baseline_arm / t_hpc7g
-su_m8g   = baseline_arm / t_m8g
+su_m8g = np.array([4.0846, 5.4762])
 
 # ---------------------------------------------------------------------------
 # Styling — match WRF / OpenRadioss convention
@@ -101,15 +86,14 @@ plt.savefig("LAMMPS-LJ-Graviton3VsGraviton4.png",
 print("Wrote LAMMPS-LJ-Graviton3VsGraviton4.png")
 
 # ---------------------------------------------------------------------------
-# Summary table
+# Summary table (the README's)
 # ---------------------------------------------------------------------------
-print("\n=== Arm LJ s=4 Loop time (s) ===")
-print(f"{'Nodes':<6}{'hpc7g':>10}{'m8g':>10}{'hpc7g_su':>12}{'m8g_su':>12}")
+print("\n=== Arm LJ s=4: relative performance (1 Graviton3E node = 1.00), "
+      f"{RUNS} runs per point ===")
+print(f"{'Nodes':<6}{'Graviton3E':>12}{'Graviton4':>12}")
 for i, n in enumerate(nodes_arm):
     if n in nodes_m8g:
         m_idx = list(nodes_m8g).index(n)
-        print(f"{n}N    {t_hpc7g[i]:>10.4f}{t_m8g[m_idx]:>10.4f}"
-              f"{su_hpc7g[i]:>11.2f}x{su_m8g[m_idx]:>11.2f}x")
+        print(f"{n}N    {su_hpc7g[i]:>11.2f}x{su_m8g[m_idx]:>11.2f}x")
     else:
-        print(f"{n}N    {t_hpc7g[i]:>10.4f}{'—':>10}"
-              f"{su_hpc7g[i]:>11.2f}x{'—':>12}")
+        print(f"{n}N    {su_hpc7g[i]:>11.2f}x{'—':>12}")
