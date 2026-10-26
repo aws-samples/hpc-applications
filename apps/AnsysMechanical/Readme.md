@@ -253,8 +253,10 @@ before trusting a timing.
 
   * **MAPDL is memory bound, and for the sparse direct solver memory capacity
     decides everything.** Each benchmark/model has a documented memory
-    requirement. If the *aggregate* RAM of the job is below it, MAPDL falls back
-    to an **out-of-core** mode that does heavy I/O, and runtime can more than
+    requirement. If the *aggregate* RAM of the job does not exceed it with room
+    to spare (for the V26 Cluster models, about 1.5 times: the instance memory
+    in GiB over the figure in GB that `JOBS.CONFIG` lists), MAPDL falls back to
+    an **out-of-core** mode that does heavy I/O, and runtime can more than
     double. Size the job to fit in memory first; only then optimise for cores.
   * **Check which memory mode you got.** MAPDL states it on the `Memory Option:`
     line of the solver statistics at the end of its output (`In-Core` or
@@ -267,6 +269,23 @@ before trusting a timing.
     The iterative solvers (PCG, JCG) print no `Memory Option:` line. The line is
     verified on 2026 R1 only: on a release that does not print it, the sbatch
     records the memory mode as `unknown`.
+  * **Size the memory from what MAPDL prints.** Before the factorisation, the
+    sparse solver prints a memory summary, out-of-core runs included:
+    `Equation solver memory required for in-core mode` for rank 0, for the
+    busiest node (on more than one node) and summed over all ranks (under
+    `Total memory summed across all MPI ranks`). An out-of-core run also says
+    so in a WARNING whose text begins
+    `The Distributed Sparse Matrix Solver is running in out-of-core memory`, so
+    the output of one run tells you what in-core needs. Each process needs
+    memory beyond the solver's: in our in-core runs the total allocated was 1.1
+    to 1.6 times the summed in-core figure, more with more ranks. Every
+    sparse-direct run of ours with at least 1.52 times that figure in physical
+    memory ran in-core (MAPDL's closing `Physical memory available`, on more
+    than one node its `Physical memory available on all compute nodes` line);
+    from 1.46 to 1.51 times, V26direct-5 did on one hpc6id.32xlarge and
+    V26direct-6 did not on two hpc8a.96xlarge. Plan for about twice it.
+    Where the V26 Cluster models ran in-core is in
+    [Memory mode and node count](#memory-mode-and-node-count).
   * Because DMP aggregates memory across nodes, **adding a node can be far more
     effective than adding cores**: it raises the memory ceiling as well as the
     core count. Moving a model that is out-of-core on one node onto two nodes
@@ -598,17 +617,37 @@ Nodes x cores per node; relative performance, higher is faster.
   * On two nodes, the iterative models ran as fast at 48 cores per node as at 96
     (V26iter-6: 1.22 and 1.20; V26iter-4: 1.22 and 1.23), while the sparse-direct
     models still gained from 96 (V26direct-6: 1.47 to 1.97).
-  * The memory mode explains the largest steps. V26direct-5 (710 GB) ran
-    Optimal Out-of-Core on one hpc8a.96xlarge (768 GB) and In-Core on two, so
-    2 x 48 was 2.9x faster than 1 x 96 on the same 96 cores. V26direct-6
-    (1,100 GB) stayed out-of-core on two hpc8a nodes, and V26direct-4 (510 GB)
-    was in-core throughout. The figure in brackets is the requirement
-    `JOBS.CONFIG` lists, and both out-of-core cases had more RAM than it, so
-    read it as a floor: V26direct-6 did not run in-core on the 1,536 GB of two
-    hpc8a nodes, and did on two hpc6id.32xlarge (2,048 GB, see the NVMe table
-    below).
+  * The memory mode explains the largest steps. V26direct-5 ran Optimal
+    Out-of-Core on one hpc8a.96xlarge and In-Core on two, so 2 x 48 was 2.9x
+    faster than 1 x 96 on the same 96 cores. V26direct-6 stayed out-of-core on
+    two hpc8a nodes, and V26direct-4 was in-core throughout (see
+    [Memory mode and node count](#memory-mode-and-node-count)).
   * At the same layout, hpc8a.96xlarge was 1.15-1.59x as fast as
     hpc7a.96xlarge (13-37% less time).
+
+## Memory mode and node count
+
+MAPDL's memory mode for the three sparse-direct models in every run we archived,
+from its `Memory Option:` line, against the job's memory (the instance's memory
+in GiB, as EC2 lists it, times the nodes) and that memory over the figure in GB
+that `JOBS.CONFIG` lists:
+
+| Model (`JOBS.CONFIG`) | In-Core | Optimal Out-of-Core |
+|---|---|---|
+| V26direct-4 (510 GB) | 1 x hpc8a.96xlarge or 2 x hpc6a.48xlarge, 768 GiB (1.51x); 1 x hpc6id.32xlarge, 1,024 GiB (2.01x); 2 x hpc8a.96xlarge, 1,536 GiB (3.01x) | 1 x hpc6a.48xlarge, 384 GiB (0.75x) |
+| V26direct-5 (710 GB) | 1 x hpc6id.32xlarge, 1,024 GiB (1.44x); 2 x hpc8a.96xlarge, 1,536 GiB (2.16x); 2 x hpc6id.32xlarge, 2,048 GiB (2.88x) | 1 x hpc8a.96xlarge, hpc7a.96xlarge or c8i.96xlarge, 768 GiB (1.08x) |
+| V26direct-6 (1,100 GB) | 2 x hpc6id.32xlarge, 2,048 GiB (1.86x); 1 x r8i.96xlarge, 3,072 GiB (2.79x) | 1 x hpc8a.96xlarge, 768 GiB (0.70x); 1 x hpc6id.32xlarge, 1,024 GiB (0.93x); 2 x hpc8a.96xlarge, 1,536 GiB (1.40x) |
+
+Every configuration with at least 1.44 times the `JOBS.CONFIG` figure ran
+in-core, and every one with 1.40 times or less out-of-core, at every rank count
+we ran (16 to 192): the memory mode followed the job's memory, not its ranks. So
+read that figure as a floor, plan for about 1.5 times it, and add nodes to get
+there. The ratios divide the instance's GiB by `JOBS.CONFIG`'s GB, each as its
+source lists it, and the advice holds in those units. This rule of thumb, and
+the one for MAPDL's printed in-core figure under
+[Key settings](#key-settings--tips-performance-related-ones) (about twice it),
+rest on these three models and the nine combinations of instance type and node
+count in the table: check your own model's memory mode on its first run.
 
 ## Scratch on local NVMe vs FSx for Lustre
 
