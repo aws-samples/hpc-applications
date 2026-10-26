@@ -92,14 +92,14 @@ Both build scripts enable the same package set, sufficient to run all the benchm
 
 ## Benchmark
 
-Four models from the upstream LAMMPS [`bench/`](https://github.com/lammps/lammps/tree/stable/bench) directory are supported via the `MODEL` environment variable:
+Four models from the upstream LAMMPS [`bench/`](https://github.com/lammps/lammps/tree/stable/bench) directory are supported via the `MODEL` environment variable. Each has a default size and number of timesteps (see [Run length](#run-length)); `SCALE` and `TIMESTEPS` override them:
 
-| `MODEL` | Deck | Workload | Force field | Atoms at `SCALE=1` |
-|---------|------|----------|-------------|-------------------:|
-| `lj` (default) | `in.lj` | Lennard-Jones melt | Pair potential only | 32,000 |
-| `rhodo_scaled` | `in.rhodo.scaled` | Rhodopsin protein in water | CHARMM + PPPM | 32,000 |
-| `eam` | `in.eam` | Cu metal | EAM many-body | 32,000 |
-| `rhodo` | `in.rhodo` | Rhodopsin protein in water | CHARMM + PPPM | 32,000 at any `SCALE` |
+| `MODEL` | Deck | Workload | Force field | Default `SCALE` | Atoms at the default | Default `TIMESTEPS` |
+|---------|------|----------|-------------|----------------:|---------------------:|--------------------:|
+| `lj` (default) | `in.lj` | Lennard-Jones melt | Pair potential only | 8 | 16,384,000 | 15,000 |
+| `rhodo_scaled` | `in.rhodo.scaled` | Rhodopsin protein in water | CHARMM + PPPM | 4 | 2,048,000 | 6,000 |
+| `eam` | `in.eam` | Cu metal | EAM many-body | 4 | 2,048,000 | 30,000 |
+| `rhodo` | `in.rhodo` | Rhodopsin protein in water | CHARMM + PPPM | — | 32,000 | 6,000 |
 
 The atom count is 32,000 × `SCALE`³: `in.lj`, `in.eam` and `in.rhodo.scaled` replicate their box `SCALE` times along each axis, which makes `SCALE` the knob for weak-scaling studies. `in.rhodo` has no `replicate` command, so `MODEL=rhodo` runs its 32,000 atoms whatever `SCALE` is; to scale the rhodopsin model, use `MODEL=rhodo_scaled` (at `SCALE=1` it is the same 32,000 atoms). For `eam` at `SCALE=1` (32,000 atoms), the EAM neighbour-list build does not parallelise well past about 64 ranks: use `SCALE=2` or more at higher rank counts.
 
@@ -109,29 +109,31 @@ Input decks are tiny (~1 KB each) and are auto-fetched from the LAMMPS GitHub re
 
 The `bench/` decks end with `run 100`. At the sizes most runs use, a 100-step loop is short and the wall time is mostly start-up: in 56 runs of `lj` (`SCALE=1` and `4`), `rhodo` and `eam` (`SCALE=1`) on 1 to 4 nodes of `hpc8a.96xlarge`, `hpc7a.96xlarge`, `c7gn.16xlarge`, `m8g.48xlarge`, `hpc6id.32xlarge`, `r8i.96xlarge` and `i7i.48xlarge` (May and June 2026), the loop was a median 4.3% of the launcher's wall time, and at most 45%. Most of these runs overlapped 1 to 6 others of the same study on a shared FSx for Lustre file system; the 13 that ran alone gave a median of 5.0%. With `MODEL=rhodo_scaled` at `SCALE=16` (2 runs) the 100-step loop was 95% of the launcher's wall time.
 
-None of the decks reads a step-count variable, so a `-var` on the command line alone does not change their 100 steps: the benchmark scripts pass `TIMESTEPS` as `-var t`, and a run is 100 timesteps whatever `TIMESTEPS` is. To run longer, edit the `run 100` line of the cached deck under `/fsx/lammps/benchmarks/<model>/`, which the scripts copy into each run directory.
+None of the decks reads a step-count variable, so a `-var` on the command line alone does not change their 100 steps. The benchmark scripts copy the deck into the run directory with its `run 100` line made `run ${nsteps}`, and pass `-var nsteps` with the run length: the model's default `TIMESTEPS` above, or yours. The cached deck is not edited, and a deck without exactly one plain `run <steps>` line stops the job before any rank starts.
 
-The runs under [Performance](#performance) set that line to `run ${nsteps}` and passed `-var nsteps`: 15,000 timesteps for `lj` at `SCALE=8` (16,384,000 atoms), and 6,000 for `rhodo_scaled` and 30,000 for `eam`, both at `SCALE=4` (2,048,000 atoms). Their loop was 97–100% of LAMMPS's `Total wall time` in every run, on 1 to 8 nodes. A run's work grows with atoms × timesteps, so change the number of timesteps when you change `SCALE`: a larger `SCALE` at the same number runs longer (raise `sbatch --time`, or run fewer timesteps), and a smaller one may need more timesteps for the loop to dominate. To check any run, compare `Loop time` with `Total wall time` in its `log.lammps`.
+At the defaults the loop dominates: for `lj`, `rhodo_scaled` and `eam` it was 97–100% of LAMMPS's `Total wall time` in every run under [Performance](#performance), on 1 to 8 nodes. A run's work grows with atoms × timesteps, so change `TIMESTEPS` when you change `SCALE`: a larger `SCALE` at the same `TIMESTEPS` runs longer (raise `sbatch --time`, or lower `TIMESTEPS`), and a smaller one may need more timesteps for the loop to dominate. `MODEL=rhodo` runs `rhodo_scaled`'s 6,000 timesteps on its 32,000 atoms. To check any run, compare `Loop time` with `Total wall time` in its `log.lammps`.
 
 ### x86
 
 ```bash
-# LJ on hpc8a (default), 1 node
+# LJ on hpc8a (default), 1 node: SCALE=8, 15,000 timesteps
 sbatch --nodes=1 x86/lammps-benchmark.sbatch
 
-# Rhodopsin scaling sweep on hpc8a
+# Replicated rhodopsin (SCALE=4) scaling sweep on hpc8a
 for N in 1 2 4 8; do
-  sbatch --nodes=$N --export=ALL,MODEL=rhodo \
+  sbatch --nodes=$N --export=ALL,MODEL=rhodo_scaled \
     x86/lammps-benchmark.sbatch
 done
 
-# EAM on hpc7a with 2x lattice replication (8x atoms)
+# EAM on hpc7a, 4 nodes, with 8x the default atoms (SCALE=8) and an eighth of its timesteps
 sbatch -p hpc7a --ntasks-per-node=192 --nodes=4 \
-  --export=ALL,MODEL=eam,SCALE=2 \
+  --export=ALL,MODEL=eam,SCALE=8,TIMESTEPS=3750 \
   x86/lammps-benchmark.sbatch
 ```
 
 ### Arm
+
+The Arm launcher has the same defaults, which were sized on the 192-core x86 nodes above and not measured on Graviton. A run's time grows with `TIMESTEPS`, so for a quick check, on the 64-core `hpc7g` for example, set a smaller one (`TIMESTEPS=1500` runs a tenth of `lj`'s default).
 
 ```bash
 # Graviton3E (hpc7g) — LJ, 1 node
@@ -141,7 +143,7 @@ sbatch -p hpc7g --ntasks-per-node=64 --nodes=1 \
 
 # Graviton4 (m8g) — Rhodopsin, 4 nodes
 sbatch -p m8g --ntasks-per-node=192 --nodes=4 \
-  --export=ALL,MODEL=rhodo,LAMMPS_ENV=/fsx/lammps/aarch64-graviton4-ompi5/lammps-stable_2Aug2023_update3-ompi5-env.sh \
+  --export=ALL,MODEL=rhodo_scaled,LAMMPS_ENV=/fsx/lammps/aarch64-graviton4-ompi5/lammps-stable_2Aug2023_update3-ompi5-env.sh \
   Arm/lammps-benchmark.sbatch
 ```
 
@@ -150,6 +152,7 @@ All benchmark launchers:
 - Use EFA for inter-node MPI (verified at job start via `fi_info`, `mpirun --version`, and a `ldd | grep libmpi|libfabric` sanity block in the slurm log)
 - Print the OpenMPI MCA component selection at job start (`pml=cm`, `mtl=ofi`, `provider=efa`) so the log has direct evidence of the EFA fast path
 - Create a unique run directory under `/fsx/lammps/Run/`
+- Copy the deck into it and set the deck's run length (see [Run length](#run-length))
 - Drop page caches and enable transparent huge pages before the run
 - Extract `Loop time of N on M procs for K steps with L atoms` from `log.lammps` and compute timesteps/sec and atom-steps/sec
 - Record results to DynamoDB (see below)
@@ -162,8 +165,8 @@ With fewer MPI ranks per node than cores on `hpc8a.96xlarge` or `hpc7a.96xlarge`
 |----------|---------|-------------|
 | `LAMMPS_ENV` | see script | Path to environment setup script (select the build you want) |
 | `MODEL` | `lj` | `lj` / `rhodo_scaled` / `eam` / `rhodo` (see [Benchmark](#benchmark)) |
-| `SCALE` | `1` | Lattice replication factor — atom count scales as `SCALE^3` (`MODEL=rhodo` ignores it) |
-| `TIMESTEPS` | `100` | Passed to LAMMPS as `-var t`, which none of the decks reads: a run is the deck's 100 timesteps (see [Run length](#run-length)) |
+| `SCALE` | per model | Lattice replication factor — atom count scales as `SCALE^3` (`MODEL=rhodo` ignores it) |
+| `TIMESTEPS` | per model | Number of timesteps to run, from 1 to 10,000,000 (see [Run length](#run-length)) |
 | `THREADS_PER_RANK` | `1` | OpenMP threads per MPI rank. Pure MPI (default) is fastest for these models on this hardware |
 | `BASE_DIR` | `/fsx/lammps` | Root for run output directories |
 | `EFA_VERBOSE` | `0` | Set to `1` to add `--mca mtl_base_verbose 5 --mca pml_base_verbose 5` — useful once to confirm the EFA path, very noisy |
@@ -174,7 +177,7 @@ To record each run to a centralised DynamoDB table, see [`dynamodb/`](dynamodb/)
 
 ### x86 — hpc8a (Zen5) vs hpc7a (Zen4), 1 to 8 nodes
 
-This chart shows the scaling of LAMMPS `stable_2Aug2023_update3` on three `bench/` decks, each run long enough for its loop to dominate (see [Run length](#run-length)), on 1 to 8 nodes of [hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/) and [hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) instances: `lj` at `SCALE=8` (16,384,000 atoms, 15,000 timesteps), `rhodo_scaled` at `SCALE=4` (2,048,000 atoms, 6,000 timesteps) and `eam` at `SCALE=4` (2,048,000 atoms, 30,000 timesteps).
+This chart shows the scaling of LAMMPS `stable_2Aug2023_update3` on three `bench/` decks at their default sizes and run lengths (see [Benchmark](#benchmark)), on 1 to 8 nodes of [hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/) and [hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) instances: `lj` at `SCALE=8` (16,384,000 atoms, 15,000 timesteps), `rhodo_scaled` at `SCALE=4` (2,048,000 atoms, 6,000 timesteps) and `eam` at `SCALE=4` (2,048,000 atoms, 30,000 timesteps).
 
 Every node is fully populated with 192 MPI ranks and one OpenMP thread per rank, bound with `--bind-to core --map-by slot`, over EFA with OpenMPI 4.1.7 (`pml cm`, `mtl ofi`); one binary of the [x86 build](#x86-build) ran on both instance types. Performance is LAMMPS's own `Total wall time` (see [Key metrics](#key-metrics)), the median over each configuration's runs, relative to one `hpc7a.96xlarge` node running the same deck = 1.00× — higher is better. The percentages are each instance type's parallel efficiency against its own single node.
 
@@ -211,7 +214,7 @@ Key takeaways:
 
 ### Arm — Graviton3E (hpc7g) vs Graviton4 (m8g)
 
-These runs measured the decks' own 100-step loop: the Lennard-Jones melt deck (`in.lj`) at `SCALE=4` (2,048,000 atoms) for 100 timesteps, pure MPI (1 OpenMP thread per rank), compared on the LAMMPS-reported `Loop time` (the mean of 3 runs per point), which leaves the start-up out. To run the same, add `SCALE=4` to `--export`.
+These runs measured the decks' own 100-step loop: the Lennard-Jones melt deck (`in.lj`) at `SCALE=4` (2,048,000 atoms) for 100 timesteps, pure MPI (1 OpenMP thread per rank), compared on the LAMMPS-reported `Loop time` (the mean of 3 runs per point), which leaves the start-up out. To run the same, add `SCALE=4,TIMESTEPS=100` to `--export`.
 
 Both Arm builds use OpenMPI 5.0.9 (required for Graviton4 at 192 rpn) and CPU-tuned flags (`-mcpu=neoverse-v1` on hpc7g, `-mcpu=neoverse-v2` on m8g). hpc7g runs 64 ranks/node; m8g runs 192 ranks/node. Performance is normalised to a single `hpc7g.16xlarge` node — higher is better.
 
@@ -262,8 +265,15 @@ At a run length where the loop dominates (see [Run length](#run-length)), `Loop 
 | `record_to_dynamodb.sh` | Optional helper that records each benchmark run to a centralised DynamoDB table |
 | `README.md` | Table schema, IAM permissions, and setup instructions |
 
+### Tests ([`tests/`](tests/))
+
+| File | Description |
+|------|-------------|
+| `run-tests.sh` | Runs every shell test, then `bash -n` over the LAMMPS scripts |
+| `test-sbatch-e2e.sh` | Runs both benchmark scripts end to end, with stubbed Slurm, IMDS, MPI and `lmp`; [`tests/README.md`](tests/README.md) lists what it checks |
+
 ## Contribute your results
 
-The benchmark scripts in this folder call [`dynamodb/record-benchmark.sh`](dynamodb/record-benchmark.sh) after every successful run. The recorder saves the run as a small JSON record (`<record_id>.json`) and adds it to the shared AI-Powered HPC benchmark dataset when you have write access to it. That dataset trains a model that predicts HPC performance on AWS, so every result you share helps. Set `SOURCE=<YourOrg>` to tag your runs, and see [BENCHMARK-RECORDERS.md](../BENCHMARK-RECORDERS.md) for the options and how to send the record in.
+The benchmark scripts in this folder call [`dynamodb/record-benchmark.sh`](dynamodb/record-benchmark.sh) after every successful run. The recorder saves the run as a small JSON record (`<record_id>.json`) and adds it to the shared AI-Powered HPC benchmark dataset when you have write access to it. That dataset trains a model that predicts HPC performance on AWS, so every result you share helps. Set `SOURCE=<YourOrg>` to tag your runs, and see [BENCHMARK-RECORDERS.md](../BENCHMARK-RECORDERS.md) for the options and how to send the record in. Each record carries the model, its `SCALE` and atom count, and the timesteps LAMMPS ran, so that runs of different sizes and lengths stay apart.
 
 This is separate from the optional `record_to_dynamodb.sh` uploader described above, which stays off unless you enable it. To point the launchers at another copy of the contribution recorder, set `CONTRIB_RECORDER`.

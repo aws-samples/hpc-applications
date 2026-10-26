@@ -15,22 +15,32 @@
 #   - lj    : 32k Lennard-Jones particles, pair potential only
 #   - rhodo : 32k atom rhodopsin protein in water (PPPM long-range, SHAKE)
 #   - eam   : 32k Cu atoms with EAM many-body potential
-# All three accept lattice replication via -var x N -var y N -var z N,
-# which scales the atom count by N^3 — useful for weak scaling.
+# in.lj and in.eam accept lattice replication via -var x N -var y N -var z N,
+# which scales the atom count by N^3 — useful for weak scaling. in.rhodo
+# has no replicate command; MODEL=rhodo_scaled (in.rhodo.scaled) is the
+# same model, replicated the same way.
+#
+# Every deck ends with "run 100". The run directory gets a copy of the deck
+# with that line made "run ${nsteps}", and LAMMPS gets -var nsteps, so the
+# run length is TIMESTEPS (the cached deck is never edited).
 #
 # Override via --export=ALL,...:
 #   LAMMPS_ENV         path to env script (default: latest x86_64 build)
-#   MODEL              lj (default) | rhodo | eam
-#   SCALE              lattice replication factor (default: 1)
+#   MODEL              lj (default) | rhodo | rhodo_scaled | eam
+#   SCALE              lattice replication factor (default per model:
+#                      lj 8, rhodo_scaled 4, eam 4; rhodo ignores it)
 #                      atom count scales as SCALE^3
-#   TIMESTEPS          override the deck's default number of timesteps
+#   TIMESTEPS          timesteps to run, 1 to 10000000 (default per model:
+#                      lj 15000, rhodo and rhodo_scaled 6000, eam 30000)
 #   THREADS_PER_RANK   OpenMP threads per MPI rank (default: 1 = pure MPI)
 #   BASE_DIR           run output root (default: /fsx/lammps)
 #
 # Usage:
 #   sbatch --nodes=1 lammps-benchmark.sbatch                    # LJ, 1N
-#   sbatch --nodes=4 --export=ALL,MODEL=rhodo lammps-benchmark.sbatch
-#   sbatch --nodes=8 --export=ALL,MODEL=eam,SCALE=2 lammps-benchmark.sbatch
+#   sbatch --nodes=4 --export=ALL,MODEL=rhodo_scaled lammps-benchmark.sbatch
+#   # EAM on 4 hpc7a nodes, 8x the default atoms and 1/8 of its timesteps:
+#   sbatch -p hpc7a --nodes=4 \
+#     --export=ALL,MODEL=eam,SCALE=8,TIMESTEPS=3750 lammps-benchmark.sbatch
 
 #SBATCH --job-name=lammps
 #SBATCH -p hpc8a
@@ -44,25 +54,31 @@ set -euo pipefail
 
 LAMMPS_ENV="${LAMMPS_ENV:-/fsx/lammps/x86_64/lammps-stable_2Aug2023_update3-env.sh}"
 MODEL="${MODEL:-lj}"
-SCALE="${SCALE:-1}"
 THREADS_PER_RANK="${THREADS_PER_RANK:-1}"
 BASE_DIR="${BASE_DIR:-/fsx/lammps}"
 
 # ---------------------------------------------------------------------------
-# Per-model config: input file, default timesteps, extra files needed.
-# All three input scripts come from the LAMMPS bench/ directory and are
+# Per-model config: input file, default scale and run length, extra files
+# needed. All input scripts come from the LAMMPS bench/ directory and are
 # tiny (~1 KB) — we cache them on FSx so a single download covers every
 # job submitted on either cluster.
+#
+# The defaults run long enough for the timestep loop to dominate LAMMPS's
+# own "Total wall time": on 1 to 8 full nodes of hpc8a.96xlarge and
+# hpc7a.96xlarge the loop was 97-100% of it for lj, rhodo_scaled and eam.
 # ---------------------------------------------------------------------------
 case "${MODEL}" in
     lj)
         DECK_FILE="in.lj"
-        DEFAULT_TIMESTEPS=100
+        DEFAULT_SCALE=8
+        DEFAULT_TIMESTEPS=15000
         EXTRA_FILES=()
         ;;
     rhodo)
+        # in.rhodo has no replicate command: 32,000 atoms whatever SCALE is.
         DECK_FILE="in.rhodo"
-        DEFAULT_TIMESTEPS=100
+        DEFAULT_SCALE=1
+        DEFAULT_TIMESTEPS=6000
         EXTRA_FILES=("data.rhodo")
         ;;
     rhodo_scaled)
@@ -72,12 +88,14 @@ case "${MODEL}" in
         # (LJ-style). Used by Murata-Manufacturing's published
         # benchmark with -var x 16 -var y 16 -var z 16 -> ~131M atoms.
         DECK_FILE="in.rhodo.scaled"
-        DEFAULT_TIMESTEPS=100
+        DEFAULT_SCALE=4
+        DEFAULT_TIMESTEPS=6000
         EXTRA_FILES=("data.rhodo")
         ;;
     eam)
         DECK_FILE="in.eam"
-        DEFAULT_TIMESTEPS=100
+        DEFAULT_SCALE=4
+        DEFAULT_TIMESTEPS=30000
         EXTRA_FILES=("Cu_u3.eam")
         ;;
     *)
@@ -86,7 +104,13 @@ case "${MODEL}" in
         ;;
 esac
 
+SCALE="${SCALE:-${DEFAULT_SCALE}}"
 TIMESTEPS="${TIMESTEPS:-${DEFAULT_TIMESTEPS}}"
+# At most 8 digits before the arithmetic test, so a long value cannot overflow it.
+if ! [[ "${TIMESTEPS}" =~ ^[1-9][0-9]{0,7}$ ]] || (( TIMESTEPS > 10000000 )); then
+    echo "ERROR: TIMESTEPS must be a whole number from 1 to 10000000, such as 15000 (got '${TIMESTEPS}')" >&2
+    exit 1
+fi
 
 NPROC_TOTAL=$(( SLURM_JOB_NUM_NODES * SLURM_NTASKS_PER_NODE ))
 if (( THREADS_PER_RANK > 1 )); then
@@ -186,6 +210,30 @@ for extra in "${EXTRA_FILES[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
+# Run length. Each bench deck ends with one "run 100" line and reads no
+# step-count variable, so a -var alone cannot change it. The run directory's
+# copy of the deck gets that line as "run ${nsteps}", and LAMMPS gets
+# -var nsteps TIMESTEPS (below). A deck without exactly one plain
+# "run <steps>" line stops the job here, before any rank starts.
+# ---------------------------------------------------------------------------
+set_run_length() {
+    local deck="$1" runs
+    runs="$(grep -cE '^[[:space:]]*run[[:space:]]' "${deck}" || true)"
+    if [ "${runs}" != 1 ]; then
+        echo "ERROR: ${deck} has ${runs} run lines; exactly one plain 'run <steps>' line is needed to set the run length" >&2
+        return 1
+    fi
+    if ! grep -qE '^[[:space:]]*run[[:space:]]+[0-9]+[[:space:]]*$' "${deck}"; then
+        echo "ERROR: ${deck}: its run line is '$(grep -E '^[[:space:]]*run[[:space:]]' "${deck}")'; a plain 'run <steps>' line is needed to set the run length" >&2
+        return 1
+    fi
+    # shellcheck disable=SC2016  # ${nsteps} is LAMMPS's variable, not the shell's
+    sed -i -E 's/^([[:space:]]*run[[:space:]]+)[0-9]+([[:space:]]*)$/\1${nsteps}\2/' "${deck}"
+}
+set_run_length "${DECK_FILE}" || exit 1
+echo "Run length:    ${TIMESTEPS} timesteps (${DECK_FILE} runs \${nsteps})"
+
+# ---------------------------------------------------------------------------
 # Hostfile + system tuning
 # ---------------------------------------------------------------------------
 echo "=== Building hostfile and tuning nodes ==="
@@ -268,19 +316,12 @@ echo "BIND_FLAGS:    ${BIND_FLAGS}"
 X_ENV="-x OMP_NUM_THREADS -x OMP_PLACES -x OMP_PROC_BIND -x FI_PROVIDER -x FI_EFA_USE_DEVICE_RDMA -x RDMAV_FORK_SAFE -x PATH -x LD_LIBRARY_PATH"
 
 # ---------------------------------------------------------------------------
-# Build LAMMPS command line. The bench/ scripts use -var x/y/z to control
-# lattice replication, and the LJ deck supports -var t for an alternative
-# timestep override; here we set the run length via the universal
-# `-var t N` followed by `run $t`. Since not all decks have that pattern,
-# we use the safer LAMMPS `-var` and rely on the deck's existing $x/$y/$z
-# variables (defined in all three bench scripts).
+# Build LAMMPS command line. The bench/ decks read -var x/y/z for lattice
+# replication (in.rhodo reads none of them), and the run directory's copy of
+# the deck reads -var nsteps for its run length (set_run_length above).
 # ---------------------------------------------------------------------------
-LMP_ARGS=(-in "${DECK_FILE}" -var x "${SCALE}" -var y "${SCALE}" -var z "${SCALE}")
-
-# Some decks (in.rhodo) use -var t for timesteps; others (in.lj, in.eam)
-# don't. Pass it anyway — LAMMPS silently ignores unknown -var values
-# unless they're referenced.
-LMP_ARGS+=(-var t "${TIMESTEPS}")
+LMP_ARGS=(-in "${DECK_FILE}" -var x "${SCALE}" -var y "${SCALE}" -var z "${SCALE}"
+          -var nsteps "${TIMESTEPS}")
 
 # ---------------------------------------------------------------------------
 # Run
@@ -395,6 +436,8 @@ REPORT
 _lt="${LOOP_TIME:-}";           [ "${_lt}" != "0" ]  || _lt=""
 _tps="${TIMESTEPS_PER_SEC:-}";  [ "${_tps}" != "0" ] || _tps=""
 _asp="${ATOM_STEPS_PER_SEC:-}"; [ "${_asp}" != "0" ] || _asp=""
+# The run length, so that records of runs of different lengths stay apart.
+_steps="${LOOP_STEPS:-}";       [ "${_steps}" != "0" ] || _steps=""
 _atoms_m=""
 if [ -n "${ATOMS:-}" ] && [ "${ATOMS}" != "0" ]; then
     _atoms_m="$(awk -v x="${ATOMS}" 'BEGIN{if (x+0>0) printf "%.6g", x/1000000}' 2>/dev/null || true)"
@@ -410,7 +453,7 @@ if [ -n "${_contrib_recorder}" ] && [ -x "${_contrib_recorder}" ]; then
     LAMMPS_VERSION="${LAMMPS_TAG:-}" BENCHMARK_CASE="${MODEL}" \
     TIME_TO_SOLUTION="${_lt}" TIMESTEPS_PER_SEC="${_tps}" ATOMS_MILLION="${_atoms_m}" \
     ANALYSIS_TYPE="md" RUN_DIR="${WORKDIR}" "${_contrib_recorder}" \
-        --char "scale=${SCALE}" --metric "atom_steps_per_sec=${_asp}" \
+        --char "scale=${SCALE}" --char "timesteps=${_steps}" --metric "atom_steps_per_sec=${_asp}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 else
     echo "NOTE: contribution recorder not found; set CONTRIB_RECORDER=/path/to/record-benchmark.sh to record." >&2
