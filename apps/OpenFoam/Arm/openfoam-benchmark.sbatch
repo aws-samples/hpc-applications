@@ -7,8 +7,8 @@
 # rank placement on Graviton4 (OpenMPI 4.1.7 fails at 192 ranks/node).
 #
 # Mesh size is selectable via MESH_SIZE (65, 110, or 236 million cells).
-# Default is 65M ("coarse") which fits within the 124 GB RAM of hpc7g.16xlarge
-# during the serial decomposePar phase. Use 236M ("fine") on m8g (747 GB) for
+# Default is 65M ("coarse"), which fits the 128 GiB of one hpc7g.16xlarge
+# during the serial decomposePar phase. Use 236M ("fine") on m8g (768 GiB) for
 # a larger, more representative workload.
 #
 # Examples:
