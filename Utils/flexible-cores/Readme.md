@@ -12,6 +12,8 @@ For applications that are memory bandwidth bound, running on fewer cores per ins
 
 Although we are sharing these custom configurations and settings, we believe a scalable approach is to leverage the [Amazon EC2 Optimize CPU](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-optimize-cpu.html) options so that customers/partners can integrate this easily with their custom orchestration tools or software.
 
+What fewer cores per instance gains depends on the application and on how it is licensed: [Core Placement Strategies](#core-placement-strategies) gives what STAR-CCM+ and LS-DYNA measured.
+
 ## Files
 
 - `hello-cpu.c` - MPI application that reports which CPU core each rank is running on
@@ -132,7 +134,7 @@ export I_MPI_PIN_ORDER=spread         # Spread ranks across NUMA domains
 # I_MPI_PIN_DOMAIN=cache3            # Optional: pin to L3 cache domains
 ```
 
-**Best for:** Easy to use and portabl, letting Intel MPI handle core placement automatically.
+**Best for:** Easy to use and portable, letting Intel MPI handle core placement automatically. Check what it gives at your count (the script sets `I_MPI_DEBUG=5`): Intel MPI's own placement can leave the CCDs uneven (see [Pinning at the supported counts](#pinning-at-the-supported-counts)).
 
 #### Explicit (Manual Pinning)
 `hello-cpu.intelmpi.explicit.sbatch` uses dynamic explicit pinning:
@@ -142,7 +144,7 @@ export I_MPI_PIN_ORDER=spread         # Spread ranks across NUMA domains
 - Provides fine-grained control over core placement
 - Displays selected configuration for verification
 
-**Best for:** Performance tuning, specific core placement requirements, reproducible benchmarks.
+**Best for:** Performance tuning, specific core placement requirements, reproducible benchmarks, and counts where Intel MPI's default placement is uneven, such as 144 per node.
 
 ### OpenMPI Scripts
 
@@ -235,9 +237,90 @@ This output helps verify that your pinning configuration is working as expected 
 
 ### Core Placement Strategies
 
-1. **Maximum Spread (24 cores, stride 8)**: Best for memory/bandwidth-intensive applications, (expected higher cost per job)
-2. **Balanced (96 cores)**: Good to increase memory/bandwidth maximize performance (maintaining an acceptable cost per job)
-4. **Full Utilization (192 cores)**: Maximum throughput for highly parallel workloads (expected lower cost per job)
+AWS measured three ways of using these counts in October 2026, on Hpc8a.96xlarge and
+Hpc7a.96xlarge: with STAR-CCM+ 2606 (its bundled Open MPI 5.0.9 and its default
+`-cpubind bandwidth`), and with LS-DYNA MPP (Intel MPI 2021.18, with the explicit scripts'
+lists on under-populated nodes; car2car-ver10 on R13.1, the Camry v5a, the Yaris v2j and
+3cars on R17.0.1). The
+[STAR-CCM+](https://github.com/aws-samples/hpc-applications/blob/main/apps/StarCCM/Readme.md)
+and [LS-DYNA](https://github.com/aws-samples/hpc-applications/blob/main/apps/LS-Dyna/Readme.md)
+pages give the values for each model. Speed is a reference layout's time over the
+layout's time (higher is faster), the EC2 cost per run is nodes × time on the same
+instance type, and every value is a ratio of medians of 3 runs unless stated (of 4 for
+the STAR-CCM+ points whose first 3 runs spread more than 5%).
+
+**Full nodes (192 ranks per node).** On the same nodes, full nodes ran STAR-CCM+
+fastest: 1.10–1.18× as fast as 96 ranks per node on 4 nodes, and 1.64–1.91× as fast as
+48 on 8 nodes (AeroSUV 106M coupled and LeMans 100M segregated). They ran LS-DYNA
+1.05–1.29× as fast as 96 ranks per node on 2 nodes (car2car-ver10, the Camry and the
+Yaris). Two results go the other way, both car2car-ver10's: on one Hpc8a.96xlarge it
+ran 1.02× as fast at 144 ranks as at 192 (below), and on four nodes, where it has
+stopped scaling, 1.04–1.13× as fast at 96 or 48 ranks per node as at 192 (each
+four-node full point is a single run). For a given number of ranks, full nodes cost the
+least EC2 per run. So for these two applications, when the licence cost does not depend
+on the core count (STAR-CCM+'s Power licences cover a run on any number of cores), fill
+the nodes, and add nodes while the model scales.
+
+**The same ranks on more nodes (144, 96 or 48 ranks per node).** Spreading a fixed
+number of ranks over more nodes made most runs faster, and every layout cost more EC2
+per run. Relative to the fully populated layout of the same total on the same instance
+type = 1.00× (1 × 192 for 192 ranks, 2 × 192 for 384, 3 × 192 for 576):
+
+| Application: models | Ranks | Nodes × ranks per node | Speed | EC2 cost per run |
+|---|--:|---|--:|--:|
+| STAR-CCM+: AeroSUV 106M coupled, LeMans 100M segregated | 384 | 4 × 96 | 1.69–1.85× | 1.08–1.18× |
+| | | 8 × 48 | 2.15–2.42× | 1.65–1.86× |
+| STAR-CCM+: AeroSUV 106M coupled (Hpc8a.96xlarge) | 576 | 4 × 144 | 1.27× | 1.05× |
+| | | 6 × 96 | 1.72× | 1.16× |
+| LS-DYNA: car2car-ver10, Camry v5a, Yaris v2j, 3cars | 192 | 2 × 96 | 1.09–1.49× | 1.35–1.83× |
+| | | 4 × 48 | 0.88–1.54× | 2.60–4.56× |
+| LS-DYNA: car2car-ver10, Camry v5a | 384 | 4 × 96 | 0.93–1.29× | 1.55–2.16× |
+| | | 8 × 48 | 1.07–1.33× | 3.00–3.73× |
+
+Each range spans the models and both instance types. With the same ranks, a licence
+priced per core costs in proportion to the run time (LS-DYNA checks out its licence
+features per rank), so a speed of 1.69× is 0.59× the licence cost per run. STAR-CCM+
+gained more from the spread than LS-DYNA, whose gain depends on the model: on 4 × 48,
+the Camry ran 1.45–1.54× as fast as on one full node, and 3cars 0.88–1.05×. The runs of
+each layout agree within 5%, except car2car-ver10's on 4 × 96, which spread 7–12% (the
+LS-DYNA page says why).
+
+**Fewer ranks on the same nodes (144 or 96 per node).** With a licence per core, the
+licence cost per run follows ranks × time, which falls with the rank count even where
+the run slows down. On one node of AeroSUV 106M coupled (STAR-CCM+), relative to 192
+ranks = 1.00×, 144 ranks ran at 0.97× and 96 ranks at 0.91–0.98×, for 0.78× and
+0.51–0.55× the ranks × time (the 144-rank points' 4 runs spread 8–10%). LS-DYNA's
+car2car-ver10 on one Hpc8a.96xlarge ran 1.02× as fast with 144 ranks as with 192, on
+25% fewer ranks.
+
+Measure your own model at two or three of these layouts before you choose one: the gain
+varies with the application and the model.
+
+### Pinning at the supported counts
+
+In the runs measured below, the same number of ranks on every CCD mattered, and which
+of a CCD's cores they used mattered little.
+
+- **An MPI's own placement can leave the CCDs uneven.** With Intel MPI 2021.18's own
+  placement (pinning on, no processor list, `I_MPI_PIN_DOMAIN` and `I_MPI_PIN_ORDER` at
+  their defaults), 144 ranks per node got one or two cores each: 48 ranks two cores and
+  96 ranks one, so the CCDs held 4, 6 and 8 ranks in turn. LS-DYNA (car2car-ver10, one
+  Hpc8a.96xlarge, 3 runs each) took 4.3% longer that way than on the list for 144, which
+  puts 6 ranks on every CCD. At 96 ranks per node the same settings gave every rank two
+  neighbouring cores, 4 ranks on every CCD, and the two agreed within 0.2% (two nodes).
+- **Which cores of a CCD the ranks use mattered little.** On one node, STAR-CCM+'s
+  default binding, `-cpubind bandwidth`, put 6 ranks on every CCD at 144 ranks per node,
+  on the cores of the list for 144, and 4 at 96, on each CCD's first four cores, where
+  the list for 96 takes every other core. Pinned to the list for 96 instead
+  (`-cpubind off`, with a rankfile passed through `-mpiflags`), AeroSUV 106M coupled ran
+  as fast as the default within the runs' spread (one Hpc8a.96xlarge, 3 runs each:
+  medians within 0.1%, runs spread up to 6%).
+- **Check the placement** once for each count and MPI you use: with `hello-cpu`, Intel
+  MPI's pinning table (`I_MPI_DEBUG=5`, which the Intel MPI scripts here set, prints each
+  rank's cores under "CPU pinning"), Open MPI's `--report-bindings`, or STAR-CCM+'s
+  `-cpubind bandwidth,v`. The `lscpu` command in
+  [Other AMD instance types](#other-amd-instance-types) shows which L3, and so which
+  CCD, each core belongs to.
 
 ### NUMA Topology
 
