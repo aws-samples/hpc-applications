@@ -14,16 +14,13 @@ The sweep is the data feed for the Arm chart in
 populated) and the embedded PNGs in [`apps/Gromacs/README.md`](../README.md).
 
 It is **not** runnable from a developer laptop — it must run on the head
-node of the Arm cluster (`ec2-user@10.3.51.188`, reached via bastion
-`ec2-user@3.128.184.207`). The artefacts in this directory are intended
+node of the Arm cluster. The artefacts in this directory are intended
 to be `git pull`'d on the cluster head node and invoked there.
 
 ## Status
 
-**Documented, awaiting live execution.**
-
-As of the time this file was committed the prerequisites below are not all
-met (see § Prerequisites). Once they are, the operator runs
+**Ran in May and June 2026**; its charts are in
+[`apps/Gromacs/README.md`](../README.md). To run it again, the operator runs
 `scaling_sweep_manifest.sh` on the head node, waits for the 24 jobs to
 complete, runs `../dynamodb/scan_sweep.sh` to confirm DynamoDB landed
 every record, then pastes the per-replicate means into

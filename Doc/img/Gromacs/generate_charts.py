@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
 """
-Generate the GROMACS performance charts:
+Generate the GROMACS performance charts of the May-June 2026 sweeps:
 
-1. x86 chart: hpc8a (AMD EPYC Zen5) vs hpc7a (AMD EPYC Zen4) per workload
-2. Arm chart (Phase 2): hpc7g (Graviton3E / Neoverse V1) vs m8g (Graviton4 /
+1. Arm chart (Phase 2): hpc7g (Graviton3E / Neoverse V1) vs m8g (Graviton4 /
    Neoverse V2) per workload — gated behind ``data_available_arm`` until the
    Arm sweep lands.
-3. GPU chart (Phase 3): three-family comparison g6e (L40S) vs g7e (Blackwell
+2. GPU chart (Phase 3): three-family comparison g6e (L40S) vs g7e (Blackwell
    RTX PRO 6000) vs p5 (H100) per workload, plus a price/performance chart
    (ns/day per dollar-hour, us-east-2 on-demand) — gated behind
    ``data_available_gpu`` until the GPU sweep lands.
+
+The instance charts of the October 2026 runs, on the AMD types, are written by
+``generate_instance_charts.py`` in this directory.
 
 Workloads: ``benchMEM`` (~80k atoms, MPINAT membrane protein) and ``benchPEP-h``
 (~12M atoms, MPINAT peptide). Each cell holds the per-replicate ``Performance:
 <ns/day>`` values pulled from ``Gromacs_Benchmarks`` in DynamoDB (us-east-1).
 
 Speedups are normalised to a single-node baseline of the same architecture
-(1N hpc7a for x86, 1N hpc7g for Arm, 1-GPU g6e for GPU), matching the
+(1N hpc7g for Arm, 1-GPU g6e for GPU), matching the
 LAMMPS / OpenRadioss / WRF convention used elsewhere in this repo. Only
 speedups are rendered — absolute ``ns/day`` values do not appear on any chart
 .
@@ -65,7 +67,6 @@ WORKLOADS = [
 # ---------------------------------------------------------------------------
 # Node counts present in each sweep
 # ---------------------------------------------------------------------------
-NODES_X86 = [1, 2, 4]   # hpc7a / hpc8a
 NODES_ARM = [1, 2, 4]   # hpc7g / m8g
 GPU_COUNTS = [1, 2, 4, 8]  # g6e / p5 — single-node multi-GPU
 
@@ -77,27 +78,6 @@ GPU_COUNTS = [1, 2, 4, 8]  # g6e / p5 — single-node multi-GPU
 # ``ns/day`` for a single (instance, node-count, model) cell. Use ``[]`` for
 # cells that were not measured.
 # ---------------------------------------------------------------------------
-
-# x86 — benchMEM ----------------------------------------------------------
-# hpc7a (Zen 4 / Genoa, OpenMPI 4) — eu-north-1 sweep, 2026-05-27/28
-ns_hpc7a_1n_benchMEM = [224.622, 225.145]
-ns_hpc7a_2n_benchMEM = [285.998, 288.425]
-ns_hpc7a_4n_benchMEM = [321.734]   # single rep collected at 4N hpc7a
-# hpc8a (Zen5, OpenMPI 4) — eu-north-1 sweep, 2026-05-27/28
-ns_hpc8a_1n_benchMEM = [372.860, 373.431]
-ns_hpc8a_2n_benchMEM = [432.719, 486.112]
-ns_hpc8a_4n_benchMEM = [459.658, 496.032, 507.975]   # 3 reps including the smoke-test run
-
-# x86 — benchPEP-h --------------------------------------------------------
-# 4N cells collected pure-MPI (192 ranks/node, THREADS_PER_RANK=1) — consistent
-# with the 1N/2N layout and the fastest x86 layout for this 12M-atom system at
-# 4 nodes. (eu-north-1, 2026-06-16.)
-ns_hpc7a_1n_benchPEPh = [2.209, 2.406]
-ns_hpc7a_2n_benchPEPh = [4.646]
-ns_hpc7a_4n_benchPEPh = [9.964]          # 4N 192x1 pure-MPI
-ns_hpc8a_1n_benchPEPh = [3.329, 3.438]
-ns_hpc8a_2n_benchPEPh = [6.762, 6.838]
-ns_hpc8a_4n_benchPEPh = [13.735, 13.967, 14.105]   # 4N 192x1 pure-MPI, 3 reps
 
 # Arm — benchMEM ----------------------------------------------------------
 # hpc7g (Graviton3E / Neoverse V1, c7gn.16xlarge 64 c/n, OpenMPI 5) — us-east-2 sweep 2026-05-29
@@ -131,7 +111,7 @@ ns_m8g_4n_benchPEPh   = [4.407, 4.463]
 # GPU — benchMEM ----------------------------------------------------------
 # Single-node multi-GPU scaling, GROMACS v2026.1 / CUDA 13. ns/day per
 # replicate. g6e = L40S (sm_89), g7e = Blackwell RTX PRO 6000 (sm_120),
-# p5 = H100 (sm_90). Measured on hpc-4 (us-east-2), .48xlarge SKUs, 2026-06-01/02.
+# p5 = H100 (sm_90). Measured in us-east-2, .48xlarge SKUs, 2026-06-01/02.
 #
 # benchMEM (~80k atoms) is run 1-GPU ONLY: it is far too small to split
 # across GPUs, so multi-GPU anti-scales hard and stalls. Evidence: g6e
@@ -192,17 +172,6 @@ GPU_PRICE_USD_PER_HR = {
 # ---------------------------------------------------------------------------
 # Per-workload lookup tables — keep numeric values out of matplotlib calls.
 # ---------------------------------------------------------------------------
-X86_DATA = {
-    "benchMEM": {
-        "hpc7a": [ns_hpc7a_1n_benchMEM, ns_hpc7a_2n_benchMEM, ns_hpc7a_4n_benchMEM],
-        "hpc8a": [ns_hpc8a_1n_benchMEM, ns_hpc8a_2n_benchMEM, ns_hpc8a_4n_benchMEM],
-    },
-    "benchPEP-h": {
-        "hpc7a": [ns_hpc7a_1n_benchPEPh, ns_hpc7a_2n_benchPEPh, ns_hpc7a_4n_benchPEPh],
-        "hpc8a": [ns_hpc8a_1n_benchPEPh, ns_hpc8a_2n_benchPEPh, ns_hpc8a_4n_benchPEPh],
-    },
-}
-
 ARM_DATA = {
     "benchMEM": {
         "hpc7g": [ns_hpc7g_1n_benchMEM, ns_hpc7g_2n_benchMEM, ns_hpc7g_4n_benchMEM],
@@ -257,8 +226,8 @@ MPS_G7E = {
 # Styling — match LAMMPS / WRF / OpenRadioss convention
 # ---------------------------------------------------------------------------
 BAR_W = 0.35
-BASELINE_COLOR = "#4E79A7"     # hpc7a (x86) / hpc7g (Arm) / g6e (GPU)
-COMPARISON_COLOR = "#F28E2B"   # hpc8a (x86) / m8g  (Arm) / p5  (GPU)
+BASELINE_COLOR = "#4E79A7"     # hpc7g (Arm) / g6e (GPU)
+COMPARISON_COLOR = "#F28E2B"   # m8g  (Arm) / p5  (GPU)
 EDGE_COLOR = "black"
 GRID_LINESTYLE = "--"
 GRID_ALPHA = 0.5
@@ -626,39 +595,10 @@ def render_mps_gain_chart(
 
 
 # ---------------------------------------------------------------------------
-# Chart 1 — x86 hpc8a vs hpc7a (per workload)
-# ---------------------------------------------------------------------------
-print("x86 charts (hpc8a vs hpc7a):")
-x86_rendered = 0
-for model_id, subtitle in WORKLOADS:
-    fname = f"Gromacs-{model_id}-Hpc8aVsHpc7a.png"
-    cells = X86_DATA[model_id]
-    ok = render_two_instance_chart(
-        workload_id=model_id,
-        workload_subtitle=subtitle,
-        x_values=NODES_X86,
-        baseline_lists=cells["hpc7a"],
-        comparison_lists=cells["hpc8a"],
-        baseline_label="hpc7a (AMD EPYC Zen4)",
-        comparison_label="hpc8a (AMD EPYC Zen5)",
-        baseline_unit_label="N",
-        x_axis_label="Number of nodes (192 cores/node, both partitions)",
-        output_filename=fname,
-        suptitle="GROMACS — hpc8a (Zen5) vs hpc7a (Zen4)   "
-                 "[GCC + OpenMPI 4 + EFA]",
-    )
-    if ok:
-        x86_rendered += 1
-
-if x86_rendered == 0:
-    print("  no x86 charts rendered — fill in the per-replicate lists at the "
-          "top of this script and re-run.")
-
-# ---------------------------------------------------------------------------
-# Chart 2 — Arm Graviton3E (hpc7g) vs Graviton4 (m8g) — Phase 2
+# Chart 1 — Arm Graviton3E (hpc7g) vs Graviton4 (m8g) — Phase 2
 # ---------------------------------------------------------------------------
 if data_available_arm:
-    print("\nArm charts (m8g vs hpc7g):")
+    print("Arm charts (m8g vs hpc7g):")
     for model_id, subtitle in WORKLOADS:
         fname = f"Gromacs-{model_id}-Graviton3VsGraviton4.png"
         cells = ARM_DATA[model_id]
@@ -681,7 +621,7 @@ else:
           "sweep data has been pulled from DynamoDB.")
 
 # ---------------------------------------------------------------------------
-# Chart 3 — GPU three-family comparison (g6e / g7e / p5) — Phase 3
+# Chart 2 — GPU three-family comparison (g6e / g7e / p5) — Phase 3
 # Plus a price/performance chart (ns/day per dollar-hour) per workload.
 # ---------------------------------------------------------------------------
 if data_available_gpu:
@@ -714,7 +654,7 @@ else:
           "sweep results have been filled into the ns_* lists.")
 
 # ---------------------------------------------------------------------------
-# Chart 4 — GPU MPS GPU-sharing (Phase 3, redone)
+# Chart 3 — GPU MPS GPU-sharing (Phase 3, redone)
 #   MPS throughput-gain vs system size (g7e), one bar group per system
 # ---------------------------------------------------------------------------
 if data_available_mps:
