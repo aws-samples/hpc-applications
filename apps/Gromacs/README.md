@@ -293,7 +293,7 @@ All benchmark launchers:
 
 ## MPI ranks and OpenMP threads
 
-`THREADS_PER_RANK` sets the OpenMP threads per MPI rank, and the CPU launchers run `--ntasks-per-node / THREADS_PER_RANK` ranks per node, so keep it a divisor of the cores per node. On one node they run `gmx mdrun -ntmpi <ranks> -ntomp <threads> -pin on -pinoffset 0 -pinstride 1`: GROMACS pins the threads itself. On more nodes, `mpirun` binds each rank and its threads to consecutive cores (`--bind-to core --map-by slot` for one thread per rank, `--map-by ppr:<ranks>:node:PE=<threads>` for more).
+`THREADS_PER_RANK` sets the OpenMP threads per MPI rank, and the CPU launchers run `--ntasks-per-node / THREADS_PER_RANK` ranks per node, so keep it a divisor of the cores per node. On one node they run `gmx mdrun -ntmpi <ranks> -ntomp <threads> -pin on -pinoffset 0 -pinstride 1`: GROMACS pins the threads itself, and the launchers export no `OMP_PLACES` or `OMP_PROC_BIND` there (with them set, libgomp binds gmx's first thread to one core at start-up, and every Thread_MPI rank starts on that core). On more nodes, `mpirun` binds each rank and its threads to consecutive cores (`--bind-to core --map-by slot` for one thread per rank, `--map-by ppr:<ranks>:node:PE=<threads>` for more).
 
 On hpc8a and hpc7a (24 CCDs of 8 cores per node) and hpc6a (12 groups of 8 cores sharing an L3 cache), use 1, 2, 4 or 8 threads per rank: each rank's threads then stay within one L3, the same principle as [flexible cores](../../Utils/flexible-cores/). Check the L3 layout of other AMD types with `lscpu -e=CPU,CORE,SOCKET,CACHE` before choosing; Graviton has no such groups.
 

@@ -433,10 +433,18 @@ fi
 
 # ---------------------------------------------------------------------------
 # OpenMP + EFA tuning. These vars are forwarded to every rank via -x.
+# OMP_PLACES / OMP_PROC_BIND bind the threads of mpirun's ranks. A Thread_MPI
+# run (one node) leaves pinning to gmx -pin on and gets neither: with them set,
+# libgomp binds gmx's first thread to one core at start-up, and every
+# Thread_MPI rank starts on that core.
 # ---------------------------------------------------------------------------
 export OMP_NUM_THREADS="${THREADS_PER_RANK}"
-export OMP_PLACES=cores
-export OMP_PROC_BIND=close
+if (( SLURM_JOB_NUM_NODES == 1 )) && [ "${ENV_VARIANT}" = "tmpi" ]; then
+    unset OMP_PLACES OMP_PROC_BIND
+else
+    export OMP_PLACES=cores
+    export OMP_PROC_BIND=close
+fi
 
 export FI_PROVIDER=efa
 export FI_EFA_USE_DEVICE_RDMA=1
