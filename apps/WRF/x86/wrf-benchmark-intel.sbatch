@@ -125,12 +125,15 @@ if [ -f rsl.error.0000 ]; then
     fi
     echo "=== Timing from rsl.error.0000 ==="
     grep "Timing for main" rsl.error.0000 | tail -5
-    AVG_STEP=$(grep "Timing for main" rsl.error.0000 | awk '{sum+=$9; n++} END {if(n>0) printf "%.2f", sum/n; else print "N/A"}')
+    # Each step's time is the number before "elapsed seconds", $(NF-2). It is $9
+    # only with a fixed time step: an adaptive one labels the step "main (dt= ...)".
+    AVG_STEP=$(grep "Timing for main" rsl.error.0000 | awk '{sum+=$(NF-2); n++} END {if(n>0) printf "%.2f", sum/n; else print "N/A"}')
     echo "Average time per timestep: ${AVG_STEP}s"
     # WRF counts each output write and boundary read in the step that makes it,
-    # so the average includes I/O that does not get faster with more nodes. To
-    # compare node counts, use the median or the steady step instead, from
-    # lib/wrf-step-timing.sh (its header gives the rule).
+    # so the average includes I/O that does not get faster in proportion to the
+    # node count. To see how the time steps scale with the node count, use the
+    # median or the steady step instead, from lib/wrf-step-timing.sh (its header
+    # gives the rule).
     _step_lib="${WRF_STEP_TIMING_LIB:-}"
     for _c in "${_step_lib}" \
               "${SLURM_SUBMIT_DIR:-.}/../lib/wrf-step-timing.sh" \

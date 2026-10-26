@@ -13,9 +13,11 @@ or one the test writes itself. Every time in them is synthetic.
 ## What is covered and why
 
 The benchmark scripts report `AVG_STEP`, the mean of every `Timing for main`
-line of `rsl.error.0000`. WRF counts each history or restart write, and each
-lateral-boundary read, in the `Timing for main` line of the step that makes it,
-so the average includes I/O that does not get faster with more nodes.
+line of `rsl.error.0000`, each step's time being the number before
+`elapsed seconds` on its line. WRF counts each history or restart write, and
+each lateral-boundary read, in the `Timing for main` line of the step that
+makes it, so the average includes I/O that does not get faster in proportion to
+the node count.
 `lib/wrf-step-timing.sh` computes two values that leave it out: the median of
 every step, and the steady step, the mean of every step but the first and
 those that follow a `Timing for Writing` line (history, restart) or a
@@ -28,6 +30,7 @@ a single domain, and WRF prints no timing line for auxiliary input streams
 | `hourly-history.rsl` | 12 steps, a history write before the first step of every synthetic hour and one after the last step | 1.15000 | 1.11111 |
 | `restart-write.rsl` | a restart write alone, then a history and a restart write before the same step (8 steps: an even count) | 2.10000 | 2.00000 |
 | `lateral-boundary.rsl` | a lateral-boundary read in the middle of the run | 3.05000 | 3.00000 |
+| `adaptive-dt.rsl` | 8 steps labelled `main (dt= ...)`, as with an adaptive time step (one of them `(dt=100.00)`), and a history write in the middle; average 2.10 | 1.20000 | 1.13333 |
 | `no-steps.rsl` | a run that stopped before its first step | N/A | N/A |
 
 `test-step-timing.sh` asserts those values, with the arithmetic in its
@@ -42,6 +45,11 @@ locale is installed). Finally it pins the contract the scripts rely on: under
 `set -euo pipefail` both functions print one value and never stop the caller,
 and sourcing the library defines its two functions and changes no shell option.
 
+`tests/test_wrf_step_timing.py`, at the repository root (`pytest tests`), adds
+property tests with Hypothesis: the helper against a reference on generated
+logs, and every benchmark script's own `AVG_STEP` pipeline on generated steps
+with a fixed and an adaptive time step. It also runs this suite.
+
 `test-sbatch-e2e.sh` runs **every benchmark script itself**
 (`x86/wrf-benchmark*.sbatch` and `Arm/wrf-benchmark.sbatch`), with `curl`,
 `scontrol`, `srun`, `mpirun`, `sudo`, `aws` and `wrf.exe` replaced by stubs, so
@@ -52,6 +60,9 @@ call. For each script it asserts:
   * the average step is unchanged, and the report gives `Median timestep:` and
     `Steady timestep:` right after `Avg timestep:` (the x86 scripts also print
     both next to their average in the checking section);
+  * with an adaptive time step (`adaptive-dt.rsl`), the average reads each
+    step's time before `elapsed seconds`, which is not the 9th field there, in
+    the report, the x86 checking section and the recorder's arguments;
   * the recorder gets `median_timestep_seconds` and `steady_timestep_seconds`
     next to `avg_timestep_seconds`, and this repository's recorder, run in
     `--dry-run`, would store them as two new numeric attributes of a valid

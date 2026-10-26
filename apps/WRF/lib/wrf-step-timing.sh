@@ -14,9 +14,10 @@
 # output or reads boundaries carries that I/O in its own "Timing for main"
 # line, which rsl.error.0000 prints right after the I/O's own
 # "Timing for Writing ..." or "Timing for processing ..." line. The I/O does
-# not get faster with more nodes: with hourly history output the average folds
-# in a share of I/O that grows with the node count, so node counts compared on
-# it understate scaling. The two values below leave that I/O out:
+# not get faster in proportion to the node count: with hourly history output
+# the average folds in a share of I/O that grows with the node count, so node
+# counts compared on it understate scaling. The two values below leave that
+# I/O out:
 #
 #   wrf_median_step <rsl file>  the median of every "Timing for main" step.
 #   wrf_steady_step <rsl file>  the mean of every step but the first and those
@@ -29,9 +30,9 @@
 # auxiliary input streams (auxinput*, such as SST updates), so steps that read
 # them are not left out.
 #
-# Like AVG_STEP they read every "Timing for main" line, of every domain. A
-# step's time is the number before "elapsed seconds" on its line (the field
-# AVG_STEP reads as $9 on a fixed-time-step run). Both print seconds with 5
+# Like AVG_STEP they read every "Timing for main" line, of every domain, and
+# take a step's time from the same field: the number before "elapsed seconds"
+# on its line, with a fixed or an adaptive time step. Both print seconds with 5
 # decimals, the precision WRF prints its timings with, or N/A when nothing can
 # be computed: no file, no step line, or no step left once the exclusions
 # apply. Both always return 0, so a caller running under `set -euo pipefail`

@@ -204,6 +204,23 @@ for s in "${SCRIPTS[@]}"; do
         && ok "the recorder also gets the median and the steady step" \
         || bad "the recorder gets the median and the steady step" "${want}" "$(head -1 "${RECLOG}")"
 
+    # With an adaptive time step WRF labels each step "main (dt= ...)", which
+    # moves its time off the 9th field: the average reads the number before
+    # "elapsed seconds", as the median and the steady step do. Steps 6.4 1.2 1.0
+    # 1.4 | 3.6 1.0 1.2 1.0: average 16.8 / 8; median (1.2 + 1.2) / 2; steady
+    # without step 1 and the step after the history write, 6.8 / 6.
+    run_script "${s}" "${FIX}/adaptive-dt.rsl"
+    has "adaptive time step: the average reads each step's time" "Avg timestep:     2.10s"
+    has "adaptive time step: the median step" "Median timestep:  1.20000s"
+    has "adaptive time step: the steady step" "Steady timestep:  1.13333s"
+    if [ "${x86}" -eq 1 ]; then
+        has "adaptive time step: the checking section's average" "Average time per timestep: 2.10s"
+    fi
+    want='ARGS: --metric avg_timestep_seconds=2.10 --metric median_timestep_seconds=1.20000 --metric steady_timestep_seconds=1.13333'
+    grep -qxF -- "${want}" "${RECLOG}" \
+        && ok "adaptive time step: the recorder gets that average" \
+        || bad "adaptive time step: the recorder gets that average" "${want}" "$(head -1 "${RECLOG}")"
+
     run_script "${s}" "${FIX}/hourly-history.rsl" SLURM_SUBMIT_DIR="${WRF_APP}"
     has "submitted from apps/WRF: the library is found" "Median timestep:  1.15000s"
     run_script "${s}" "${FIX}/hourly-history.rsl" SLURM_SUBMIT_DIR="$(cd "${WRF_APP}/../.." && pwd)"

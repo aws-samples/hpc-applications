@@ -57,7 +57,7 @@ rsl() {
     done
 }
 
-echo "== the four fixtures =="
+echo "== the fixtures =="
 
 # Steps 8.7 1.0 1.2 1.1 | 4.1 1.0 1.3 1.1 | 4.2 1.1 1.2 1.0, a history write
 # before the first step of every hour and one after the last step.
@@ -85,6 +85,14 @@ is "lateral boundary: median" "3.05000" \
     wrf_median_step "${FIX}/lateral-boundary.rsl"
 is "lateral boundary: the step after a lateral-boundary read is left out" "3.00000" \
     wrf_steady_step "${FIX}/lateral-boundary.rsl"
+
+# Steps 6.4 1.2 1.0 1.4 | H | 3.6 1.0 1.2 1.0, each labelled "main (dt= ...)"
+# as WRF labels them with an adaptive time step, one of them "(dt=100.00):"
+#   median: (1.2 + 1.2) / 2;  steady: without 6.4 and 3.6, 6.8 / 6
+is "adaptive time step: median" "1.20000" \
+    wrf_median_step "${FIX}/adaptive-dt.rsl"
+is "adaptive time step: steady step" "1.13333" \
+    wrf_steady_step "${FIX}/adaptive-dt.rsl"
 
 is "missing file: median is N/A" "N/A" wrf_median_step "${WORK}/rsl.error.0000"
 is "missing file: steady step is N/A" "N/A" wrf_steady_step "${WORK}/rsl.error.0000"
