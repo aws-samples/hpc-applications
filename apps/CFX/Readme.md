@@ -74,11 +74,11 @@ cell agree within 3% on the whole run.
 |---|---|--:|--:|--:|
 | hpc8a.96xlarge | 192 (1) | 1.41 | 1.27 | 1.40 |
 | hpc8a.96xlarge | 384 (2) | 1.61 | 1.22 | 2.68 |
-| hpc8a.96xlarge | 768 (4) | 1.79 | 1.15 | 5.18 |
+| hpc8a.96xlarge | 768 (4) | 1.79 | 1.15 | 5.17 |
 | hpc8a.96xlarge | 1,920 (10) | 1.66 | 1.05 | 10.63 |
 | hpc7a.96xlarge | 192 (1) | 1.00 | 1.00 | 1.00 |
-| hpc7a.96xlarge | 768 (4) | 1.26 | 0.89 | 3.72 |
-| hpc7a.96xlarge | 1,536 (8) | 1.17 | 0.81 | 6.50 |
+| hpc7a.96xlarge | 768 (4) | 1.26 | 0.89 | 3.71 |
+| hpc7a.96xlarge | 1,536 (8) | 1.17 | 0.81 | 6.51 |
 | hpc6a.48xlarge | 192 (2) | 0.78 | 0.95 | 0.74 |
 | hpc6a.48xlarge | 768 (8) | 1.17 | 0.84 | 2.79 |
 | hpc6a.48xlarge | 1,536 (16) | 1.13 | 0.77 | 4.98 |
@@ -134,7 +134,7 @@ with the explicit lists from
 | perf_Pump_R16 | hpc8a.96xlarge | 1.07 (0.83) | 1.18 (1.37) |
 | perf_Pump_R16 | hpc7a.96xlarge | 0.87 (0.59) | 1.00 (1.00) |
 | perf_LeMansCar_R16 | hpc8a.96xlarge | 1.02 (0.76) | 1.21 (1.40) |
-| perf_LeMansCar_R16 | hpc7a.96xlarge | 0.81 (0.54) | 1.00 (1.00) |
+| perf_LeMansCar_R16 | hpc7a.96xlarge | 0.81 (0.53) | 1.00 (1.00) |
 
 Relative performance of the whole run, with the iterations in brackets, each case
 against one hpc7a.96xlarge at 48 cores = 1.00. Partitioning took about the same
