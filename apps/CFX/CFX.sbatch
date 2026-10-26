@@ -51,6 +51,41 @@ _rec_t0="$(date +%s)"
 _rec_rc=$?
 _rec_secs=$(( $(date +%s) - ${_rec_t0:-$(date +%s)} ))
 [ "${_rec_secs}" -gt 0 ] 2>/dev/null || _rec_secs=""
+
+# ---------------------------------------------------------------------------
+# The time of the iterations. The wall clock above also covers partitioning
+# and cfx5solve's own start-up and wrap-up, which do not get faster with more
+# cores. The solver writes its output file (<case>_NNN.out) to this directory,
+# with the iterations' own time on its "CFD Solver wall clock seconds:" line
+# and one "OUTER LOOP ITERATION =" line per iteration of a steady-state run:
+# compare node counts on these. The record's time_to_solution_seconds stays
+# the wall clock. N/A when there is no output file, or no number on that line.
+# ---------------------------------------------------------------------------
+_iter_out=""
+for _f in "${workdir}/$(basename "${def_file}" .def)"_[0-9][0-9][0-9].out; do
+    [ -f "${_f}" ] && _iter_out="${_f}"    # the glob sorts: the last is the newest run
+done
+if [ -n "${_iter_out}" ]; then
+    CFX_OUTPUT_NAME="${_iter_out##*/}" LC_ALL=C awk '
+        /CFD Solver wall clock seconds:/ {
+            v = $NF; sub(/\r$/, "", v)
+            if (v ~ /^[0-9]+(\.[0-9]*)?([Ee][-+]?[0-9]+)?$/) { t = v + 0; have = 1 }
+        }
+        /OUTER LOOP ITERATION =/         { n++ }
+        END {
+            f = ENVIRON["CFX_OUTPUT_NAME"]
+            if (have) printf "Iteration time: %.2f s (CFD Solver wall clock seconds, %s)\n", t, f
+            else      printf "Iteration time: N/A (no CFD Solver wall clock seconds value in %s)\n", f
+            if (have && n > 0) printf "Time per iteration: %.3f s (%d outer loop iteration%s)\n", t / n, n, (n == 1 ? "" : "s")
+            else if (have)     printf "Time per iteration: N/A (no outer loop iterations in %s)\n", f
+            else               print "Time per iteration: N/A"
+        }' "${_iter_out}" \
+        || printf 'Iteration time: N/A (cannot read %s)\nTime per iteration: N/A\n' "${_iter_out##*/}"
+else
+    echo "Iteration time: N/A (no $(basename "${def_file}" .def)_NNN.out in ${workdir})"
+    echo "Time per iteration: N/A"
+fi
+
 _recorder="${DYNAMODB_RECORDER:-}"
 for _c in "${_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/dynamodb/record-benchmark.sh" \

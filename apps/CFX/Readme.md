@@ -36,7 +36,7 @@ We would strongly recommend to use [Amazon FSx for Lustre](https://aws.amazon.co
     * Of the AMD instance types measured, the one that shows the **best price/performance** is the [Hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/): on the 100M Airfoil it took 29% less time than [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) on the same nodes, and 22% less per run at On-Demand prices in eu-north-1 (October 2026). See [Performance](#performance).
     * Hpc6a cost about the same per run as Hpc7a, at 0.78-0.82x its speed. See [Instance types at 192 cores](#instance-types-at-192-cores).
     * Of the Intel instance types measured, c8i.96xlarge ran both Airfoils fastest; two hpc6id.32xlarge nodes (128 cores) cost 0.93 times as much per run for the 50M Airfoil and 1.02 times for the 100M, at 0.62-0.67x its speed. See [Instance types at 192 cores](#instance-types-at-192-cores).
-  * CFX scales on multiple nodes, and its iterations scale best: on the 100M Airfoil they ran 7.6x as fast on ten Hpc8a nodes (1,920 cores) as on one, while partitioning, which cfx5solve runs once before the solver starts, took longer with more partitions. So the more iterations a run has, the more nodes pay off: the 100M Airfoil's 10-iteration benchmark was fastest on four Hpc8a nodes, on 768 cores of full nodes and faster still on 384 cores at 96 per node (see [Under-populated nodes](#under-populated-nodes)). To compare node counts, compare the time of the iterations (see [Performance](#performance)).
+  * CFX scales on multiple nodes, and its iterations scale best: on the 100M Airfoil they ran 7.6x as fast on ten Hpc8a nodes (1,920 cores) as on one, while partitioning, which cfx5solve runs once before the solver starts, took longer with more partitions. So the more iterations a run has, the more nodes pay off: the 100M Airfoil's 10-iteration benchmark was fastest on four Hpc8a nodes, on 768 cores of full nodes and faster still on 384 cores at 96 per node (see [Under-populated nodes](#under-populated-nodes)). To compare node counts, compare the time of the iterations, which the sbatch example in this directory prints after the solve (see [Performance](#performance)).
   * **Use Intel MPI over EFA.** CFX ships its own Intel MPI and Open MPI. With the EFA settings of the sbatch example in this directory (`I_MPI_FABRICS=shm:ofi`, `I_MPI_OFI_PROVIDER=efa`, `I_MPI_MULTIRAIL=1`), Intel MPI runs over EFA: with `I_MPI_DEBUG=5` the job output shows `libfabric provider: efa` and the EFA devices used. CFX's Open MPI printed no libfabric provider, and its whole run was 0.90x as fast on the 50M Airfoil on two Hpc8a nodes. See [MPI and libfabric](#mpi-and-libfabric).
   * **Intel MPI's own libfabric is enough.** Loading the EFA installer's instead (`I_MPI_OFI_LIBRARY_INTERNAL=0` and `module load libfabric-aws`, as the Fluent scripts here do) gave the same times.
   * **Fewer ranks per node, at the flexible-cores counts.** CFX is memory-bandwidth bound: the same 192 ranks on two or four Hpc8a or Hpc7a nodes ran the 100M Airfoil's iterations 1.9-2.8x as fast as on one full node, which pays when the core count is the constraint, as with per-core licences (see [Under-populated nodes](#under-populated-nodes)). On hpc8a.96xlarge and hpc7a.96xlarge, run 24, 48, 72, 96, 120, 144, 168 or 192 ranks per node, the counts that put the same number of ranks on each of the 24 CCDs. When Intel MPI's `mpirun` starts the ranks, as with the sbatch example's start method, pin them with the list for that count from [Utils/flexible-cores](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores): export `I_MPI_PIN_PROCESSOR_LIST` in the job script before `cfx5solve`, and check the placement in Intel MPI's pinning table (`I_MPI_DEBUG=5`). In the runs on this page, Intel MPI's own placement put 4 and 2 ranks on every CCD at 96 and 48 ranks per node, the same balance as the lists.
@@ -72,7 +72,17 @@ to the end of the solver run. The wall clock around `cfx5solve`, which the sbatc
 example in this directory passes to the recorder as `TIME_TO_SOLUTION`, also covers
 cfx5solve's own start-up and wrap-up: in these runs it was 2-7% longer than the
 whole run for the 50M and 100M Airfoils, and a larger share of the short small-case
-runs (12-17% for Pump on one Hpc8a node at 24 cores).
+runs (12-17% for Pump on one Hpc8a node at 24 cores). After the solve, the sbatch
+example also prints the time of the iterations from the output file, to compare
+with the Iterations columns below:
+
+```
+Iteration time: <seconds> s (CFD Solver wall clock seconds, <case>_001.out)
+Time per iteration: <seconds> s (<n> outer loop iterations)
+```
+
+The recorder still gets the wall clock. [`tests/run-tests.sh`](tests/run-tests.sh)
+checks the two lines and the recorded time, with stubbed Slurm and solver.
 
 ## 100M Airfoil, full nodes
 
