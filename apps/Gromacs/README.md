@@ -495,6 +495,14 @@ The launcher extracts:
 | `scaling_sweep_manifest.sh` | Chart-sweep manifest of the GPU single-simulation sweep (32 jobs) — operator hand-off documented in [`GPU/SCALING_SWEEP.md`](GPU/SCALING_SWEEP.md) |
 | `SCALING_SWEEP.md` | Operator runbook for that sweep (prerequisites, run commands, DynamoDB confirmation, hand-off to the chart pipeline) |
 
+### Tests ([`tests/`](tests/))
+
+| File | Description |
+|------|-------------|
+| `run-tests.sh` | Runs every shell test (`test-*.sh`; each says at its top what it checks) and `bash -n` over the GROMACS scripts; no Slurm, EC2, GROMACS, MPI, AWS credentials or network needed (`pytest tests` runs it too) — see [`tests/README.md`](tests/README.md) |
+| `harness.sh` | The stubs and the `run_launcher` helper the tests share |
+| `test-launchers.sh` | Runs the x86 and Arm launchers end to end with stubs: binary choice, rank and thread layout, mdrun options, results block, input checks |
+
 ### DynamoDB result store (optional, [`dynamodb/`](dynamodb/))
 
 | File | Description |
