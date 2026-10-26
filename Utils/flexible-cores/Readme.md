@@ -27,7 +27,7 @@ Flexible core configurations allow you to:
 - Maximize memory bandwidth per core for memory-intensive applications
 - Test application scaling behavior without changing instance types or rebooting the instance with a different Optimize CPU setting.
 - Optimize cost/licenses by using only the cores needed for your workload
-- Emulate different instance sizes (Hpc8a.12xlarge, Hpc8a.24xlarge, Hpc8a.48xlarge)
+- Emulate smaller instance sizes (Hpc7a.12xlarge, Hpc7a.24xlarge, Hpc7a.48xlarge) and their core counts
 - Experiment with different NUMA and cache locality patterns
 - Compare performance across different core counts on the same hardware
 
@@ -35,14 +35,24 @@ Flexible core configurations allow you to:
 
 | Cores | Emulated Instance | Core Distribution | Notes |
 |-------|-------------------|-------------------|-------|
-| 24    | Hpc8a.12xlarge   | 1 cores per CCD  | Maximum spread across CCDs, 1/8 capacity |
-| 48    | Hpc8a.24xlarge   | 2 cores per CCD  | Balanced distribution, 1/4 capacity |
+| 24    | Hpc7a.12xlarge (on Hpc7a) | 1 core per CCD   | Maximum spread across CCDs, 1/8 capacity |
+| 48    | Hpc7a.24xlarge (on Hpc7a) | 2 cores per CCD  | Balanced distribution, 1/4 capacity |
 | 72    | Custom           | 3 consecutive cores per CCD | Good cache locality, 3/8 capacity |
-| 96    | Hpc8a.48xlarge   | 4 cores per CCD    | 1/2 capacity |
+| 96    | Hpc7a.48xlarge (on Hpc7a) | 4 cores per CCD    | 1/2 capacity |
 | 120   | Custom           | 5 cores per CCD  | 5/8 capacity  |
 | 144   | Custom           | 6 cores per CCD  | 3/4 capacity  |
 | 168   | Custom           | 7 cores per CCD  | 7/8 capacity  |
-| 192   | Hpc8a.96xlarge   | All physical cores (both sockets) | Full instance capacity  |
+| 192   | Hpc8a.96xlarge, Hpc7a.96xlarge | All physical cores (both sockets) | Full instance capacity  |
+
+Hpc7a also comes in smaller sizes: Hpc7a.12xlarge, Hpc7a.24xlarge and Hpc7a.48xlarge have 24, 48 and 96 cores.
+Hpc8a comes in one size, and EC2 lists exactly these eight counts as the core counts that the
+[Optimize CPU](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-optimize-cpu.html) options accept for
+Hpc8a.96xlarge (it lists none for Hpc7a.96xlarge). Query a Region that offers Hpc8a:
+
+```bash
+aws ec2 describe-instance-types --region eu-north-1 --instance-types hpc8a.96xlarge \
+    --query 'InstanceTypes[0].VCpuInfo.ValidCores'
+```
 
 ### Counts not in the table
 
