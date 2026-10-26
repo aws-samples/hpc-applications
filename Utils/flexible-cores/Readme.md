@@ -184,7 +184,7 @@ For explicit pinning scripts, simply update the `--ntasks` parameter. The script
 ```bash
 #SBATCH --ntasks=48   # Will use 48-core configuration
 #SBATCH --ntasks=96   # Will use 96-core configuration
-#SBATCH --ntasks=192  # Will use all vCPUs
+#SBATCH --ntasks=192  # Will use all 192 physical cores
 ```
 
 ## MPI Configuration Details
