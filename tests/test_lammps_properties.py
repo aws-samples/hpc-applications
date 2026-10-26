@@ -257,8 +257,8 @@ def test_loop_time_parser_rejects_non_matches(garbage):
 def test_workdir_uniqueness_for_distinct_inputs(a, b):
     if a == b:
         return  # equal inputs are allowed to yield equal paths
-    pa = workdir("/fsx/lammps", "lammps", "lj", "hpc-4", *a)
-    pb = workdir("/fsx/lammps", "lammps", "lj", "hpc-4", *b)
+    pa = workdir("/fsx/lammps", "lammps", "lj", "cluster", *a)
+    pb = workdir("/fsx/lammps", "lammps", "lj", "cluster", *b)
     assert pa != pb
 
 

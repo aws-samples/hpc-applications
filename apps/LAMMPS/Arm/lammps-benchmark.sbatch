@@ -79,8 +79,8 @@ case "${MODEL}" in
         # in.rhodo.scaled is the same Rhodopsin protein in water as
         # in.rhodo, but the input deck replicates the box via -var x/y/z
         # so the atom count grows as 32000 * x*y*z instead of 32000 * x^3
-        # (LJ-style). Used by Murata-Manufacturing's published
-        # benchmark with -var x 16 -var y 16 -var z 16 -> ~131M atoms.
+        # (LJ-style). A published configuration ran it with
+        # -var x 16 -var y 16 -var z 16 -> ~131M atoms.
         DECK_FILE="in.rhodo.scaled"
         DEFAULT_SCALE=4
         DEFAULT_TIMESTEPS=6000
