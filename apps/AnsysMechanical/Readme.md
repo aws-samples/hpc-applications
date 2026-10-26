@@ -328,10 +328,33 @@ before trusting a timing.
 
 Out-of-core solves write a large amount of scratch to the working directory —
 **about 0.5-1.2 TB per job** for the V26 Cluster sparse-direct models, against
-0.01-0.23 TB when the same models run in-core. MAPDL reports it as
-`Sum of disk space used on all processes` in its I/O statistics (`Sum Scratch
-Used(All)` in the closing box is scratch *memory*, and it is largest for in-core
-runs). On a shared filesystem this is a hard planning constraint:
+0.01-0.23 TB when the same models run in-core. MAPDL reports it in its closing
+statistics as `Sum of disk space used on all processes`, and on more than one
+node the busiest node's as `Maximum disk space used on any compute node`
+(`Sum Scratch Used(All)` in the closing box is scratch *memory*, and it is
+largest for in-core runs). Every accepted V26 Cluster run we archived, in
+MAPDL's GB (GiB):
+
+| Model | MAPDL memory mode | Runs | Whole job | Busiest node, on two nodes |
+|---|---|--:|--:|--:|
+| V26direct-4 | In-Core | 18 | 10.8-12.0 GB | 6.3-7.2 GB |
+| V26direct-4 | Optimal Out-of-Core | 4 | 502.6-530.4 GB | |
+| V26direct-5 | In-Core | 20 | 50.6-55.0 GB | 36.5-37.5 GB |
+| V26direct-5 | Optimal Out-of-Core | 23 | 700.5-724.5 GB | |
+| V26direct-6 | In-Core | 7 | 229.8-231.3 GB | 169.5 GB |
+| V26direct-6 | Optimal Out-of-Core | 19 | 749.2-1,210.6 GB | 579.7-651.7 GB |
+| V26iter-4 | none (JCG) | 23 | 36.4-44.9 GB | 31.1-31.2 GB |
+| V26iter-5 | none (PCG) | 37 | 196.2-203.0 GB | |
+| V26iter-6 | none (PCG) | 26 | 192.0-196.5 GB | 110.8-112.1 GB |
+
+On one node the memory mode set the size, not the rank count: V26direct-6 wrote
+1,199.5-1,210.6 GB out-of-core at every count we ran, 16 to 96 ranks. On two
+hpc8a.96xlarge nodes it wrote 1,201.1 GB at 48 cores per node and 1,153.2 GB at
+96, one run each; the table's 749.2 GB (579.7 GB on the busiest node) is one run
+at 64 cores per node, not one of the balanced counts (see
+[Benchmarks](#benchmarks)). On two nodes the busiest node held 51-86% of the
+whole job's. On a shared filesystem the whole job's scratch is a hard planning
+constraint:
 
   * Size the filesystem for `concurrent_jobs x per_job_scratch`, not for the
     input data.
@@ -384,6 +407,9 @@ runs). On a shared filesystem this is a hard planning constraint:
     is ephemeral: anything not copied back is lost when the node scales down.
     The [AnsysMechanical.sbatch](https://github.com/aws-samples/hpc-applications/blob/main/apps/AnsysMechanical/AnsysMechanical.sbatch)
     in this directory implements all of this (`SCRATCH_MODE=auto|nvme|shared`).
+    It is a benchmark launcher: before the reclaim it copies back MAPDL's output
+    and error logs, not its results files (`file*.rst`) or database (`file.db`),
+    so for a production solve copy those as well, or use `SCRATCH_MODE=shared`.
   * **Check that `/scratch` is local instance store, with room, before using
     it.** A writable `/scratch` proves neither: on an instance type without
     instance store it can be a plain directory on the root EBS volume, and the
@@ -403,7 +429,9 @@ runs). On a shared filesystem this is a hard planning constraint:
     out of scratch space fails the run, so for an out-of-core model set
     `SCRATCH_MIN_FREE_GIB` to what the model writes on a node. MAPDL reports the
     whole job's as `Sum of disk space used on all processes`, which is also the
-    most any one node can need.
+    most any one node can need, and on more than one node the busiest node's as
+    `Maximum disk space used on any compute node` (the last column of the table
+    at the top of this section).
 
 ## Exit codes: do not use them to decide success
 
