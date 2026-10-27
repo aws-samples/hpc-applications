@@ -151,11 +151,12 @@ EOF
 # The contribution recorder: log that it was called, store nothing.
 cat > "${STUBS}/bin/recorder-stub.sh" <<'EOF'
 #!/bin/bash
-echo "BENCHMARK_CASE=${BENCHMARK_CASE:-} NS_PER_DAY=${NS_PER_DAY:-}" >> "${RECORDER_LOG}"
+echo "BENCHMARK_CASE=${BENCHMARK_CASE:-} NS_PER_DAY=${NS_PER_DAY:-} ARGS: $*" >> "${RECORDER_LOG}"
 exit 0
 EOF
 # gmx and gmx_mpi: log each mdrun (arguments and OpenMP environment) and write an
-# md.log with synthetic timings; `gmx dump` prints an atom count.
+# md.log with synthetic timings and GROMACS's step count; `gmx dump` prints an atom
+# count.
 cat > "${STUBS}/gmx-stub" <<'EOF'
 #!/bin/bash
 name="$(basename "$0")"
@@ -166,7 +167,15 @@ if [ "$1" = "mdrun" ]; then
     echo "ARGS: $*"
     echo "ENV: OMP_NUM_THREADS=${OMP_NUM_THREADS-<unset>} OMP_PLACES=${OMP_PLACES-<unset>} OMP_PROC_BIND=${OMP_PROC_BIND-<unset>}"
   } >> "${GMX_LOG}"
-  cat > md.log <<'MD'
+  # md.log counts step 0 too, as GROMACS's does: -nsteps N gives "Statistics over
+  # N+1 steps", so a test can tell the requested run length from md.log's count.
+  nsteps=""; prev=""
+  for a in "$@"; do [ "${prev}" = -nsteps ] && nsteps="${a}"; prev="${a}"; done
+  : > md.log
+  if [[ "${nsteps}" =~ ^[0-9]+$ ]]; then
+    printf '\tStatistics over %d steps using %d frames\n' "$(( nsteps + 1 ))" "$(( nsteps / 100 + 1 ))" > md.log
+  fi
+  cat >> md.log <<'MD'
                Core t (s)   Wall t (s)        (%)
        Time:     1000.000       10.000    10000.0
                  (ns/day)    (hour/ns)

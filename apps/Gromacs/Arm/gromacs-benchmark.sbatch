@@ -754,8 +754,12 @@ REPORT
 # non-fatal). This uses the *contribution* recorder
 # (apps/Gromacs/dynamodb/record-benchmark.sh), SEPARATE from the optional
 # internal record_to_dynamodb.sh block above. It self-collects host details
-# from the environment and parses md.log in this run dir, so it needs no
-# arguments. A recorder problem NEVER fails a good solve (`|| echo` keeps it
+# from the environment and parses md.log in this run dir; the launcher adds
+# what makes runs comparable, under the names the dataset gives them: the run
+# length (nsteps), whether PME tuning was left on (pme_tuning, off when the
+# mdrun command line has -notunepme) and the OpenMP threads per rank
+# (threads_per_rank). A recorder problem
+# NEVER fails a good solve (`|| echo` keeps it
 # non-fatal, even under `set -e` + the ERR trap). Override the recorder path
 # with CONTRIB_RECORDER (NOT DYNAMODB_RECORDER, which the internal block uses),
 # and set SOURCE=<YourOrg> to tag your contributions.
@@ -767,6 +771,8 @@ _atoms_m=""
 if [ -n "${ATOMS:-}" ] && [ "${ATOMS}" != "0" ]; then
     _atoms_m="$(awk "BEGIN{printf \"%.6g\", ${ATOMS}/1000000}" 2>/dev/null || true)"
 fi
+_pme_tuning=on
+case " ${MDRUN_ARGS[*]} " in *" -notunepme "*) _pme_tuning=off ;; esac
 _contrib_recorder="${CONTRIB_RECORDER:-}"
 for _c in "${_contrib_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
@@ -783,6 +789,8 @@ elif [ -n "${_contrib_recorder}" ] && [ -x "${_contrib_recorder}" ]; then
     GROMACS_VERSION="${GROMACS_TAG:-}" BENCHMARK_CASE="${MODEL}" \
     NS_PER_DAY="${_ns}" TIME_TO_SOLUTION="${_wall}" ATOMS_MILLION="${_atoms_m}" \
     RUN_DIR="${WORKDIR}" "${_contrib_recorder}" \
+        --metric "nsteps=${TIMESTEPS}" --char "pme_tuning=${_pme_tuning}" \
+        --metric "threads_per_rank=${THREADS_PER_RANK}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 else
     echo "NOTE: contribution recorder not found; set CONTRIB_RECORDER=/path/to/record-benchmark.sh to record." >&2
