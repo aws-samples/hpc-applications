@@ -110,10 +110,12 @@ sbatch --nodes=N x86/openfoam-benchmark-openmpi.sbatch
 sbatch --nodes=N x86/openfoam-benchmark-intelmpi.sbatch
 ```
 
-Both scripts run one MPI rank per core, 192 per node, on the `hpc8a` partition by default: a full `hpc8a.96xlarge`. `hpc7a.96xlarge`, `m8a.48xlarge` and `c8i.96xlarge` also have 192 cores, and run with the same defaults on their own partition (`-p`). On `hpc6a.48xlarge` (96 cores), run the AVX2 build (Option 3) at 96 ranks per node:
+Without `--nodes`, the two scripts run on 8 nodes of their default instance type, `hpc8a.96xlarge`: the largest node count at which it kept 60% efficiency or more on the 236M mesh (see [Where scaling stops paying](#where-scaling-stops-paying)). Their time limit fits 200 iterations there (the default `END_TIME`), with `decomposePar` in the job and the mesh already in `CASE_SRC`; give a longer `--time` for fewer nodes, another instance type, more iterations, or a first run, which downloads and extracts the mesh in the job. A job that ends while it extracts the mesh leaves a partial `constant/polyMesh` in `CASE_SRC`, which later runs take as the mesh: delete that directory before the next run.
+
+Both scripts run one MPI rank per core, 192 per node, on the `hpc8a` partition by default: a full `hpc8a.96xlarge`. `hpc7a.96xlarge`, `m8a.48xlarge` and `c8i.96xlarge` also have 192 cores, and run with the same defaults on their own partition (`-p`). On `hpc6a.48xlarge` (96 cores), run the AVX2 build (Option 3) at 96 ranks per node, with a time limit for the node count (`--time`):
 
 ```bash
-sbatch -p hpc6a --nodes=N --ntasks-per-node=96 \
+sbatch -p hpc6a --nodes=N --ntasks-per-node=96 --time=HH:MM:SS \
   --export=ALL,OPENFOAM_ENV=/fsx/openfoam/x86_64-avx2/openfoam-v2512-env.sh \
   x86/openfoam-benchmark-openmpi.sbatch
 ```

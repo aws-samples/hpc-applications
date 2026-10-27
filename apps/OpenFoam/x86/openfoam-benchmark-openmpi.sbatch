@@ -2,9 +2,9 @@
 # OCC DrivAer Fine Mesh (236M cells) — OpenMPI on hpc8a
 #SBATCH --job-name=occ-drivaer-fine
 #SBATCH -p hpc8a
-#SBATCH --nodes=32
+#SBATCH --nodes=8
 #SBATCH --ntasks-per-node=192
-#SBATCH --time=50:00:00
+#SBATCH --time=02:00:00
 #SBATCH --exclusive
 
 set -euo pipefail
