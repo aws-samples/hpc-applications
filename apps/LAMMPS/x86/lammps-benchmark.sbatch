@@ -121,14 +121,79 @@ fi
 NRANK_PER_NODE=$(( SLURM_NTASKS_PER_NODE / THREADS_PER_RANK ))
 
 # ---------------------------------------------------------------------------
-# Workdir under BASE_DIR/Run/...
+# Instance metadata (IMDSv2), for the run directory's name and the
+# cores-per-node check below. Each call gives up after a few seconds, and an
+# answer that is not an instance type name (an error page, for example; the
+# name is tested in the C locale) counts as none: INSTANCE_TYPE is then empty,
+# and the job goes on.
 # ---------------------------------------------------------------------------
-TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-INSTANCE_TYPE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
+IMDS_CURL=(curl -fs --connect-timeout 2 --max-time 5)
+TOKEN=$("${IMDS_CURL[@]}" -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") || TOKEN=""
+INSTANCE_TYPE=$("${IMDS_CURL[@]}" -H "X-aws-ec2-metadata-token: ${TOKEN}" http://169.254.169.254/latest/meta-data/instance-type) || INSTANCE_TYPE=""
+( LC_ALL=C; [[ "${INSTANCE_TYPE}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || INSTANCE_TYPE=""
 # REGION is referenced by the optional DynamoDB recorder block at the
 # bottom of this file (commented out by default).
 # shellcheck disable=SC2034
-REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+REGION=$("${IMDS_CURL[@]}" -H "X-aws-ec2-metadata-token: ${TOKEN}" http://169.254.169.254/latest/meta-data/placement/region) || REGION=""
+
+# ---------------------------------------------------------------------------
+# Cores per node on hpc8a.96xlarge and hpc7a.96xlarge: 192 cores in 24 CCDs
+# of 8, one L3 per CCD. Only 24, 48, 72, 96, 120, 144, 168 or 192 cores per
+# node give every CCD the same number of cores (Utils/flexible-cores/), so
+# any other count stops the job here, before the run directory is made.
+# Other instance types and sizes get no flexible-cores list and no check.
+# When the instance type could not be read, a node whose CPU lscpu shows as
+# AMD with 192 cores (sockets x cores per socket) could be one of those two
+# types, so it gets their check and lists; any other node runs without
+# them, with a NOTE. lscpu is asked, and a NOTE printed, only where the type
+# would change what the job does: a count outside the list, or a pure-MPI
+# count below 192, which the lists pin. No run is refused only because IMDS
+# did not answer.
+# ---------------------------------------------------------------------------
+amd_192_cores() {
+    local info vendor sockets per_socket
+    info="$(LC_ALL=C lscpu 2>/dev/null)" || return 1
+    vendor="$(awk -F: '/^[[:space:]]*Vendor ID:/ { gsub(/[[:space:]]/, "", $2); print $2; exit }' <<< "${info}")"
+    sockets="$(awk -F: '/^[[:space:]]*Socket\(s\):/ { gsub(/[[:space:]]/, "", $2); print $2; exit }' <<< "${info}")"
+    per_socket="$(awk -F: '/^[[:space:]]*Core\(s\) per socket:/ { gsub(/[[:space:]]/, "", $2); print $2; exit }' <<< "${info}")"
+    [ "${vendor}" = AuthenticAMD ] && [[ "${sockets}" =~ ^[1-9][0-9]{0,2}$ ]] \
+        && [[ "${per_socket}" =~ ^[1-9][0-9]{0,3}$ ]] && (( sockets * per_socket == 192 ))
+}
+FLEX_CORES_TYPE=0
+FLEX_NODE="${INSTANCE_TYPE}"
+FLEX_ON="this type"
+case "${SLURM_NTASKS_PER_NODE}" in
+    192) TYPE_MATTERS=0 ;;   # a full node: no list on any type
+    24|48|72|96|120|144|168) TYPE_MATTERS=$(( THREADS_PER_RANK == 1 ? 1 : 0 )) ;;   # pinned with a list
+    *) TYPE_MATTERS=1 ;;     # refused on those two types
+esac
+case "${INSTANCE_TYPE}" in
+    hpc8a.96xlarge|hpc7a.96xlarge)
+        FLEX_CORES_TYPE=1 ;;
+    "")
+        if (( TYPE_MATTERS == 0 )); then
+            :
+        elif amd_192_cores; then
+            FLEX_CORES_TYPE=1
+            FLEX_NODE="this 192-core AMD node"
+            FLEX_ON="this node"
+            echo "NOTE: the instance type could not be read from the instance metadata, and lscpu shows a 192-core AMD CPU, as on hpc8a.96xlarge and hpc7a.96xlarge, so their flexible-cores check and lists apply" >&2
+        else
+            echo "NOTE: the instance type could not be read from the instance metadata and lscpu shows no 192-core AMD CPU, so the flexible-cores check for hpc8a.96xlarge and hpc7a.96xlarge is skipped" >&2
+        fi ;;
+esac
+if (( FLEX_CORES_TYPE == 1 )); then
+    case "${SLURM_NTASKS_PER_NODE}" in
+        24|48|72|96|120|144|168|192) ;;
+        *)
+            echo "ERROR: ${SLURM_NTASKS_PER_NODE} cores per node would load the 24 CCDs of ${FLEX_NODE} unevenly; on ${FLEX_ON} use 24, 48, 72, 96, 120, 144, 168 or 192 (--ntasks-per-node; see Utils/flexible-cores/)" >&2
+            exit 1 ;;
+    esac
+fi
+
+# ---------------------------------------------------------------------------
+# Workdir under BASE_DIR/Run/...
+# ---------------------------------------------------------------------------
 WORKDIR="${BASE_DIR}/Run/${SLURM_JOB_NAME}/${MODEL}/${SLURM_CLUSTER_NAME:-cluster}/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${INSTANCE_TYPE}-${NRANK_TOTAL}x${THREADS_PER_RANK}-s${SCALE}-$(date '+%d-%m-%Y-%H-%M')"
 
 mkdir -p "${WORKDIR}"
@@ -266,24 +331,26 @@ fi
 #
 # Three regimes:
 #   1. Hybrid MPI + OpenMP                  -> map-by ppr:rpn:node:PE=t
-#   2. Pure MPI, fewer ranks/node than cores
-#      ("flex-cores" subset benchmarking)   -> --bind-to cpu-list:ordered
+#   2. Pure MPI on hpc8a.96xlarge or hpc7a.96xlarge (or, when the type
+#      could not be read, a 192-core AMD node: see above) with fewer
+#      than 192 ranks/node ("flex-cores" subset
+#      benchmarking)                        -> --bind-to cpu-list:ordered
 #                                              with a hand-tuned list that
 #                                              spreads ranks symmetrically
 #                                              across all 24 CCDs and both
 #                                              sockets, exposing the full L3
 #                                              cache to a smaller rank set.
 #                                              See Utils/flexible-cores/.
-#   3. Pure MPI at full density (all 192 c) -> map-by slot
+#   3. Any other pure MPI run (a full node,
+#      or another instance type)            -> map-by slot
 #
-# Supported flex-cores rank-per-node values (mirroring
+# The flex-cores rank-per-node values (mirroring
 # Utils/flexible-cores/hello-cpu.openmpi.explicit.sbatch):
 #     24, 48, 72, 96, 120, 144, 168, 192
-# Any other rank count falls back to map-by slot.
+# are the only counts these two types accept (checked above).
 # ---------------------------------------------------------------------------
-TOTAL_CORES_PER_NODE="${SLURM_CPUS_ON_NODE:-${SLURM_NTASKS_PER_NODE}}"
 FLEX_CPU_LIST=""
-if (( THREADS_PER_RANK == 1 )) && (( NRANK_PER_NODE < TOTAL_CORES_PER_NODE )); then
+if (( THREADS_PER_RANK == 1 )) && (( FLEX_CORES_TYPE == 1 )); then
     case ${NRANK_PER_NODE} in
         24)
             FLEX_CPU_LIST="0,8,16,24,32,40,48,56,64,72,80,88,96,104,112,120,128,136,144,152,160,168,176,184" ;;
@@ -300,7 +367,7 @@ if (( THREADS_PER_RANK == 1 )) && (( NRANK_PER_NODE < TOTAL_CORES_PER_NODE )); t
         168)
             FLEX_CPU_LIST="0,1,2,3,4,5,6,8,9,10,11,12,13,14,16,17,18,19,20,21,22,24,25,26,27,28,29,30,32,33,34,35,36,37,38,40,41,42,43,44,45,46,48,49,50,51,52,53,54,56,57,58,59,60,61,62,64,65,66,67,68,69,70,72,73,74,75,76,77,78,80,81,82,83,84,85,86,88,89,90,91,92,93,94,96,97,98,99,100,101,102,104,105,106,107,108,109,110,112,113,114,115,116,117,118,120,121,122,123,124,125,126,128,129,130,131,132,133,134,136,137,138,139,140,141,142,144,145,146,147,148,149,150,152,153,154,155,156,157,158,160,161,162,163,164,165,166,168,169,170,171,172,173,174,176,177,178,179,180,181,182,184,185,186,187,188,189,190" ;;
         *)
-            : ;;  # fall through to map-by slot
+            : ;;  # 192: a full node, map-by slot
     esac
 fi
 

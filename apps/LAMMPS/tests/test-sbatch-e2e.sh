@@ -39,15 +39,76 @@ mkdir -p "${STUBS}/bin" "${STUBS}/lmp-bin" "${STUBS}/decks"
 
 cat > "${STUBS}/bin/curl" <<'EOF'
 #!/bin/bash
-# IMDS stub (token, instance type, Region). Any other URL is a download, which
-# this test never expects: logged, and refused as curl -f refuses an HTTP error.
+# IMDS stub (token, instance type, Region), each call logged with its options.
+# STUB_IMDS sets how the metadata service answers:
+#   (unset)     the token, STUB_INSTANCE_TYPE (default stub.96xlarge), a Region;
+#   no-answer   nothing: every call ends as curl does past --max-time (exit 28);
+#   error-page  the instance type is an HTTP 404: curl -f fails (exit 22), and
+#               curl without -f prints the error page and exits 0;
+#   not-a-type  the instance type is answered with a page that is not one.
+# Any other URL is a download, which this test never expects: logged, and
+# refused as curl -f refuses an HTTP error.
 case "$*" in
-  *api/token*)        echo "stub-token"; exit 0;;
-  *instance-type*)    echo "stub.96xlarge"; exit 0;;
-  *placement/region*) echo "stub-region-1"; exit 0;;
+  *169.254.169.254*)
+    echo "curl $*" >> "${IMDS_LOG}"
+    fail_opt=0
+    for a in "$@"; do
+      case "${a}" in --fail|-f*|-[!-]*f*) fail_opt=1;; esac
+    done
+    [ "${STUB_IMDS:-}" = no-answer ] && exit 28
+    case "$*" in
+      *api/token*) echo "stub-token"; exit 0;;
+      *instance-type*)
+        case "${STUB_IMDS:-}" in
+          error-page)
+            [ "${fail_opt}" = 1 ] && exit 22
+            printf '<?xml version="1.0" encoding="iso-8859-1"?>\n<html>\n <head>\n  <title>404 - Not Found</title>\n </head>\n</html>\n'
+            exit 0;;
+          not-a-type)
+            echo "<html><body>Instance metadata is not available here</body></html>"
+            exit 0;;
+        esac
+        echo "${STUB_INSTANCE_TYPE:-stub.96xlarge}"; exit 0;;
+      *placement/region*) echo "stub-region-1"; exit 0;;
+    esac
+    exit 22;;
 esac
 echo "curl $*" >> "${CURL_LOG}"
 exit 22
+EOF
+
+cat > "${STUBS}/bin/lscpu" <<'EOF'
+#!/bin/bash
+# lscpu stub, each call logged: the fields the x86 script reads, for the node
+# STUB_LSCPU names (amd192, amd192-indented, amd96, amd96-smt: the same CPU
+# with two threads per core, so 192 CPUs; amd96-1s: 96 cores on one socket;
+# amd256: 2 x 128 cores; intel192), in the flat layout or, for
+# amd192-indented, the indented one of newer util-linux. Anything else fails,
+# as on a node without lscpu.
+echo "lscpu $*" >> "${LSCPU_LOG}"
+threads=1
+case "${STUB_LSCPU:-}" in
+  amd192|amd192-indented) vendor=AuthenticAMD; model="AMD EPYC 9R45"; per_socket=96; sockets=2;;
+  amd96)                  vendor=AuthenticAMD; model="AMD EPYC 7R13 Processor"; per_socket=48; sockets=2;;
+  amd96-smt)              vendor=AuthenticAMD; model="AMD EPYC 7R13 Processor"; per_socket=48; sockets=2; threads=2;;
+  amd96-1s)               vendor=AuthenticAMD; model="AMD EPYC"; per_socket=96; sockets=1;;
+  amd256)                 vendor=AuthenticAMD; model="AMD EPYC"; per_socket=128; sockets=2;;
+  intel192)               vendor=GenuineIntel; model="Intel(R) Xeon(R) CPU"; per_socket=96; sockets=2;;
+  *)                      exit 1;;
+esac
+row() {  # row <indent> <field> <value>
+  local indent=0
+  [ "${STUB_LSCPU}" = amd192-indented ] && indent="$1"
+  printf '%*s%-*s%s\n' "${indent}" '' $(( 41 - indent )) "$2" "$3"
+}
+row 0 "Architecture:" x86_64
+row 0 "CPU(s):" $(( per_socket * sockets * threads ))
+row 0 "Vendor ID:" "${vendor}"
+row 2 "Model name:" "${model}"
+row 4 "Thread(s) per core:" "${threads}"
+row 4 "Core(s) per socket:" "${per_socket}"
+row 4 "Socket(s):" "${sockets}"
+row 0 "NUMA node(s):" 4
 EOF
 
 cat > "${STUBS}/bin/scontrol" <<'EOF'
@@ -172,7 +233,8 @@ declare -A WANT_ATOMS=([lj]=16384000 [rhodo]=32000 [rhodo_scaled]=2048000 [eam]=
 # Runs one benchmark script in a clean environment, with the model's files in
 # the benchmark cache. Sets OUT (stdout and stderr), RC, BASE (BASE_DIR),
 # CACHED (the cached deck), RUNDECK (the run directory's deck, if any),
-# LMPLOG, MPILOG, CURLLOG and RECLOG.
+# LMPLOG, MPILOG, CURLLOG, IMDSLOG, LSCPULOG, RECLOG and ERRLOG (the script's
+# stderr alone).
 run_script() {
   local script="$1" model="$2" deck_src="$3"; shift 3
   BASE="$(mktemp -d "${STUBS}/case.XXXXXX")"
@@ -182,17 +244,20 @@ run_script() {
   for f in ${EXTRA[${model}]}; do cp "${STUBS}/decks/${f}" "${cache}/${f}"; done
   CACHED="${cache}/${DECK[${model}]}"
   LMPLOG="${BASE}/lmp.log"; MPILOG="${BASE}/mpirun.log"; CURLLOG="${BASE}/curl.log"; RECLOG="${BASE}/recorder.log"
-  : > "${LMPLOG}"; : > "${MPILOG}"; : > "${CURLLOG}"; : > "${RECLOG}"
+  IMDSLOG="${BASE}/imds.log"; LSCPULOG="${BASE}/lscpu.log"; ERRLOG="${BASE}/stderr.log"
+  : > "${LMPLOG}"; : > "${MPILOG}"; : > "${CURLLOG}"; : > "${RECLOG}"; : > "${IMDSLOG}"; : > "${LSCPULOG}"
+  : > "${ERRLOG}"
   OUT="$(cd "${BASE}" && env -i \
       PATH="${STUBS}/bin:/usr/local/bin:/usr/bin:/bin" HOME="${BASE}" LANG=C \
       LAMMPS_ENV="${STUBS}/lammps-env.sh" BASE_DIR="${BASE}" MODEL="${model}" \
       LMP_LOG="${LMPLOG}" MPIRUN_LOG="${MPILOG}" CURL_LOG="${CURLLOG}" RECORDER_LOG="${RECLOG}" \
+      IMDS_LOG="${IMDSLOG}" LSCPU_LOG="${LSCPULOG}" \
       CONTRIB_RECORDER="${STUBS}/bin/recorder-stub.sh" \
       SLURM_JOB_ID=4242 SLURM_JOB_NAME=lammps SLURM_CLUSTER_NAME=test \
       SLURM_JOB_NUM_NODES=2 SLURM_NTASKS_PER_NODE=4 SLURM_NTASKS=8 SLURM_NODELIST="node[1-2]" \
       SLURM_SUBMIT_DIR="${BASE}" \
       "$@" \
-      bash "${LAMMPS_APP}/${script}" 2>&1)"
+      bash "${LAMMPS_APP}/${script}" 2> >(tee "${ERRLOG}"))"
   RC=$?
   RUNDECK="$(find "${BASE}/Run" -name "${DECK[${model}]}" -type f 2>/dev/null | head -1)"
 }
@@ -324,6 +389,181 @@ for s in "${SCRIPTS[@]}"; do
     || bad "a 'run 250' line with tabs: replaced, whitespace kept" "${want}" "${got}"
   has "a 'run 250' line with tabs: the default run length runs" "Timesteps run:    15000"
 done
+
+# ---------------------------------------------------------------------------
+# Rank placement (x86 only: the Arm script has no flexible-cores lists). The
+# lists and the cores-per-node check apply on hpc8a.96xlarge and
+# hpc7a.96xlarge only; every other instance type and size maps ranks by slot.
+# ---------------------------------------------------------------------------
+echo "== x86/lammps-benchmark.sbatch: rank placement =="
+X86=x86/lammps-benchmark.sbatch
+LIST48="$(seq -s, 0 4 188)"   # the flexible-cores list for 48 ranks per node
+LIST96="$(seq -s, 0 2 190)"   # and for 96
+
+# on_node <instance type> <cores per node> <cores the node has> [NAME=value...]:
+# run the x86 script with MODEL=lj on 2 nodes of that layout
+on_node() {
+  local itype="$1" cpn="$2" cpus="$3"; shift 3
+  run_script "${X86}" lj "" STUB_INSTANCE_TYPE="${itype}" SLURM_NTASKS_PER_NODE="${cpn}" \
+      SLURM_NTASKS=$(( 2 * cpn )) SLURM_CPUS_ON_NODE="${cpus}" "$@"
+}
+
+# binds <label> <expected placement flags> [<NOTE line>]: the run completed, and mpirun got exactly these
+# placement flags (and stderr holds the NOTE line, when one is given)
+binds() {
+  local got
+  got="$(grep -oE -- '--bind-to [^ ]+( --map-by [^ ]+| --cpu-list [0-9,]+)' "${MPILOG}" | head -1)"
+  if [ "${RC}" -eq 0 ] && [ "$(grep -c . "${MPILOG}")" = 1 ] && [ "${got}" = "$2" ] \
+      && { [ -z "${3:-}" ] || grep -qxF -- "$3" "${ERRLOG}"; }; then ok "$1"
+  else bad "$1" "exit 0 and mpirun ${2:0:80}${3:+, and the NOTE}" \
+           "exit ${RC}; mpirun ${got:0:80}; $(grep -E 'ERROR|NOTE: the instance' <<<"${OUT}" | head -1)"; fi
+}
+
+# refused <label> <node> <cores per node> [<on>] [<NOTE line>]: stopped before the run directory, naming the
+# supported counts on stderr ("on <on> use ...", by default "on this type"; and stderr holds the NOTE line, when one
+# is given)
+refused() {
+  local want="ERROR: $3 cores per node would load the 24 CCDs of $2 unevenly; on ${4:-this type} use 24, 48, 72, 96, 120, 144, 168 or 192 (--ntasks-per-node; see Utils/flexible-cores/)"
+  if [ "${RC}" -ne 0 ] && grep -qxF "${want}" "${ERRLOG}" && [ ! -s "${MPILOG}" ] && [ ! -s "${LMPLOG}" ] \
+      && [ ! -e "${BASE}/Run" ] && { [ -z "${5:-}" ] || grep -qxF -- "$5" "${ERRLOG}"; }; then ok "$1"
+  else bad "$1" "exit != 0, '${want:0:60}...', no launch, no run directory${5:+, and the NOTE}" \
+           "exit ${RC}; mpirun launches $(grep -c . "${MPILOG}"); $(grep -E 'ERROR|NOTE: the instance' <<<"${OUT}" | head -2 | tr '\n' '|')"; fi
+}
+
+on_node hpc8a.96xlarge 48 192
+binds "hpc8a.96xlarge, 48 ranks per node: the flexible-cores list" "--bind-to cpu-list:ordered --cpu-list ${LIST48}"
+on_node hpc7a.96xlarge 96 192
+binds "hpc7a.96xlarge, 96 ranks per node: the flexible-cores list" "--bind-to cpu-list:ordered --cpu-list ${LIST96}"
+on_node hpc8a.96xlarge 192 192
+binds "hpc8a.96xlarge, a full node: by slot" "--bind-to core --map-by slot"
+on_node hpc8a.96xlarge 96 192 THREADS_PER_RANK=2
+binds "hpc8a.96xlarge, 48 ranks x 2 threads (96 cores): hybrid placement" "--bind-to core --map-by ppr:48:node:PE=2"
+
+# Other instance types and sizes get no list, whatever the count: 48 ranks on a
+# 96-core node must not name cores above 95.
+for layout in "hpc6a.48xlarge 48 96" "hpc7a.48xlarge 48 96" "hpc6a.48xlarge 64 96" "c7a.48xlarge 48 192"; do
+  read -r itype cpn cpus <<<"${layout}"
+  on_node "${itype}" "${cpn}" "${cpus}"
+  binds "${itype}, ${cpn} ranks per node on ${cpus} cores: no list, by slot" "--bind-to core --map-by slot"
+done
+
+# On hpc8a.96xlarge and hpc7a.96xlarge any other count stops the job before anything starts.
+for layout in "hpc8a.96xlarge 64" "hpc8a.96xlarge 16" "hpc7a.96xlarge 32" "hpc7a.96xlarge 128" "hpc8a.96xlarge 384"; do
+  read -r itype cpn <<<"${layout}"
+  on_node "${itype}" "${cpn}" 192
+  refused "${itype}, ${cpn} cores per node: refused before the run directory, naming the counts" "${itype}" "${cpn}"
+done
+on_node hpc8a.96xlarge 64 192 THREADS_PER_RANK=2
+refused "hpc8a.96xlarge, 32 ranks x 2 threads (64 cores): refused, the count is cores per node" hpc8a.96xlarge 64
+
+# When IMDS gives no instance type (no answer, an HTTP error, or an answer that
+# is not an instance type name, capitals included), lscpu decides: a node with
+# a 192-core AMD CPU could be an hpc8a or hpc7a.96xlarge, so it gets their
+# check and lists; any other node runs by slot. Either way a NOTE says which,
+# wherever the type would change what the job does (a count outside the list,
+# or a pure-MPI count below 192); a full node, or a hybrid layout at a
+# supported count, gets neither lscpu nor a NOTE. No run is refused only
+# because IMDS did not answer. (The instance type on_node sets is the node's,
+# which IMDS does not give here.)
+NOTE_AMD="NOTE: the instance type could not be read from the instance metadata, and lscpu shows a 192-core AMD CPU, as on hpc8a.96xlarge and hpc7a.96xlarge, so their flexible-cores check and lists apply"
+NOTE_SKIP="NOTE: the instance type could not be read from the instance metadata and lscpu shows no 192-core AMD CPU, so the flexible-cores check for hpc8a.96xlarge and hpc7a.96xlarge is skipped"
+for imds in no-answer error-page not-a-type; do
+  on_node hpc8a.96xlarge 64 192 STUB_IMDS="${imds}" STUB_LSCPU=amd192
+  refused "IMDS ${imds}, a 192-core AMD node, 64 cores per node: refused before the run directory, naming the counts" \
+      "this 192-core AMD node" 64 "this node" "${NOTE_AMD}"
+  on_node hpc8a.96xlarge 96 192 STUB_IMDS="${imds}" STUB_LSCPU=amd192
+  binds "IMDS ${imds}, a 192-core AMD node, 96 ranks per node: the flexible-cores list" \
+      "--bind-to cpu-list:ordered --cpu-list ${LIST96}" "${NOTE_AMD}"
+  on_node c8i.96xlarge 64 192 STUB_IMDS="${imds}" STUB_LSCPU=intel192
+  binds "IMDS ${imds}, a 192-core Intel node, 64 cores per node: runs by slot, with a NOTE" \
+      "--bind-to core --map-by slot" "${NOTE_SKIP}"
+  on_node hpc6a.48xlarge 48 96 STUB_IMDS="${imds}" STUB_LSCPU=amd96
+  binds "IMDS ${imds}, a 96-core AMD node, 48 ranks per node: runs by slot, with a NOTE" \
+      "--bind-to core --map-by slot" "${NOTE_SKIP}"
+  # 192 CPUs from 96 cores with two threads each: the check counts cores.
+  on_node m6a.48xlarge 64 192 STUB_IMDS="${imds}" STUB_LSCPU=amd96-smt
+  binds "IMDS ${imds}, a 96-core AMD node with SMT on (192 CPUs), 64 cores per node: runs by slot, with a NOTE" \
+      "--bind-to core --map-by slot" "${NOTE_SKIP}"
+done
+on_node hpc8a.96xlarge 64 192 STUB_IMDS=no-answer STUB_LSCPU=amd192-indented
+refused "IMDS no-answer, lscpu's indented layout, a 192-core AMD node, 64 cores per node: refused" \
+    "this 192-core AMD node" 64 "this node" "${NOTE_AMD}"
+on_node hpc8a.96xlarge 64 192 STUB_IMDS=no-answer STUB_LSCPU=fail
+binds "IMDS no-answer, lscpu fails: runs by slot, with a NOTE" "--bind-to core --map-by slot" "${NOTE_SKIP}"
+# Exactly 192 AMD cores, sockets x cores per socket: 96 on one socket, and 2 x 128, are other nodes.
+on_node hpc8a.96xlarge 64 96 STUB_IMDS=no-answer STUB_LSCPU=amd96-1s
+binds "IMDS no-answer, an AMD node with 96 cores on one socket, 64 cores per node: runs by slot, with a NOTE" \
+    "--bind-to core --map-by slot" "${NOTE_SKIP}"
+on_node hpc8a.96xlarge 64 256 STUB_IMDS=no-answer STUB_LSCPU=amd256
+binds "IMDS no-answer, an AMD node with 2 x 128 cores, 64 cores per node: runs by slot, with a NOTE" \
+    "--bind-to core --map-by slot" "${NOTE_SKIP}"
+# An answer in capitals is not an instance type name, in any locale.
+on_node HPC8A.96XLARGE 64 192 STUB_LSCPU=amd192
+refused "the answer HPC8A.96XLARGE, a 192-core AMD node, 64 cores per node: refused before the run directory" \
+    "this 192-core AMD node" 64 "this node" "${NOTE_AMD}"
+# A type name inside other text is not a type name: the test's ^ and $ (a page naming a host, a type and more).
+for answer in "Request denied by proxy.example.com" "hpc8a.96xlarge: not found"; do
+  on_node "${answer}" 64 192 STUB_LSCPU=amd192
+  refused "the answer '${answer}', a 192-core AMD node, 64 cores per node: refused before the run directory" \
+      "this 192-core AMD node" 64 "this node" "${NOTE_AMD}"
+done
+# quiet <label> <expected placement flags>: binds, and no NOTE about the instance type, and no lscpu call
+quiet() {
+  if ! grep -q '^NOTE: the instance type' "${ERRLOG}" && [ ! -s "${LSCPULOG}" ]; then
+    binds "$1" "$2"
+  else
+    bad "$1" "no NOTE, no lscpu call" \
+        "exit ${RC}; $(grep -E '^NOTE: the instance' "${ERRLOG}" | head -1); lscpu calls $(grep -c . "${LSCPULOG}")"
+  fi
+}
+# Where the type changes nothing, no lscpu and no NOTE: a full node, and a hybrid layout at a supported count.
+on_node c8i.96xlarge 192 192 STUB_IMDS=no-answer STUB_LSCPU=intel192
+quiet "IMDS no-answer, a 192-core Intel node, a full node: by slot, no NOTE, and lscpu is not run" \
+    "--bind-to core --map-by slot"
+on_node hpc8a.96xlarge 192 192 STUB_IMDS=no-answer STUB_LSCPU=amd192
+quiet "IMDS no-answer, a 192-core AMD node, a full node: by slot, no NOTE, and lscpu is not run" \
+    "--bind-to core --map-by slot"
+on_node hpc8a.96xlarge 96 192 STUB_IMDS=no-answer STUB_LSCPU=amd192 THREADS_PER_RANK=2
+quiet "IMDS no-answer, a 192-core AMD node, 48 ranks x 2 threads (96 cores): hybrid, no NOTE, and lscpu is not run" \
+    "--bind-to core --map-by ppr:48:node:PE=2"
+# A type name with an i reads as one in a Turkish locale too, where [a-z] leaves out i.
+on_node c8i.96xlarge 64 192 STUB_LSCPU=intel192 LANG=tr_TR.UTF-8
+quiet "c8i.96xlarge from IMDS, a Turkish locale, 64 cores per node: by slot, no NOTE, and lscpu is not run" \
+    "--bind-to core --map-by slot"
+
+# Every IMDS call gives up within a few seconds and fails on an HTTP error;
+# and when IMDS gives the instance type, no NOTE is printed and lscpu is not run.
+on_node hpc8a.96xlarge 48 192 STUB_LSCPU=amd192
+timeout_re='(^| )--connect-timeout [1-9][0-9]?( |$)'
+max_time_re='(^| )--max-time ([1-9]|10)( |$)'
+fail_re='(^| )(--fail|-f[a-zA-Z]*|-[a-zA-Z]+f[a-zA-Z]*)( |$)'
+untimed=0
+while read -r call; do
+  [[ "${call}" =~ ${timeout_re} ]] && [[ "${call}" =~ ${max_time_re} ]] && [[ "${call}" =~ ${fail_re} ]] \
+    || untimed=$(( untimed + 1 ))
+done < "${IMDSLOG}"
+if [ "$(grep -c . "${IMDSLOG}")" -ge 2 ] && [ "${untimed}" = 0 ]; then
+  ok "every IMDS call has a connect timeout, a total timeout of at most 10 s and -f"
+else
+  bad "every IMDS call has a connect timeout, a total timeout of at most 10 s and -f" \
+      "--connect-timeout N --max-time M (M <= 10) and -f on each call" "$(tr '\n' '|' < "${IMDSLOG}")"
+fi
+if [ "${RC}" -eq 0 ] && ! grep -q '^NOTE: the instance type' <<<"${OUT}" && [ ! -s "${LSCPULOG}" ]; then
+  ok "an instance type from IMDS: no NOTE, and lscpu is not run"
+else
+  bad "an instance type from IMDS: no NOTE, and lscpu is not run" "exit 0, no NOTE, no lscpu call" \
+      "exit ${RC}; $(grep -E '^NOTE: the instance' <<<"${OUT}" | head -1); lscpu calls $(grep -c . "${LSCPULOG}")"
+fi
+# The same for another 192-core AMD type that IMDS names: no check and no
+# list, even at a count the two types refuse.
+on_node c7a.48xlarge 64 192 STUB_LSCPU=amd192
+label="c7a.48xlarge from IMDS on a 192-core AMD CPU, 64 cores per node: by slot, no NOTE, and lscpu is not run"
+if ! grep -q '^NOTE: the instance type' <<<"${OUT}" && [ ! -s "${LSCPULOG}" ]; then
+  binds "${label}" "--bind-to core --map-by slot"
+else
+  bad "${label}" "no NOTE, no lscpu call" \
+      "exit ${RC}; $(grep -E '^NOTE: the instance' <<<"${OUT}" | head -1); lscpu calls $(grep -c . "${LSCPULOG}")"
+fi
 
 echo
 printf 'sbatch e2e tests: %d passed, %d failed\n' "${pass}" "${fail}"
