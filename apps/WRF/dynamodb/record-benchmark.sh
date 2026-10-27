@@ -23,7 +23,7 @@
 # Strongly recommended (this is what makes the row USEFUL for training):
 #   benchmark_case            the dataset/case name (e.g. CONUS-2.5km)
 #   time_to_solution_seconds  total solver wall-clock time (the model's target)
-#   num_cells_million         grid size in millions of grid points
+#   num_cells_million         grid size: e_we x e_sn x e_vert / 10^6 (domain 1)
 # Optional but valuable:
 #   analysis_type, discipline, wrf_version, cores_per_node
 #
@@ -35,11 +35,11 @@
 # Quick start
 # ---------------------------------------------------------------------------
 #   # On a SLURM compute node, right after the run (auto-detects most fields):
-#   ./record-benchmark.sh --case CONUS-2.5km --num-cells-million 36 \
+#   ./record-benchmark.sh --case CONUS-2.5km --num-cells-million 90.135 \
 #       --time-to-solution 1820 --source AcmeCorp
 #
 #   # Off-cluster / replaying a result (pass everything explicitly):
-#   ./record-benchmark.sh --case CONUS-12km --num-cells-million 1.5 \
+#   ./record-benchmark.sh --case CONUS-12km --num-cells-million 6.375 \
 #       --instance-type hpc7a.96xlarge --os "Amazon Linux 2" \
 #       --num-cores 384 --num-nodes 2 --mpi intelmpi --version 4.5 \
 #       --time-to-solution 540 --source AcmeCorp --dry-run
@@ -105,7 +105,7 @@ OPTIONS
   Result + dataset description (recommended):
     --case NAME               Benchmark case / dataset id (e.g. CONUS-2.5km).
     --time-to-solution SEC    Total solver wall-clock seconds (the model target).
-    --num-cells-million X     Grid size in millions of grid points.
+    --num-cells-million X     Grid size: e_we x e_sn x e_vert / 10^6, domain 1.
     --analysis-type T         e.g. forecast, idealized.
     --discipline D            Defaults to Weather.
     --metric NAME=VALUE       Any extra numeric performance metric (repeatable).

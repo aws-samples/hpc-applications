@@ -141,11 +141,21 @@ echo "aws stub: refusing to call AWS from a test" >&2
 exit 1
 EOF
 
-# Recorder stub: log how the script called it (arguments and key environment).
+# Recorder stub: log how the script called it: its --metric arguments, in
+# order (ARGS), its other arguments, which describe the run (RUN), and key
+# environment.
 cat > "${STUBS}/bin/recorder-stub.sh" <<'EOF'
 #!/bin/bash
+metrics=() others=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --metric) metrics+=("$1" "${2:-}"); shift; [ $# -gt 0 ] && shift ;;
+    *)        others+=("$1"); shift ;;
+  esac
+done
 {
-  echo "ARGS: $*"
+  echo "ARGS: ${metrics[*]}"
+  echo "RUN: ${others[*]}"
   echo "BENCHMARK_CASE=${BENCHMARK_CASE:-}"
   echo "TIME_TO_SOLUTION=${TIME_TO_SOLUTION:-}"
 } >> "${RECORDER_LOG}"
@@ -237,6 +247,31 @@ stopped() {
              "exit ${RC}; $(grep -c 'starting wrf task' <<<"${OUT}") wrf.exe start(s); recorder log $(wc -l < "${RECLOG}") line(s)"; fi
 }
 : > "${STUBS}/aws-calls.log"
+# A stand-in for lib/wrf-run-info.sh that prints a sentinel value: a recorder
+# call that carries it shows the script loaded this file.
+cat > "${STUBS}/stub-lib/wrf-run-info.sh" <<'EOF'
+wrf_run_info() { echo "num_timesteps=7777"; }
+EOF
+# A case whose namelist gives the grid and the run length (the CONUS 2.5km
+# grid, a 6-hour forecast), for the run description the record carries.
+mkdir -p "${STUBS}/conus-sized"
+: > "${STUBS}/conus-sized/wrfinput_d01"; : > "${STUBS}/conus-sized/wrfbdy_d01"
+cat > "${STUBS}/conus-sized/namelist.input" <<'EOF'
+ &time_control
+ run_days                            = 0,
+ run_hours                           = 6,
+ run_minutes                         = 0,
+ run_seconds                         = 0,
+ io_form_history                     = 2,
+ io_form_restart                     = 2,
+ /
+ &domains
+ time_step                           = 15,
+ e_we                                = 1501,
+ e_sn                                = 1201,
+ e_vert                              = 50,
+ /
+EOF
 
 # run_script <script> <fixture or ""> [NAME=value...]
 # Runs one benchmark script in a clean environment; extra NAME=value pairs
@@ -278,6 +313,45 @@ recorded() {
 for s in "${SCRIPTS[@]}"; do
     echo "== ${s} =="
     x86=0; case "${s}" in x86/*) x86=1;; esac
+    # The record carries what makes runs comparable, which lib/wrf-run-info.sh
+    # reads from the run directory: the grid size (--num-cells-million), and the
+    # simulated minutes, the number of time steps and the history output's
+    # io_form (--char). The case's namelist gives a 1501 x 1201 x 50 grid and 6
+    # hours, the fixture has 12 steps, and io_form is the one WRF ran with, in
+    # the run directory's namelist.input.
+    run_script "${s}" "${FIX}/hourly-history.rsl" CONUS_DIR="${STUBS}/conus-sized"
+    rnl="$(find "$(dirname "${RECLOG}")/Run" -name namelist.input 2>/dev/null | head -1)"
+    io="$(sed -n -E 's/^[[:space:]]*io_form_history[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "${rnl:-/dev/null}")"
+    want="RUN: --num-cells-million 90.135 --char simulated_minutes=360 --char io_form=${io} --char num_timesteps=12"
+    [ -n "${io}" ] && grep -qxF -- "${want}" "${RECLOG}" \
+        && ok "the recorder gets the grid size, the simulated minutes, the steps and io_form ${io}" \
+        || bad "the recorder gets the run description" "${want}" "$(grep '^RUN:' "${RECLOG}")"
+    run_script "${s}" "${FIX}/hourly-history.rsl" CONUS_DIR="${STUBS}/conus-sized" \
+        DYNAMODB_RECORDER="${STUBS}/bin/real-recorder.sh" OPERATING_SYSTEM="Test OS"
+    item="$(sed -n '/^{/,$p' "${RECJSON}")"
+    for attr in '"num_cells_million": {"N": "90.135"}' '"simulated_minutes": {"S": "360"}' \
+                '"num_timesteps": {"S": "12"}' "\"io_form\": {\"S\": \"${io}\"}"; do
+        grep -qF -- "${attr}" <<<"${item}" && ok "the stored item holds ${attr}" \
+            || bad "the stored item holds ${attr}" "${attr}" \
+                   "$(grep -E 'cells|minutes|timesteps"|io_form' <<<"${item}" | tr '\n' '|')"
+    done
+    # Without lib/wrf-run-info.sh (submitted from elsewhere, the other two
+    # libraries pointed at), the run is recorded without the description, and a
+    # NOTE says how to point at the library. WRF_RUN_INFO_LIB comes first.
+    run_script "${s}" "${FIX}/hourly-history.rsl" CONUS_DIR="${STUBS}/conus-sized" \
+        SLURM_SUBMIT_DIR="${STUBS}/elsewhere" WRF_STEP_TIMING_LIB="${WRF_APP}/lib/wrf-step-timing.sh" \
+        WRF_RUN_CHECK_LIB="${WRF_APP}/lib/wrf-run-check.sh"
+    has "lib/wrf-run-info.sh not found: a NOTE says how to point at it" \
+        "NOTE: lib/wrf-run-info.sh not found, so the record has no grid size, run length or io_form; set WRF_RUN_INFO_LIB=/path/to/apps/WRF/lib/wrf-run-info.sh."
+    grep -qxF 'RUN: ' "${RECLOG}" && grep -q -- '--metric avg_timestep_seconds=2.25' "${RECLOG}" \
+        && ok "lib/wrf-run-info.sh not found: the run is recorded without the description" \
+        || bad "lib/wrf-run-info.sh not found: recorded without it" "RUN: (nothing), and the metrics" \
+               "$(head -2 "${RECLOG}" | tr '\n' '|')"
+    run_script "${s}" "${FIX}/hourly-history.rsl" CONUS_DIR="${STUBS}/conus-sized" \
+        WRF_RUN_INFO_LIB="${STUBS}/stub-lib/wrf-run-info.sh"
+    grep -qxF 'RUN: --char num_timesteps=7777' "${RECLOG}" \
+        && ok "WRF_RUN_INFO_LIB takes precedence over a submit-directory copy" \
+        || bad "WRF_RUN_INFO_LIB takes precedence" "RUN: --char num_timesteps=7777" "$(grep '^RUN:' "${RECLOG}")"
 
     run_script "${s}" "${FIX}/hourly-history.rsl"
     [ "${RC}" -eq 0 ] && ok "completes (exit 0)" || bad "completes" "exit 0" "exit ${RC}"

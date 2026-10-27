@@ -252,6 +252,30 @@ if [ -n "${_check_lib}" ] && [ -r "${_check_lib}" ] && . "${_check_lib}" \
     if _run_problems="$(wrf_run_check "${workdir}")"; then _run_ok=1; fi
 fi
 _wrf_version="$(basename "${WRF_ENV}" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
+# What makes runs comparable goes into the record too: the grid size, the
+# simulated minutes, the number of time steps and the history output's io_form,
+# which lib/wrf-run-info.sh reads from this run's namelist.input and
+# rsl.error.0000. Point WRF_RUN_INFO_LIB at it if it isn't found automatically.
+_info_lib="${WRF_RUN_INFO_LIB:-}"
+for _c in "${_info_lib}" \
+          "${SLURM_SUBMIT_DIR:-.}/../lib/wrf-run-info.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/lib/wrf-run-info.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/apps/WRF/lib/wrf-run-info.sh"; do
+    if [ -n "${_c}" ] && [ -r "${_c}" ]; then _info_lib="${_c}"; break; fi
+done
+_run_info=()
+# shellcheck source=../lib/wrf-run-info.sh
+if [ -n "${_info_lib}" ] && [ -r "${_info_lib}" ] && . "${_info_lib}" \
+        && declare -F wrf_run_info > /dev/null; then
+    while IFS='=' read -r _k _v; do
+        case "${_k}" in
+            num_cells_million) _run_info+=(--num-cells-million "${_v}") ;;
+            simulated_minutes|num_timesteps|io_form) _run_info+=(--char "${_k}=${_v}") ;;
+        esac
+    done < <(wrf_run_info "${workdir}")
+else
+    echo "NOTE: lib/wrf-run-info.sh not found, so the record has no grid size, run length or io_form; set WRF_RUN_INFO_LIB=/path/to/apps/WRF/lib/wrf-run-info.sh." >&2
+fi
 _recorder="${DYNAMODB_RECORDER:-}"
 for _c in "${_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
@@ -267,6 +291,7 @@ elif [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
         --metric "avg_timestep_seconds=${AVG_STEP}" \
         --metric "median_timestep_seconds=${MEDIAN_STEP}" \
         --metric "steady_timestep_seconds=${STEADY_STEP}" \
+        ${_run_info[@]+"${_run_info[@]}"} \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 else
     echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2

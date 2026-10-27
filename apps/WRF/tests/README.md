@@ -91,6 +91,18 @@ case asks). For each script it asserts:
     next to `avg_timestep_seconds`, and this repository's recorder, run in
     `--dry-run`, would store them as two new numeric attributes of a valid
     item; an N/A value is skipped with a warning, as the average already is;
+  * the recorder gets the run's grid size (`--num-cells-million`) and its
+    simulated minutes, history `io_form` and number of time steps (`--char`),
+    read from the run directory by `lib/wrf-run-info.sh`, and this
+    repository's recorder, in `--dry-run`, would store them; without the
+    library the run is recorded without them and a NOTE says how to point at
+    it, and `WRF_RUN_INFO_LIB` takes precedence over a copy in the submit
+    directory. `test-run-info.sh` tests the library on the namelists and logs it
+    writes (the forms it reads and those it leaves out, keys in capitals in a
+    Turkish locale, the run length from `run_*` or from the dates, a missing
+    file), and
+    `tests/test_wrf_run_info.py` (`pytest tests`) against a reference on
+    generated ones;
   * the library is found when the job is submitted from the script's
     directory, from `apps/WRF` or from the repository root, and through
     `WRF_STEP_TIMING_LIB` from anywhere else; the variable takes precedence

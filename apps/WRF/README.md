@@ -167,6 +167,7 @@ All benchmark scripts (x86 and Arm):
 - Use EFA for inter-node communication
 - Create a unique run directory under `/fsx/wrf/Run/`
 - Drop page caches and enable transparent huge pages
+- Give the recorder what makes runs comparable, read from the run directory ([`lib/wrf-run-info.sh`](lib/wrf-run-info.sh)): the grid size (domain 1's `e_we × e_sn × e_vert`, in millions), the simulated minutes and the history output's `io_form` from `namelist.input`, and the number of time steps from `rsl.error.0000`; a value they do not give is left out
 - Report the total WRF time (the wall time of `mpirun`) and the average, median and steady time per timestep (from `rsl.error.0000`; see [Key Metrics](#key-metrics))
 - Record the run (see [Contribute your results](#contribute-your-results)) only when `rsl.error.0000` says `SUCCESS COMPLETE WRF` and every history and restart file WRF wrote is in the run directory and not empty ([`lib/wrf-run-check.sh`](lib/wrf-run-check.sh)); otherwise they print a NOTE that says why, and the job's exit status is unchanged
 
@@ -185,6 +186,7 @@ The run check assumes WRF's default output file names (`history_outname`, `rst_o
 | `BASE_DIR` | `/fsx/wrf` | Root for run output directories |
 | `TARGET` | `auto` (Arm build only) | Force compile target: `graviton3` or `graviton4` |
 | `PREFIX` | `/fsx/wrf/deps` | Dependency install prefix (x86 Intel build only) |
+| `WRF_RUN_INFO_LIB` | found from the submit directory | Path to `lib/wrf-run-info.sh` (the grid size and run length the record carries), found as `WRF_STEP_TIMING_LIB` is |
 | `WRF_STEP_TIMING_LIB` | found from the submit directory | Path to `lib/wrf-step-timing.sh` (median and steady step), for a job submitted from outside `x86/`, `Arm/`, `apps/WRF` and the repository root |
 | `WRF_RUN_CHECK_LIB` | found from the submit directory | Path to `lib/wrf-run-check.sh` (the check before a run is recorded), found the same way |
 | `DYNAMODB_RECORDER` | found from the submit directory | Path to `dynamodb/record-benchmark.sh`, found the same way (see [Contribute your results](#contribute-your-results)) |
@@ -373,6 +375,7 @@ The 5-minute runs were launched a few at a time: 21 of the 22 overlapped 1 to 4 
 
 | File | Description |
 |------|-------------|
+| `lib/wrf-run-info.sh` | What every benchmark script records about the run besides its times: the grid size, the simulated minutes, the number of time steps and the history output's `io_form` |
 | `lib/wrf-step-timing.sh` | Median and steady time per timestep from `rsl.error.0000`, used by every benchmark script |
 | `lib/wrf-run-check.sh` | The check every benchmark script runs before it records a run: `SUCCESS COMPLETE WRF`, and the history and restart files in place |
 | `tests/run-tests.sh` | The helpers' tests and the benchmark scripts' end-to-end tests (see [`tests/README.md`](tests/README.md)) |
