@@ -158,8 +158,87 @@ if [ -d "${ANSYS_COMPAT_DIR}" ]; then
     export LD_LIBRARY_PATH="${ANSYS_COMPAT_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 
-TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-instanceType=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
+# The instance type, from the instance metadata (IMDSv2). Each request gives up
+# after 5 seconds (2 to connect), and -f turns an HTTP error into no answer. An
+# answer that is not an instance type name (tested in the C locale: in some
+# locales [a-z] leaves out i), a proxy's page for example, counts as none, so it
+# never names the run directory or the NVMe scratch directory.
+TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+instanceType=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
+( LC_ALL=C; [[ "${instanceType}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || instanceType=""
+
+# ---------------------------------------------------------------------------
+# Cores per node on hpc8a.96xlarge and hpc7a.96xlarge. Their 192 cores sit in
+# 24 CCDs of 8, one L3 cache each, and 24, 48, 72, 96, 120, 144, 168 and 192
+# cores per node are the counts at which the flexible-cores lists spread the
+# ranks evenly over the 24 CCDs (pin the ranks with those lists,
+# I_MPI_PIN_PROCESSOR_LIST; this script sets none). When the instance metadata
+# names one of those two types, any other count stops the job here, before the
+# run directory, the scratch check and the solve. Each node's count is the one
+# Slurm placed (SLURM_TASKS_PER_NODE, as for -machines below, which also fails
+# the job when Slurm's placement cannot be read). Other instance types and
+# sizes get no list and no check.
+# When the metadata gives no instance type (no answer within those 5 seconds,
+# an HTTP error, or an answer that is not an instance type name) and a node's
+# count is outside the set, lscpu decides: a node with 192 AMD cores (sockets x
+# cores per socket) could be one of those two types, so the count is refused
+# there too, and the refusal names both types and says why. Any other node
+# runs it, with a one-line NOTE that the check was skipped: no run is refused
+# only because the metadata did not answer.
+# ---------------------------------------------------------------------------
+_fc_types=""; _fc_by_lscpu=0; _fc_off=0
+case "${instanceType}" in
+    hpc8a.96xlarge|hpc7a.96xlarge) _fc_types="${instanceType}" ;;
+esac
+for _n in ${SLURM_TASKS_PER_NODE//,/ }; do   # a count outside the set ("abc": the -machines check's)
+    case "${_n%%(*}" in 24|48|72|96|120|144|168|192|''|*[!0-9]*) ;; *) _fc_off=1 ;; esac
+done
+if [ "${_fc_off}" -eq 1 ] && [ -z "${instanceType}" ]; then
+    _fc_amd192="$(LC_ALL=C lscpu 2>/dev/null | awk -F: '
+        { k = $1; sub(/^[[:space:]]+/, "", k); v = $2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", v) }
+        k == "Vendor ID" { vendor = v }
+        k == "Socket(s)" { sockets = v }
+        k == "Core(s) per socket" { cores = v }
+        END { if (vendor == "AuthenticAMD" && sockets ~ /^[0-9]+$/ && cores ~ /^[0-9]+$/ &&
+                  sockets * cores == 192) print "yes" }')"
+    if [ "${_fc_amd192}" = yes ]; then
+        _fc_types="hpc8a.96xlarge or hpc7a.96xlarge"; _fc_by_lscpu=1
+    else
+        echo "NOTE: the instance metadata did not name the instance type, and lscpu does not show the" \
+             "192 AMD cores of hpc8a.96xlarge and hpc7a.96xlarge, so their cores-per-node check" \
+             "(Utils/flexible-cores) is skipped." >&2
+    fi
+fi
+if [ -n "${_fc_types}" ]; then
+    for _n in ${SLURM_TASKS_PER_NODE//,/ }; do
+        _n="${_n%%(*}"   # "96(x2)" -> 96
+        case "${_n}" in
+            24|48|72|96|120|144|168|192) ;;
+            ''|*[!0-9]*) ;;   # not a count: left to the -machines check below
+            *)
+                if [ "${_n}" -gt 192 ]; then
+                    echo "ERROR: ${_n} tasks per node exceed the 192 cores of ${_fc_types}" >&2
+                else
+                    echo "ERROR: ${_n} cores per node load the 24 CCDs of ${_fc_types} unevenly" >&2
+                fi
+                if [ "${_fc_by_lscpu}" -eq 1 ]; then
+                    echo "       (the instance metadata did not name the instance type, and this node has" >&2
+                    echo "       192 AMD cores, as those two do; SLURM_TASKS_PER_NODE=${SLURM_TASKS_PER_NODE})." \
+                         "On hpc8a.96xlarge and" >&2
+                else
+                    echo "       (SLURM_TASKS_PER_NODE=${SLURM_TASKS_PER_NODE}). On hpc8a.96xlarge and" >&2
+                fi
+                echo "       hpc7a.96xlarge run 24, 48, 72, 96, 120, 144, 168 or 192 cores per node," >&2
+                echo "       the counts at which the flexible-cores lists spread the ranks evenly" >&2
+                echo "       over the 24 CCDs (pin the ranks with those lists, I_MPI_PIN_PROCESSOR_LIST;" >&2
+                echo "       Utils/flexible-cores). Set --ntasks to the node count times one of them," >&2
+                echo "       e.g. --nodes=2 --ntasks=192 --ntasks-per-node=96: with --ntasks set, Slurm" >&2
+                echo "       takes --ntasks-per-node only as a maximum. Refusing to run before the solve." >&2
+                exit 1 ;;
+        esac
+    done
+fi
+
 run_tag="${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${instanceType}-${SLURM_NPROCS}-$(date "+%d-%m-%Y-%H-%M")"
 shared_dir="$(readlink -m "${basedir}/${SLURM_JOB_NAME%.*}")/Run/${run_tag}"
 if ! mkdir -p "${shared_dir}"; then

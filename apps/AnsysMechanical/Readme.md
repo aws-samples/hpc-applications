@@ -587,6 +587,26 @@ line in `DMPJOBS.DAT`, combined with the explicit pinning from
 [Utils/flexible-cores](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores).
 Any multiple of 24 up to 192 loads the CCDs evenly (72, 120, 144 and 168 cores
 per node as well); the flexible-cores page lists all eight counts.
+On hpc8a.96xlarge and hpc7a.96xlarge,
+[AnsysMechanical.sbatch](https://github.com/aws-samples/hpc-applications/blob/main/apps/AnsysMechanical/AnsysMechanical.sbatch)
+refuses any other count per node before the solve, with a message that names
+these eight. It reads the type from the instance metadata and checks no other
+type or size. When the instance metadata gives no instance type (no answer
+within a few seconds, an error, or an answer that is not an instance type
+name), the sbatch refuses such a count only on a node whose `lscpu` shows 192
+AMD cores (sockets x cores per socket), which could be one of those two types,
+with a message that names both and says why. Any other node runs such a
+count, with a one-line NOTE in the job log that the check was skipped, and a
+supported count runs on every node with no NOTE: no run is refused only
+because the instance metadata did not answer
+([tests/test-flexible-cores.sh](tests/test-flexible-cores.sh) checks each
+case). The sbatch's header asks for 128 tasks on 2 nodes, 64 per node for
+hpc6id.32xlarge, so to run it on one of those two types, change `--ntasks`
+with the partition and the constraint, for example
+`--nodes=2 --ntasks=192 --ntasks-per-node=96` for 96 per node. A
+`--ntasks-per-node` alone does not replace the header's `--ntasks`: Slurm
+gives `--ntasks` precedence and takes `--ntasks-per-node` only as a maximum,
+so the 128 tasks would still land at 64 per node.
 
 Note that the bundled `runBench.py` is explicitly *not* intended for scheduler
 environments. Run the models under your scheduler using the command line it
