@@ -39,9 +39,11 @@
 #   Env knobs:
 #     BENCHMARK_NAME   case id (default f1_racecar_140m)
 #     ITERATIONS       timed iterations, time steps for a transient case
-#                      (blank -> harness default 200)
+#                      (default 25, as this script's results in ../Readme.md
+#                      ran; the harness's own default is 200)
 #     WARMUP_ITERATIONS warm-up iterations, time steps for a transient case,
-#                      which the harness runs twice (blank -> harness default 50)
+#                      which the harness runs twice (default 10, as those
+#                      results ran; the harness's own default is 50)
 #     SOLVER           ""|segregated|coupled (blank -> case default)
 #     EXTRA_FLUENT_ARGS extra raw Fluent flags (e.g. "3ddp")
 #     SOURCE           tag your DynamoDB contributions (see recorder)
@@ -62,8 +64,8 @@ benchmark_uri=${2:-"s3://YOUR_BUCKET/f1_racecar_140m.tar"}
 benchmark_name=${BENCHMARK_NAME:-"f1_racecar_140m"}
 basedir=${BASE_DIR:-"/fsx"}
 ansys_root=${ANSYS_ROOT:-"${basedir}"}
-iterations=${ITERATIONS:-""}
-warmup_iterations=${WARMUP_ITERATIONS:-""}
+iterations=${ITERATIONS:-"25"}
+warmup_iterations=${WARMUP_ITERATIONS:-"10"}
 solver=${SOLVER:-""}
 extra_fluent_args=${EXTRA_FLUENT_ARGS:-""}
 export ANSYSLMD_LICENSE_FILE=${ANSYSLMD_LICENSE_FILE:-"1055@XXX.YYY.ZZZ.XYZ"}
@@ -214,7 +216,7 @@ if [ -n "${_miups}" ]; then
     # Iterations" line of its transcript.
     # For a transient case the harness runs both counts as time steps, so the
     # timed iterations are every iteration of those time steps.
-    _record_args=(--char "warmup_iterations=${warmup_iterations:-50}")
+    _record_args=(--char "warmup_iterations=${warmup_iterations}")
     _timed_iterations="$(cat "${workdir}"/working/*/transcript/"${benchmark_name}-${SLURM_NPROCS}.trn" 2>/dev/null \
         | awk '/^Number of Iterations[[:space:]]*=/ {
                    v = $0; sub(/^[^=]*=[[:space:]]*/, "", v); split(v, f, /[[:space:]]+/); n = f[1] }
@@ -223,7 +225,7 @@ if [ -n "${_miups}" ]; then
     if [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
         FLUENT_VERSION="${fluentversion}" RUN_DIR="${workdir}" MIUPS="${_miups}" \
         BENCHMARK_CASE="${benchmark_name}" BENCHMARK_METHOD="fluent_benchmark_harness" \
-        SOLVER_MODE="cpu" NUM_ITERATIONS="${iterations:-200}" "${_recorder}" "${_record_args[@]}" \
+        SOLVER_MODE="cpu" NUM_ITERATIONS="${iterations}" "${_recorder}" "${_record_args[@]}" \
             || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
     else
         echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2

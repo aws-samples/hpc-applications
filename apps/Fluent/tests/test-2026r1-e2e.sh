@@ -5,10 +5,11 @@
 #   * the run directory, its host file and the copy of the script;
 #   * the page-cache drop and the THP setting, through srun, once per node;
 #   * the harness's command line: -mpiopt as one argument, the iteration
-#     counts only when they are set, -solver, and EXTRA_FLUENT_ARGS split into
-#     words at the end;
+#     counts (25 timed and 10 warm-up when ITERATIONS and WARMUP_ITERATIONS
+#     are not set, and the counts they set), -solver, and EXTRA_FLUENT_ARGS
+#     split into words at the end;
 #   * the recorder, called once, gets the version, the run directory, the
-#     case, the method, the solver mode and the timed iteration count (200 when
+#     case, the method, the solver mode and the timed iteration count (25 when
 #     ITERATIONS is not set); this directory's recorder in --dry-run would
 #     store the case, its size, that count and the harness's MIUPS;
 #   * a run whose harness writes no transcript is not recorded, a NOTE says
@@ -72,16 +73,27 @@ for want in "FLUENT_VERSION=v261" "BENCHMARK_CASE=sedan_4m" "BENCHMARK_METHOD=fl
 done
 
 # ---------------------------------------------------------------------------
-# 2. ITERATIONS and WARMUP_ITERATIONS not set: the harness's own defaults.
+# 2. ITERATIONS and WARMUP_ITERATIONS not set: the published protocol, 25
+#    timed and 10 warm-up iterations. Set, they override it.
 # ---------------------------------------------------------------------------
+# counts_are <description> <timed> <warm-up>: the harness got exactly those
+# two counts, as -iterations and -warmup_iterations between the case and
+# the Fluent flags
+counts_are() {
+    local want got
+    want="$(printf '%s\n' -cases sedan_4m -iterations "$2" -warmup_iterations "$3" -cflush)"
+    got="$(grep -A6 -x -- '-cases' "${STATE}/harness.args" 2>/dev/null)"
+    if [ "${got}" = "${want}" ]; then ok "$1"
+    else bad "$1" "${want//$'\n'/ }" "${got//$'\n'/ }"; fi
+}
 run_2026r1 defaults ITERATIONS= WARMUP_ITERATIONS=
-if grep -qxE -- '-(warmup_)?iterations' "${STATE}/harness.args"; then
-    bad "no iteration count is passed to the harness" "neither option" "$(tr '\n' ' ' < "${STATE}/harness.args")"
-else
-    ok "no iteration count is passed to the harness"
-fi
-recorder_has "NUM_ITERATIONS=200" && ok "the recorder gets NUM_ITERATIONS=200, the harness's default" \
-    || bad "the recorder gets NUM_ITERATIONS=200" "NUM_ITERATIONS=200" "$(grep NUM_ITERATIONS "${STATE}/recorder.log")"
+counts_are "not set: the harness gets -iterations 25 -warmup_iterations 10" 25 10
+recorder_has "NUM_ITERATIONS=25" && ok "not set: the recorder gets NUM_ITERATIONS=25" \
+    || bad "not set: the recorder gets NUM_ITERATIONS=25" "NUM_ITERATIONS=25" "$(grep NUM_ITERATIONS "${STATE}/recorder.log")"
+run_2026r1 override ITERATIONS=200 WARMUP_ITERATIONS=50
+counts_are "ITERATIONS=200 WARMUP_ITERATIONS=50: the harness gets -iterations 200 -warmup_iterations 50" 200 50
+recorder_has "NUM_ITERATIONS=200" && ok "ITERATIONS=200: the recorder gets NUM_ITERATIONS=200" \
+    || bad "ITERATIONS=200: the recorder gets NUM_ITERATIONS=200" "NUM_ITERATIONS=200" "$(grep NUM_ITERATIONS "${STATE}/recorder.log")"
 
 # ---------------------------------------------------------------------------
 # 3. SOLVER and EXTRA_FLUENT_ARGS.

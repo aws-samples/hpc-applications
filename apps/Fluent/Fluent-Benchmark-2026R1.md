@@ -63,15 +63,22 @@ Useful environment knobs (all optional):
 | Variable | Meaning |
 |----------|---------|
 | `BENCHMARK_NAME` | case id (default `f1_racecar_140m`) |
-| `ITERATIONS` | timed iterations, time steps for a transient case (blank → harness default 200) |
-| `WARMUP_ITERATIONS` | warm-up iterations, time steps for a transient case, which the harness runs twice (blank → harness default 50) |
+| `ITERATIONS` | timed iterations, time steps for a transient case (default 25; the harness's own default is 200) |
+| `WARMUP_ITERATIONS` | warm-up iterations, time steps for a transient case, which the harness runs twice (default 10; the harness's own default is 50) |
 | `SOLVER` | `segregated` \| `coupled` (blank → case default) |
 | `EXTRA_FLUENT_ARGS` | extra raw Fluent flags, e.g. `3ddp` |
 | `ANSYSLMD_LICENSE_FILE` | `port@host` of your Ansys license server |
 | `SOURCE` | tag your DynamoDB benchmark contributions |
 
-The CPU script records `ITERATIONS` (or 200) as `num_iterations`,
-`WARMUP_ITERATIONS` (or 50), the setting the harness runs twice, as
+The CPU script's defaults are the protocol of its results under
+[Performance](Readme.md#performance): 10 warm-up iterations, which the
+harness runs twice, then 25 timed iterations (both counts are time steps for
+a transient case), so a run at the defaults compares with those results as
+it is. Set `ITERATIONS` and `WARMUP_ITERATIONS` to run another protocol, for
+example the harness's own 200 and 50.
+
+The CPU script records `ITERATIONS` (or 25) as `num_iterations`,
+`WARMUP_ITERATIONS` (or 10), the setting the harness runs twice, as
 `warmup_iterations`, and the iterations the harness timed, from the
 `Number of Iterations` line of its transcript, as `timed_iterations`: for a
 steady case the same as `num_iterations`, for a transient case every

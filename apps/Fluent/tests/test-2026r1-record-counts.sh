@@ -2,9 +2,9 @@
 # =============================================================================
 # x86/Fluent-Benchmark.2026R1.sbatch gives the recorder the run's length. See
 # helpers-2026r1.sh.
-#   * --char warmup_iterations=<WARMUP_ITERATIONS, or 50> and
+#   * --char warmup_iterations=<WARMUP_ITERATIONS, or 10> and
 #     --char timed_iterations=<the "Number of Iterations" of the harness's
-#     transcript>, with NUM_ITERATIONS=<ITERATIONS, or 200> as before;
+#     transcript>, with NUM_ITERATIONS=<ITERATIONS, or 25>;
 #   * for a transient case, whose 25 timed time steps the harness counts as
 #     250 iterations, timed_iterations is 250 and NUM_ITERATIONS stays 25;
 #   * no timed_iterations when the transcript has only the journal's command
@@ -49,13 +49,13 @@ args_are "transient: warm-up 10, and the 250 iterations of the 25 timed time ste
 iterations_are "transient: NUM_ITERATIONS=25, the time steps asked for, as before" 25
 
 # ---------------------------------------------------------------------------
-# 3. ITERATIONS and WARMUP_ITERATIONS not set: the harness's defaults.
+# 3. ITERATIONS and WARMUP_ITERATIONS not set: the script's defaults, the
+#    published protocol of 25 timed and 10 warm-up iterations.
 # ---------------------------------------------------------------------------
-sed 's/^\(Number of Iterations *=\) *25 iter/\1      200 iter/' "${FIX}/steady-25-iterations.trn" > "${WORK}/200.trn"
-run_2026r1 defaults ITERATIONS= WARMUP_ITERATIONS= STUB_TRANSCRIPT="${WORK}/200.trn"
-args_are "defaults: warm-up 50, and the 200 iterations the harness timed" \
-    --char warmup_iterations=50 --char timed_iterations=200
-iterations_are "defaults: NUM_ITERATIONS=200, as before" 200
+run_2026r1 defaults ITERATIONS= WARMUP_ITERATIONS=
+args_are "defaults: warm-up 10, and the 25 iterations the harness timed" \
+    --char warmup_iterations=10 --char timed_iterations=25
+iterations_are "defaults: NUM_ITERATIONS=25" 25
 
 # ---------------------------------------------------------------------------
 # 4. Only the journal's command for the "Number of Iterations" line.
