@@ -442,13 +442,13 @@ Even the largest system here still benefits at 8 concurrent sims — none of the
 
 ## Metrics
 
-GROMACS reports its primary performance metric on a `Performance:` line near the end of `md.log`:
+GROMACS reports its primary performance metric on a `Performance:` line near the end of `md.log` (example values):
 
 ```
                Core t (s)   Wall t (s)        (%)
-       Time:    11456.388     59.668    19199.4
+       Time:     1000.000       10.000    10000.0
                  (ns/day)    (hour/ns)
-Performance:      144.741      0.166
+Performance:      100.000        0.240
 ```
 
 The launcher extracts:

@@ -160,7 +160,7 @@ Sample output:
 
 ```
 instance             nodes         model        ns_per_day_replicates    mean_ns_per_day
-hpc7a.96xlarge           1     benchMEM     [144.598, 144.812]                 144.705
+hpc7a.96xlarge           1     benchMEM     [140.000, 140.500]                 140.250
 hpc7a.96xlarge           1   benchPEP-h     [  2.118,   2.122]                   2.120
 hpc7a.96xlarge           2     benchMEM     [273.000, 273.500]                 273.250
 hpc7a.96xlarge           2   benchPEP-h     [  4.018,   4.025]                   4.022

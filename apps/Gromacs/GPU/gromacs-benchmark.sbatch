@@ -37,8 +37,8 @@
 #
 # GROMACS prints performance to md.log on the lines:
 #                  (ns/day)    (hour/ns)
-#   Performance:   144.741     0.166
-#   Wall t (s):     59.668
+#   Performance:   100.000     0.240
+#   Wall t (s):     10.000
 # `-resethway` discards the first half of the run from the timing so warm-up
 # cost is excluded; `-noconfout` suppresses the multi-GiB per-rank confout
 # write that otherwise dominates I/O at high rank counts.
@@ -698,8 +698,8 @@ WALL_TIME_TOTAL=$(awk "BEGIN{printf \"%.2f\", ${T_END} - ${T_START}}")
 # Same extraction logic as the CPU phases — GROMACS prints near the end of
 # md.log:
 #                  (ns/day)    (hour/ns)
-#   Performance:   144.741     0.166
-#   Wall t (s):     59.668
+#   Performance:   100.000     0.240
+#   Wall t (s):     10.000
 # Missing values -> 0 / "n/a" (non-fatal: gmx exit code is the
 # authoritative success signal per design.md error-handling table).
 # ---------------------------------------------------------------------------

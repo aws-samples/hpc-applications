@@ -14,8 +14,8 @@
 # of the sweep's reference cell (see the SCALING_SWEEP.md hand-offs).
 #
 #   instance        nodes  model         ns_per_day_replicates           mean_ns_per_day
-#   hpc8a.96xlarge  1      benchMEM      [144.741, 144.812, 144.598]     144.717
-#   hpc8a.96xlarge  2      benchMEM      [273.5, 274.1, 273.0]           273.533
+#   hpc8a.96xlarge  1      benchMEM      [100.000, 100.000, 100.000]     100.000
+#   hpc8a.96xlarge  2      benchMEM      [200.000, 200.000, 200.000]     200.000
 #   ...
 #
 # When the sweep is fresh (table just populated by scaling_sweep_manifest.sh),
