@@ -276,9 +276,21 @@ before trusting a timing.
     out-of-core mode`, so a search for "out-of-core" labels in-core runs
     out-of-core. In the 94 sparse-direct V26 Cluster outputs we archived, MAPDL
     reported In-Core for 45, and a whole-file search labelled all 94 out-of-core.
-    The iterative solvers (PCG, JCG) print no `Memory Option:` line. The line is
-    verified on 2026 R1 only: on a release that does not print it, the sbatch
-    records the memory mode as `unknown`.
+    The iterative solvers (PCG, JCG) print no `Memory Option:` line, and MAPDL
+    2026 R1 prints the `S O L V E R   S T A T I S T I C S` section of its
+    closing statistics, which holds the line, only when it runs with
+    `-perf on`, as the command line `runBench.py` prints does (see
+    [Benchmarks](#benchmarks)). Without that section, the sparse solver still
+    names the mode before each factorisation: in-core, in a NOTE whose text
+    begins `The Distributed Sparse Matrix Solver is currently running in the`,
+    and out-of-core, in a WARNING whose text begins
+    `The Distributed Sparse Matrix Solver is running in out-of-core memory`.
+    Search for those words as quoted: MAPDL wraps both messages right after
+    them, and a search for `in-core memory mode` labels out-of-core runs in-core,
+    since their messages hold it too. In those 94 outputs, the NOTE or WARNING
+    always matched the `Memory Option:` line. The line is verified on 2026 R1
+    only: for an output without it, the sbatch records the memory mode as
+    `unknown`.
   * **Size the memory from what MAPDL prints.** Before the factorisation, the
     sparse solver prints a memory summary, out-of-core runs included:
     `Equation solver memory required for in-core mode` for rank 0, for the
@@ -630,7 +642,10 @@ builds `-machines` from the allocation. It launches
 above also passes `nolist`, `-perf on` and `-nt 1`, which MAPDL reports at the
 top of its output as `BATCH MODE REQUESTED (-b) = NOLIST`,
 `PERFORMANCE STATS TRACKING REQUESTED` and
-`... WITH SINGLE THREAD PER PROCESS (FORCED)`.
+`... WITH SINGLE THREAD PER PROCESS (FORCED)`. Without `-perf on`, MAPDL prints
+no `Memory Option:` line, so the sbatch records the memory mode of every run as
+`unknown`. To record it, add `-perf on` after `-b` on the sbatch's `mapdl`
+line.
 
 # Recording results
 
