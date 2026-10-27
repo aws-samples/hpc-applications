@@ -75,7 +75,7 @@ A single build script targets both AWS Graviton generations for HPC (`hpc7g` / G
 
 Two `OMPI_VERSION` knobs are supported:
 
-- `OMPI_VERSION=4` (default) — builds against the system OpenMPI 4.1.7 at `/opt/amazon/openmpi`. Works on Graviton3E at full density (64 ranks/node). On Graviton4 at 192 ranks/node it hits an EFA endpoint limit and fails with `PML cm cannot be selected`.
+- `OMPI_VERSION=4` (default) — builds against the system OpenMPI 4.1.7 at `/opt/amazon/openmpi`. Works on Graviton3E at full density (64 ranks/node). Graviton4 at 192 ranks per node needs OpenMPI 5.
 - `OMPI_VERSION=5` — builds against the system OpenMPI 5.0.9 at `/opt/amazon/openmpi5`. Handles full-density EFA correctly on both platforms. **Use this for Graviton4.** It also performs well on Graviton3E.
 
 Both variants coexist in separate install paths so an OpenMPI 4 build is not disturbed when you add the OpenMPI 5 variant.
@@ -155,12 +155,12 @@ sbatch -p m8g -N 4 --ntasks-per-node=192 \
 
 The launcher:
 
-- Sets `OMP_NUM_THREADS=1` (pure MPI, one rank per core) — the `dm+sm` WRF binary is run without OpenMP threads to avoid a first-timestep deadlock seen on hpc7g with hybrid threads
-- Uses SSH bootstrap (`--mca plm_rsh_agent ssh`) rather than Slurm/prterun — matches the pattern in the Fluent Arm launcher and avoids intermittent init deadlocks
+- Sets `OMP_NUM_THREADS=1` (pure MPI, one rank per core): the `dm+sm` WRF binary runs without OpenMP threads, as in the Graviton results below
+- Starts the ranks over SSH (`--mca plm_rsh_agent ssh`, with a hostfile of the job's nodes) rather than through Slurm/prterun, as the Fluent Arm launcher does
 - Uses `pml cm + mtl ofi` (zero-copy EFA fast path)
 - Drops page caches and enables transparent huge pages before the run
 
-> **Known issue:** On this cluster we observed that nodes that have **just finished** a WRF job sometimes hang on the first MPI collective when they are immediately reused for a new WRF job (processes spin at 100% CPU with no timestep progress). Fresh / power-cycled nodes work reliably. If a multi-node WRF run hangs at `SIMULATION START DATE` for more than a few minutes, cancel it and resubmit onto different (cold) nodes.
+> **Note:** For `hpc7g` (Graviton3E) the launcher leaves the binding of the ranks to OpenMPI's default policy (no `--bind-to core`), and it does the same on Graviton4.
 
 All benchmark scripts (x86 and Arm):
 
@@ -334,8 +334,8 @@ Key takeaways:
 - A single m8g node delivers **2.52× (12km)** and an estimated **3.08× (2.5km)** the performance of a single hpc7g node — consistent with the 3× core-count ratio minus the usual communication/memory-bandwidth tax
 - On CONUS 2.5km, m8g reaches **5.04× (2N)** and **7.49× (4N)** vs the hpc7g 1N baseline, while hpc7g scales from 1N → 4N at **3.30×** — both platforms scale sub-linearly (Amdahl) but G4 stays consistently ahead
 - The **CONUS 12km grid (425×300) does not decompose past ~500 ranks** — 4N m8g at 768 ranks triggers a decomposition error. For that level of parallelism, use CONUS 2.5km (1501×1201), which supports 1500+ ranks cleanly.
-- The 1N hpc7g 2.5km point is *estimated* at 2 × the 2N time; running it directly on a single 64-core node is expensive and a pessimistic baseline for a 1.8M-cell grid
-- A single m8g node is roughly equivalent to **3 hpc7g nodes** for this workload — useful when capacity or interconnect cost is a concern
+- The 1N hpc7g 2.5km point is *estimated* at 2 × the 2N time; running it directly on a single 64-core node is expensive and a pessimistic baseline for a grid of 1501 × 1201 points
+- A single m8g node is about as fast as **4 hpc7g nodes** for this workload: 99% of their speed on CONUS 12km (2.52× against 2.55×) and 93% on CONUS 2.5km (3.08× against 3.30×)
 
 ## Key Metrics
 

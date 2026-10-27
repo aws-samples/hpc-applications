@@ -5,7 +5,7 @@
 #
 # The env script pointed to by WRF_ENV knows which OpenMPI to load — this
 # script is MPI-version agnostic. For Graviton4 use the -ompi5 env script
-# (OpenMPI 4.1.7 hits the EFA endpoint limit at 192 ranks/node).
+# (Graviton4 at 192 ranks per node needs OpenMPI 5).
 #
 # Examples:
 #   # Graviton3E, CONUS 12km (default), OpenMPI 4
@@ -80,17 +80,16 @@ export RDMAV_FORK_SAFE=1
 
 # WRF was built as dm+sm (hybrid MPI+OpenMP). We run it pure-MPI here — one
 # MPI rank per core with OMP_NUM_THREADS=1 — which is the configuration that
-# gets the best performance on Graviton and avoids an OpenMP/pinning
-# interaction that causes the first timestep to hang on hpc7g (Graviton3E).
+# gets the best performance on Graviton, and the one the README's Graviton
+# results used.
 export OMP_NUM_THREADS=1
 
-# Use SSH bootstrap for OpenMPI rather than Slurm/prterun. Slurm-integrated
-# prterun has shown intermittent init deadlocks on Graviton at multi-node
-# scale; plain ssh launching avoids that path and matches how the Fluent Arm
-# launcher works on this cluster.
-# NOTE: no `--bind-to core` — combined with pure-MPI OMP=1 on hpc7g it deadlocks
-# on the first collective. Let OpenMPI pick a default binding policy.
-#        OMPI5 also rejects duplicate --map-by flags — put --map-by only on
+# Use SSH bootstrap for OpenMPI rather than Slurm/prterun: mpirun starts the
+# ranks over ssh on the hosts of the hostfile below, as the Fluent Arm launcher
+# does.
+# NOTE: no `--bind-to core`: for hpc7g (Graviton3E), and on Graviton4 too,
+# OpenMPI's default binding policy places the ranks.
+#        OMPI5 rejects duplicate --map-by flags — put --map-by only on
 # solver mpirun calls, not on MPI_FLAGS (so ppr:1:node prep calls can override).
 MPI_FLAGS="--mca plm_rsh_agent ssh --mca pml cm --mca mtl ofi --mca btl ^tcp,openib"
 MPI_FLAGS="$MPI_FLAGS -x PATH -x LD_LIBRARY_PATH -x WRF_DIR -x OMP_NUM_THREADS"
