@@ -73,6 +73,15 @@ case asks). For each script it asserts:
     directory, from `apps/WRF` or from the repository root, and through
     `WRF_STEP_TIMING_LIB` from anywhere else; the variable takes precedence
     over a copy in the submit directory;
+  * the CONUS 2.5km scripts give WRF `CONUS_DIR`'s `namelist.input` with
+    `io_form_history` and `io_form_restart` changed from 2 to 11 and nothing
+    else, and leave `CONUS_DIR` as it is, or the namelist as it is with
+    `WRF_OUTPUT_FORMAT=namelist`; a namelist that does not take exactly that
+    change (no `io_form` lines, both at 11 already, `io_form_history` alone at
+    2, `io_form_restart` at 102, or `io_form_history` set twice) stops the job
+    before `wrf.exe`, an unknown value of the variable stops it before the run
+    directory, and neither is recorded; the other scripts give WRF the namelist
+    as it is;
   * without the library the job still completes, prints a NOTE saying how to
     point at it, and gives N/A for both;
   * without `rsl.error.0000` all three values are N/A and the job completes,

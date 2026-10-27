@@ -14,7 +14,7 @@ For the CONUS 2.5km forecast, as measured under [Performance](#performance):
 - **Build:** on x86, the GCC + Intel MPI build ([Option 2](#option-2--gcc--intel-mpi-from-source)); on Graviton4, the [Arm build](#arm-builds) with `OMPI_VERSION=5`.
 - **Ranks and threads:** pure MPI, one rank per core (`OMP_NUM_THREADS=1`), every node fully populated: 192 ranks per node on `hpc8a.96xlarge`, `hpc7a.96xlarge`, `c8i.96xlarge`, `m8a.48xlarge` and `m8g.48xlarge`, 96 on `hpc6a.48xlarge`. `c8i.96xlarge` ran with SMT disabled (in ParallelCluster, `DisableSimultaneousMultithreading: true`), so each of its 192 ranks had a physical core to itself. The Intel MPI scripts pin one rank to each core in order (`I_MPI_PIN_DOMAIN=core`, `I_MPI_PIN_ORDER=compact`), and the x86 OpenMPI scripts bind with `--bind-to core --map-by slot`.
 - **Fewer ranks per node:** every WRF result in this README was measured on full nodes, and the scripts' pinning is for full nodes. To run fewer ranks per node on `hpc8a.96xlarge` or `hpc7a.96xlarge`, submit with one of the core counts of [flexible cores](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores) as `--ntasks-per-node`, and replace the scripts' pinning with its list for that count: in the Intel MPI scripts, `I_MPI_PIN_PROCESSOR_LIST` instead of the `I_MPI_PIN_DOMAIN` and `I_MPI_PIN_ORDER` exports (Intel MPI ignores the list while `I_MPI_PIN_DOMAIN` is set); in the x86 OpenMPI scripts, `--bind-to cpu-list:ordered --cpu-list <list>` instead of `--bind-to core --map-by slot`.
-- **Output:** the history and restart files through PnetCDF ([Output format](#output-format)), on a parallel file system such as FSx for Lustre (measured on `hpc8a`, `c8i`, `hpc7a` and `hpc6a`; `m8a` and `m8g` were run with serial output only).
+- **Output:** the history and restart files through PnetCDF ([Output format](#output-format)), on a parallel file system such as FSx for Lustre (measured on `hpc8a`, `c8i`, `hpc7a` and `hpc6a`; `m8a` and `m8g` were run with serial output only). The x86 CONUS 2.5km scripts write their output through PnetCDF by default.
 - **Instance type and node count:** from [Whole run with PnetCDF output](#conus-25km--whole-run-with-pnetcdf-output-6-hour-forecast). `hpc8a.96xlarge` is the fastest node measured (1.34–1.39× `hpc7a.96xlarge` from 1 to 8 nodes), and the whole run keeps 88–97% parallel efficiency on 8 nodes.
 - **Timing:** run the full 6-hour forecast, not a shortened one. Compare configurations on the total wall time with the output settings you will use, and the scaling of the time steps on the median or the steady step ([Key Metrics](#key-metrics)).
 
@@ -179,6 +179,7 @@ The run check assumes WRF's default output file names (`history_outname`, `rst_o
 | `WRF_ENV` | see script | Path to environment setup script |
 | `BENCHMARK` | `12km` (Arm launcher) | `12km` or `2.5km` — mesh resolution |
 | `CONUS_DIR` | `/fsx/wrf/conus_12km` or `conus_2.5km` | Path to benchmark input data |
+| `WRF_OUTPUT_FORMAT` | `pnetcdf` (CONUS 2.5km scripts) | `pnetcdf`: the history and restart files through PnetCDF (`io_form` 11 in the run directory's `namelist.input`); `namelist`: `namelist.input` as `CONUS_DIR` has it (see [Output format](#output-format)) |
 | `BASE_DIR` | `/fsx/wrf` | Root for run output directories |
 | `TARGET` | `auto` (Arm build only) | Force compile target: `graviton3` or `graviton4` |
 | `PREFIX` | `/fsx/wrf/deps` | Dependency install prefix (x86 Intel build only) |
@@ -191,11 +192,11 @@ The run check assumes WRF's default output file names (`history_outname`, `rst_o
 
 For the CONUS 2.5km forecast, write the history and restart files through [PnetCDF](https://parallel-netcdf.github.io/) (parallel netCDF): in `namelist.input`, `&time_control`, set `io_form_history = 11` and `io_form_restart = 11` (the case ships with 2, serial netCDF). Every build here links PnetCDF, so no rebuild is needed: Option 2 builds it with the other dependencies, and Spack's `wrf` package enables it by default (`+pnetcdf`). A build links it when its `configure.wrf` lists `-DPNETCDF`.
 
-The benchmark scripts copy `namelist.input` from `CONUS_DIR` into each run directory, so edit it there. This keeps the shipped file as `namelist.input.serial`:
+The CONUS 2.5km scripts (`x86/wrf-benchmark-conus2.5km.sbatch` and `x86/wrf-benchmark-conus2.5km-intel.sbatch`) make this change by default, in the copy of `namelist.input` they put in each run directory, and leave the one in `CONUS_DIR` as it is. They stop before `wrf.exe` unless the change sets exactly those two lines from 2 to 11, so `CONUS_DIR`'s `namelist.input` must set both to 2, each on a line of its own, as the case ships it. To run that namelist as it is, with the case's serial output for example, set `WRF_OUTPUT_FORMAT=namelist`. The CONUS 12km scripts and the Arm launcher always run the namelist as `CONUS_DIR` has it.
+
+The scripts make the change with this `sed`, which you can run on a namelist of your own:
 
 ```bash
-cd /fsx/wrf/conus_2.5km
-cp -n namelist.input namelist.input.serial
 sed -i -E 's/^([[:space:]]*io_form_(history|restart)[[:space:]]*=[[:space:]]*)2([[:space:]]*,?[[:space:]]*)$/\111\3/' namelist.input
 grep -E '^[[:space:]]*io_form_(history|restart)' namelist.input   # both now 11
 ```

@@ -15,6 +15,14 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 WRF_ENV="${WRF_ENV:-/fsx/wrf/wrf-4.6.1-env.sh}"
 CONUS_DIR="${CONUS_DIR:-/fsx/wrf/conus_2.5km}"
+# History and restart output: pnetcdf, the default, writes them through PnetCDF
+# (io_form 11), as the README's whole-run results did; namelist runs
+# namelist.input as CONUS_DIR has it (the case ships serial netCDF, io_form 2).
+WRF_OUTPUT_FORMAT="${WRF_OUTPUT_FORMAT:-pnetcdf}"
+case "${WRF_OUTPUT_FORMAT}" in
+    pnetcdf|namelist) ;;
+    *) echo "ERROR: WRF_OUTPUT_FORMAT must be pnetcdf or namelist (got: ${WRF_OUTPUT_FORMAT})" >&2; exit 1 ;;
+esac
 basedir="${BASE_DIR:-/fsx/wrf}"
 TOTAL_CORES=$(( SLURM_JOB_NUM_NODES * SLURM_NTASKS_PER_NODE ))
 
@@ -57,6 +65,24 @@ fi
 ln -sf "$CONUS_DIR"/wrfinput_d01 .
 ln -sf "$CONUS_DIR"/wrfbdy_d01 .
 cp "$CONUS_DIR"/namelist.input .
+# PnetCDF output (README, Output format): io_form_history and io_form_restart
+# from 2 to 11 in this run's copy, with the README's sed. The job stops here,
+# before wrf.exe, unless that changes exactly those two lines.
+if [ "${WRF_OUTPUT_FORMAT}" = pnetcdf ]; then
+    sed -i -E 's/^([[:space:]]*io_form_(history|restart)[[:space:]]*=[[:space:]]*)2([[:space:]]*,?[[:space:]]*)$/\111\3/' namelist.input
+    _changed="$(diff "$CONUS_DIR"/namelist.input namelist.input | grep -E '^[<>]' \
+        | sed -E 's/[[:space:]]+//g; s/,$//' | LC_ALL=C sort || true)"
+    if [ "${_changed}" != "$(printf '%s\n' '<io_form_history=2' '<io_form_restart=2' '>io_form_history=11' '>io_form_restart=11')" ]; then
+        echo "ERROR: setting io_form_history and io_form_restart from 2 to 11 (PnetCDF output) did not change" >&2
+        echo "       exactly those two lines of namelist.input: ${CONUS_DIR}/namelist.input must set both" >&2
+        echo "       to 2, each on a line of its own, as the case ships it. Set WRF_OUTPUT_FORMAT=namelist" >&2
+        echo "       to run that namelist as it is. Not starting WRF." >&2
+        exit 1
+    fi
+    echo "Output: PnetCDF (io_form_history = io_form_restart = 11 in this run's namelist.input)"
+else
+    echo "Output: as ${CONUS_DIR}/namelist.input sets it (WRF_OUTPUT_FORMAT=namelist)"
+fi
 
 # Link WRF run files
 ln -sf "$WRF_DIR"/test/em_real/RRTMG_* . 2>/dev/null || true

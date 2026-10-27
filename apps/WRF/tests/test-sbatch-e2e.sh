@@ -159,7 +159,37 @@ EOF
 
 : > "${STUBS}/conus/wrfinput_d01"
 : > "${STUBS}/conus/wrfbdy_d01"
-printf ' &time_control\n run_hours = 3,\n /\n' > "${STUBS}/conus/namelist.input"
+printf ' &time_control\n run_hours = 3,\n io_form_history = 2,\n io_form_restart = 2,\n /\n' > "${STUBS}/conus/namelist.input"
+# The CONUS 2.5km scripts write the history and restart files through PnetCDF
+# by default: WRF gets CONUS_DIR's namelist.input with io_form_history and
+# io_form_restart 11 instead of 2, and nothing else changed, in the run
+# directory; WRF_OUTPUT_FORMAT=namelist gives it the namelist as it is. A
+# namelist that does not take the change stops the job before wrf.exe, and an
+# unknown value of the variable stops it before the run directory. The other
+# scripts give WRF the namelist as it is. The change must set exactly the two
+# lines: a namelist with only io_form_history at 2, with io_form_restart at
+# 102, or with io_form_history set twice takes part of it, or more, and stops
+# the job too.
+NL_STOPS=(conus-no-io-form conus-pnetcdf conus-history-only conus-restart-102 conus-history-twice)
+for c in "${NL_STOPS[@]}"; do mkdir -p "${STUBS}/${c}"; : > "${STUBS}/${c}/wrfinput_d01"; : > "${STUBS}/${c}/wrfbdy_d01"; done
+printf ' &time_control\n run_hours = 3,\n /\n' > "${STUBS}/conus-no-io-form/namelist.input"
+printf ' &time_control\n run_hours = 3,\n io_form_history = 11,\n io_form_restart = 11,\n /\n' \
+    > "${STUBS}/conus-pnetcdf/namelist.input"
+printf ' &time_control\n run_hours = 3,\n io_form_history = 2,\n /\n' > "${STUBS}/conus-history-only/namelist.input"
+printf ' &time_control\n run_hours = 3,\n io_form_history = 2,\n io_form_restart = 102,\n /\n' \
+    > "${STUBS}/conus-restart-102/namelist.input"
+printf ' &time_control\n run_hours = 3,\n io_form_history = 2,\n io_form_history = 2,\n io_form_restart = 2,\n /\n' \
+    > "${STUBS}/conus-history-twice/namelist.input"
+SHIPPED_NL="$(cat "${STUBS}/conus/namelist.input")"
+PNETCDF_NL=$' &time_control\n run_hours = 3,\n io_form_history = 11,\n io_form_restart = 11,\n /'
+# run_nl: the namelist.input in the run directory of the last run_script, or nothing
+run_nl() { local f; f="$(find "$(dirname "${RECLOG}")/Run" -name namelist.input 2>/dev/null | head -1)"; [ -n "${f}" ] && cat "${f}"; }
+# stopped <label>: the job failed before wrf.exe started, and recorded nothing
+stopped() {
+    if [ "${RC}" -ne 0 ] && ! grep -q 'starting wrf task' <<<"${OUT}" && [ ! -s "${RECLOG}" ]; then ok "$1"
+    else bad "$1" "a failed job, no wrf.exe, nothing recorded" \
+             "exit ${RC}; $(grep -c 'starting wrf task' <<<"${OUT}") wrf.exe start(s); recorder log $(wc -l < "${RECLOG}") line(s)"; fi
+}
 : > "${STUBS}/aws-calls.log"
 
 # run_script <script> <fixture or ""> [NAME=value...]
@@ -310,6 +340,58 @@ for s in "${SCRIPTS[@]}"; do
         || ok "no step lines: no report, as before"
     [ -s "${RECLOG}" ] && bad "no step lines: nothing recorded" "recorder not called" "$(head -1 "${RECLOG}")" \
         || ok "no step lines: nothing recorded, as before"
+
+    # The output format: PnetCDF by default in the CONUS 2.5km scripts, the
+    # namelist as it is in the others.
+    case "${s}" in
+        x86/wrf-benchmark-conus2.5km*)
+            run_script "${s}" "${FIX}/hourly-history.rsl"
+            [ "${RC}" -eq 0 ] && [ "$(run_nl)" = "${PNETCDF_NL}" ] \
+                && ok "${s}: WRF gets io_form_history and io_form_restart 11, and nothing else changed" \
+                || bad "${s}: the run's namelist" "${PNETCDF_NL//$'\n'/|}" "exit ${RC}: $(run_nl | tr '\n' '|')"
+            [ "$(cat "${STUBS}/conus/namelist.input")" = "${SHIPPED_NL}" ] \
+                && ok "${s}: CONUS_DIR's namelist.input is left as it is" \
+                || bad "${s}: CONUS_DIR's namelist.input" "unchanged" "$(tr '\n' '|' < "${STUBS}/conus/namelist.input")"
+            has "${s}: the job says which output it writes" \
+                "Output: PnetCDF (io_form_history = io_form_restart = 11 in this run's namelist.input)"
+            run_script "${s}" "${FIX}/hourly-history.rsl" WRF_OUTPUT_FORMAT=namelist
+            [ "${RC}" -eq 0 ] && [ "$(run_nl)" = "${SHIPPED_NL}" ] \
+                && ok "${s}: WRF_OUTPUT_FORMAT=namelist gives WRF the namelist as it is" \
+                || bad "${s}: WRF_OUTPUT_FORMAT=namelist" "${SHIPPED_NL//$'\n'/|}" "exit ${RC}: $(run_nl | tr '\n' '|')"
+            run_script "${s}" "${FIX}/hourly-history.rsl" CONUS_DIR="${STUBS}/conus-no-io-form"
+            stopped "${s}: a namelist with no io_form lines stops the job before wrf.exe"
+            grep -q '^ERROR: setting io_form_history and io_form_restart from 2 to 11' <<<"${OUT}" \
+                && grep -q 'Set WRF_OUTPUT_FORMAT=namelist' <<<"${OUT}" \
+                && ok "${s}: the ERROR says what failed and how to run the namelist as it is" \
+                || bad "${s}: the ERROR" "the change, and WRF_OUTPUT_FORMAT=namelist" "$(grep ERROR <<<"${OUT}" | head -1)"
+            run_script "${s}" "${FIX}/hourly-history.rsl" CONUS_DIR="${STUBS}/conus-pnetcdf"
+            stopped "${s}: a namelist already at 11 does not take the change either: the job stops"
+            for c in "conus-history-only:only io_form_history at 2" "conus-restart-102:io_form_restart at 102" \
+                     "conus-history-twice:io_form_history set twice"; do
+                run_script "${s}" "${FIX}/hourly-history.rsl" CONUS_DIR="${STUBS}/${c%%:*}"
+                stopped "${s}: a namelist with ${c#*:} stops the job before wrf.exe"
+                grep -q '^ERROR: setting io_form_history and io_form_restart from 2 to 11' <<<"${OUT}" \
+                    && ok "${s}: ${c#*:}: the ERROR says the change did not set exactly the two lines" \
+                    || bad "${s}: ${c#*:}: the ERROR" "the change's ERROR" "$(grep ERROR <<<"${OUT}" | head -1)"
+            done
+            run_script "${s}" "${FIX}/hourly-history.rsl" CONUS_DIR="${STUBS}/conus-pnetcdf" WRF_OUTPUT_FORMAT=namelist
+            [ "${RC}" -eq 0 ] && [ "$(run_nl)" = "${PNETCDF_NL}" ] \
+                && ok "${s}: with WRF_OUTPUT_FORMAT=namelist that namelist runs as it is" \
+                || bad "${s}: WRF_OUTPUT_FORMAT=namelist on a namelist at 11" "${PNETCDF_NL//$'\n'/|}" "exit ${RC}: $(run_nl | tr '\n' '|')"
+            run_script "${s}" "${FIX}/hourly-history.rsl" WRF_OUTPUT_FORMAT=serial
+            stopped "${s}: an unknown WRF_OUTPUT_FORMAT stops the job"
+            [ ! -e "$(dirname "${RECLOG}")/Run" ] && ok "${s}: ... before the run directory is made" \
+                || bad "${s}: an unknown WRF_OUTPUT_FORMAT, before the run directory" "no Run directory" \
+                       "$(ls "$(dirname "${RECLOG}")" | tr '\n' ' ')"
+            has "${s}: the ERROR names the two values" "ERROR: WRF_OUTPUT_FORMAT must be pnetcdf or namelist (got: serial)"
+            ;;
+        *)
+            run_script "${s}" "${FIX}/hourly-history.rsl" BENCHMARK=2.5km
+            [ "${RC}" -eq 0 ] && [ "$(run_nl)" = "${SHIPPED_NL}" ] \
+                && ok "${s}: WRF gets the namelist as it is" \
+                || bad "${s}: the run's namelist" "${SHIPPED_NL//$'\n'/|}" "exit ${RC}: $(run_nl | tr '\n' '|')"
+            ;;
+    esac
 
     run_script "${s}" "${FIX}/hourly-history.rsl" SLURM_SUBMIT_DIR="${STUBS}/elsewhere"
     [ "${RC}" -eq 0 ] && ok "library not found: still completes (exit 0)" \
