@@ -45,7 +45,7 @@ MIUPS relates to the classic per-iteration wall time by the mesh size:
 time_per_iteration_seconds = num_cells_million / MIUPS
 ```
 
-So a 140M-cell case at MIUPS = 12.3 corresponds to ~11.4 s per iteration.
+So a 140M-cell case at a MIUPS of `<miups>` takes 140 / `<miups>` seconds per iteration.
 
 ## Running the CPU benchmark
 
