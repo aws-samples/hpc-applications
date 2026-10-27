@@ -112,6 +112,13 @@ if [ "$1" = "mdrun" ]; then
                  (ns/day)    (hour/ns)
 Performance:      100.000        0.240
 MD
+  # STUB_NS_PER_DAY, when set, replaces the rate md.log gives; set and empty, md.log
+  # has no Performance line.
+  if [ -n "${STUB_NS_PER_DAY+set}" ]; then
+    grep -v '^Performance:' md.log > md.log.stub
+    [ -z "${STUB_NS_PER_DAY}" ] || echo "Performance:      ${STUB_NS_PER_DAY}        0.240" >> md.log.stub
+    mv md.log.stub md.log
+  fi
   exit 0
 fi
 exit 0
