@@ -45,7 +45,7 @@ A single build script targets both Graviton generations. The generation is auto-
 
 Two `OMPI_VERSION` knobs are supported, mirroring the OpenRadioss and OpenFOAM conventions:
 
-- `OMPI_VERSION=4` (default) — builds against system OpenMPI 4.1.7 at `/opt/amazon/openmpi`. Works cleanly on Graviton3E at full density (64 ranks/node). On Graviton4 at 192 ranks/node it hits an EFA endpoint exhaustion limit and fails to start.
+- `OMPI_VERSION=4` (default) — builds against system OpenMPI 4.1.7 at `/opt/amazon/openmpi`, for Graviton3E at full density (64 ranks/node). At Graviton4's 192 ranks/node it reaches an EFA endpoint limit, so use `OMPI_VERSION=5` there.
 - `OMPI_VERSION=5` — builds against system OpenMPI 5.0.9 at `/opt/amazon/openmpi5`. Handles full-density EFA on both platforms. **Use this for Graviton4.**
 
 ```bash
@@ -212,24 +212,24 @@ Key takeaways:
 - **`eam` and `rhodo_scaled`, with an eighth of `lj`'s atoms (2,048,000 each), scale less.** `eam` keeps 91–92% on 2 nodes, 74–76% on 4 and 62–71% on 8. `rhodo_scaled` keeps 90% on 2 nodes and 69–72% on 4, but 8 nodes (a single run on each type¹) run it only 1.06–1.11× as fast as 4: at 37–40% efficiency, a run takes 2.5–2.7× the EC2 time of a one-node run.
 - **hpc8a against hpc7a:** one `hpc8a.96xlarge` node runs these decks 1.31–1.46× as fast as one `hpc7a.96xlarge` node, and 8 `hpc8a` nodes run them 1.47–1.60× as fast as 8 `hpc7a` nodes (the 1.60× is `rhodo_scaled`'s, from single runs¹).
 
-### Arm — Graviton3E (hpc7g) vs Graviton4 (m8g)
+### Arm — Graviton3E (c7gn) vs Graviton4 (m8g)
 
 These runs measured the decks' own 100-step loop: the Lennard-Jones melt deck (`in.lj`) at `SCALE=4` (2,048,000 atoms) for 100 timesteps, pure MPI (1 OpenMP thread per rank), compared on the LAMMPS-reported `Loop time` (the mean of 3 runs per point), which leaves the start-up out. To run the same, add `SCALE=4,TIMESTEPS=100` to `--export`.
 
-Both Arm builds use OpenMPI 5.0.9 (required for Graviton4 at 192 rpn) and CPU-tuned flags (`-mcpu=neoverse-v1` on hpc7g, `-mcpu=neoverse-v2` on m8g). hpc7g runs 64 ranks/node; m8g runs 192 ranks/node. Performance is normalised to a single `hpc7g.16xlarge` node — higher is better.
+The Graviton3E runs used `c7gn.16xlarge`, which EC2 lists with the same 64 cores, clock, memory and EFA network bandwidth as `hpc7g.16xlarge`, and the OpenMPI 4.1.7 build (`-mcpu=neoverse-v1`); the Graviton4 runs used `m8g.48xlarge` and the OpenMPI 5.0.9 build (`-mcpu=neoverse-v2`), which Graviton4 needs at 192 rpn (see [Which OpenMPI version?](#which-openmpi-version)). c7gn runs 64 ranks/node; m8g runs 192 ranks/node. Performance is normalised to a single `c7gn.16xlarge` node — higher is better.
 
 ![LAMMPS LJ Graviton3E vs Graviton4](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/LAMMPS/LAMMPS-LJ-Graviton3VsGraviton4.png?raw=true)
 
-| Nodes | hpc7g (64 c/n) | m8g (192 c/n) |
-|------:|---------------:|--------------:|
+| Nodes | c7gn (64 c/n) | m8g (192 c/n) |
+|------:|--------------:|--------------:|
 | 1 | 1.00× | **4.08×** |
 | 2 | 1.88× | **5.48×** |
 | 4 | 3.23× | — |
 
 Key takeaways:
 
-- A single m8g node delivers **4.08×** the performance of a single hpc7g node — consistent with the 3× core-count ratio (192 vs 64) plus the larger L2/L3 caches and faster DDR5 on Neoverse V2
-- **hpc7g scales near-linearly** through 4 nodes (3.23×) — the smaller 64-core nodes never run out of parallel work for 2M atoms
+- A single m8g node delivers **4.08×** the performance of a single c7gn node — consistent with the 3× core-count ratio (192 vs 64) plus the larger L2/L3 caches and faster DDR5 on Neoverse V2
+- **c7gn keeps 81% parallel efficiency on 4 nodes** (3.23×) — the smaller 64-core nodes never run out of parallel work for 2M atoms
 
 ## Key metrics
 
