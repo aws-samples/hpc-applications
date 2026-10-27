@@ -99,6 +99,9 @@ really executes rather than only passing `bash -n`. It asserts:
   * **recorder eligibility** — a run that exits non-zero writes no benchmark row,
     including the subtle `clean output + rc=42` and `benign block + rc=42` cases;
   * `-machines` is built from `SLURM_TASKS_PER_NODE` and totals `SLURM_NPROCS`;
+  * MAPDL gets the licence server from `ANSYSLMD_LICENSE_FILE` as set at
+    submission, and the placeholder `1055@<license-server>` when it is not set;
+    no `<port>@<IPv4 address>` is written anywhere in the sbatch;
   * a placement Slurm cannot describe (unset or unparseable `SLURM_TASKS_PER_NODE`)
     aborts rather than being invented;
   * a heterogeneous `43,42` allocation records `task_placement`, not a uniform

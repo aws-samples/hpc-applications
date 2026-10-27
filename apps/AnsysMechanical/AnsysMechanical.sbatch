@@ -92,7 +92,10 @@ module load libfabric-aws
 export INTELMPI_ROOT="$(dirname $(dirname $(which mpirun)))"
 ######################## EFA settings ########################
 
-export ANSYSLMD_LICENSE_FILE=${ANSYSLMD_LICENSE_FILE:-"1055@172.31.89.151"}
+# The Ansys licence server, as <port>@<host>: set ANSYSLMD_LICENSE_FILE in the
+# shell you submit from (Readme.md, "Running under a job scheduler"); sbatch
+# passes it on to the job. The default is only a placeholder.
+export ANSYSLMD_LICENSE_FILE=${ANSYSLMD_LICENSE_FILE:-"1055@<license-server>"}
 
 mechanicalversion=${1:-"v261"}
 input_file=${2:-"/fsx/.../your_file.dat"}

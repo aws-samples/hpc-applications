@@ -220,6 +220,12 @@ Two rules worth keeping whichever way you build the list:
   * On Amazon Linux 2023 use `dnf` rather than `yum` for the `mesa-libGLU`
     prerequisite. ParallelCluster compute nodes are ephemeral, so install it per
     job (or bake it into a post-install script / custom AMI).
+  * **Point the job at your licence server.** MAPDL checks out its licence from
+    an Ansys licence server, which the sbatch takes from `ANSYSLMD_LICENSE_FILE`
+    as `<port>@<host>`. Set it in the shell you submit from, for example
+    `export ANSYSLMD_LICENSE_FILE=1055@<license-server>`: sbatch passes that
+    environment to the job, and the script's own default is only that
+    placeholder.
 
 ## EFA settings
 

@@ -269,6 +269,64 @@ grep -q 'total 128 cores over 2 node' <<<"${OUT}" \
     && ok "placement total matches SLURM_NPROCS" \
     || bad "placement total" "128 cores over 2 nodes" "$(grep -o 'total .* node(s)' <<<"${OUT}")"
 
+echo "== the licence server comes from ANSYSLMD_LICENSE_FILE, with no address in the script =="
+
+# licence_case [<ANSYSLMD_LICENSE_FILE>]: a clean solve, with the variable unset or
+# set, at submission, to the value given. Sets RC and LICENCE: the value MAPDL found
+# in its environment.
+licence_case() {
+    local base; base="$(mktemp -d)"
+    local vdir="${base}/ansys_inc/v261/ansys/bin"
+    mkdir -p "${vdir}" "${base}/inputs"
+    cat > "${vdir}/mapdl" <<EOF
+#!/bin/bash
+outfile=""; prev=""
+for a in "\$@"; do [ "\$prev" = "-o" ] && outfile="\$a"; prev="\$a"; done
+[ -n "\${outfile}" ] && cp "${FIX}/normal-success.log" "\${outfile}"
+printf '%s' "\${ANSYSLMD_LICENSE_FILE-(unset)}" > "${base}/licence"
+exit 0
+EOF
+    chmod +x "${vdir}/mapdl"
+    : > "${base}/inputs/V26direct-5.dat"
+    local licence_env=( -u ANSYSLMD_LICENSE_FILE )
+    [ "$#" -gt 0 ] && licence_env=( ANSYSLMD_LICENSE_FILE="$1" )
+    OUT="$(
+      env "${licence_env[@]}" PATH="${STUBS}/bin:${PATH}" RECORDER_LOG="${base}/recorder.log" \
+      DYNAMODB_RECORDER="${STUBS}/bin/recorder-stub.sh" \
+      MAPDL_VERDICT_LIB="${HERE}/../lib/mapdl-verdict.sh" \
+      BASE_DIR="${base}" SCRATCH_MODE="shared" \
+      SLURM_JOB_ID=95000 SLURM_JOB_NAME="AnsysMechanical.sbatch" \
+      SLURM_JOB_NUM_NODES=2 SLURM_NPROCS=128 SLURM_NTASKS=128 \
+      SLURM_JOB_NODELIST="node1,node2" SLURM_TASKS_PER_NODE="64(x2)" \
+      SLURM_SUBMIT_DIR="${HERE}/.." \
+      bash "${SBATCH}" v261 "${base}/inputs/V26direct-5.dat" 2>&1
+    )"
+    RC=$?
+    LICENCE="$(cat "${base}/licence" 2>/dev/null)"
+    rm -rf "${base}"
+}
+
+licence_case
+if [ "${RC}" -eq 0 ] && [ "${LICENCE}" = "1055@<license-server>" ]; then
+    ok "ANSYSLMD_LICENSE_FILE not set: MAPDL gets the placeholder 1055@<license-server>"
+else
+    bad "licence server, variable not set" "exit 0, MAPDL gets 1055@<license-server>" \
+        "exit ${RC}, MAPDL got ${LICENCE:-nothing}"
+fi
+licence_case "2325@licence-host.example"
+if [ "${RC}" -eq 0 ] && [ "${LICENCE}" = "2325@licence-host.example" ]; then
+    ok "ANSYSLMD_LICENSE_FILE set at submission: MAPDL gets it as it is"
+else
+    bad "licence server, variable set" "exit 0, MAPDL gets 2325@licence-host.example" \
+        "exit ${RC}, MAPDL got ${LICENCE:-nothing}"
+fi
+addr="$(grep -nE '[0-9]+@([0-9]{1,3}\.){3}[0-9]{1,3}' "${SBATCH}" | cut -d: -f1 | tr '\n' ' ')"
+if [ -z "${addr}" ]; then
+    ok "no <port>@<IPv4 address> anywhere in the sbatch, comments included"
+else
+    bad "no <port>@<IPv4 address> in the sbatch" "none" "on line(s) ${addr}"
+fi
+
 echo "== recorder receives the right metadata =="
 
 run_case "${FIX}/normal-success.log" 0
