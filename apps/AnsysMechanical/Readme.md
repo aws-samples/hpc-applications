@@ -656,11 +656,12 @@ Give the solver family with `--solver-type` (for the V26 Cluster models,
 `sparse-direct-nonsymmetric` for V26direct-4, `sparse-direct-symmetric` for
 V26direct-5, `sparse-direct-complex` for V26direct-6, `jcg-iterative` for
 V26iter-4 and `pcg-iterative` for V26iter-5 and V26iter-6) and the memory mode
-with `--char memory_mode=InCore|OutOfCore` (the sbatch records it from MAPDL's
-`Memory Option:` line): those two attributes explain most of the runtime
-variation between otherwise identical configurations. With the sbatch, set
-`SOLVER_TYPE` on the submission rather than exporting it, so that it does not
-carry over to the next model:
+with `--char memory_mode=InCore|OutOfCore`: those two attributes explain most of
+the runtime variation between otherwise identical configurations. The sbatch
+reads the memory mode from MAPDL's `Memory Option:` line, which MAPDL prints only
+with `-perf on` (see [Benchmarks](#benchmarks)), and records `unknown` for an
+output without the line. With the sbatch, set `SOLVER_TYPE` on the submission
+rather than exporting it, so that it does not carry over to the next model:
 
 ```bash
 SOLVER_TYPE=pcg-iterative sbatch AnsysMechanical.sbatch v261 /fsx/V26/V26iter-5.dat
