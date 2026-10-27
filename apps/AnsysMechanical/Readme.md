@@ -371,9 +371,9 @@ constraint:
     input data.
   * **Cap how many out-of-core jobs run at once.** Running many out-of-core
     solves concurrently can exhaust even a multi-terabyte shared filesystem in
-    hours. When that happens the jobs typically do **not** fail cleanly — they
-    hang on I/O and have to be cancelled, leaving their scratch behind to be
-    reclaimed manually.
+    hours, and MAPDL does not stop cleanly when its scratch disk is full (see
+    [Exit codes](#exit-codes-do-not-use-them-to-decide-success)): size for the
+    jobs you run together, and remove the scratch a job leaves behind.
   * Heavy sharing distorts timings. Watch **`MetadataOperations`** and burst
     throughput in CloudWatch rather than average throughput: a filesystem can
     look nearly idle on average bandwidth while elevated metadata rates and
@@ -469,13 +469,13 @@ run. A robust success test is therefore: `RUN COMPLETED` present, a final
 `Elapsed Time (sec)` present **and positive**, **and** no `*** ERROR ***` block
 other than the expected iteration-limit termination.
 
-A full disk shows why the error blocks are the test that matters. When the shared
-filesystem holding the scratch filled up during our V26 Cluster runs, MAPDL
-stopped the sparse factorisation with "An input/output error has occurred ...
-Please check to see if the disk containing the working directory ... is full",
-then still printed `RUN COMPLETED` and a positive `Elapsed Time (sec)`, and
-exited 1 (one node) or 255 (two nodes): the statuses the fixed-iteration stop
-also returns. Only the error block says that the solve never finished
+A full disk shows why the error blocks are the test that matters. When the
+filesystem holding the scratch is full, MAPDL 2026 R1 stops the sparse
+factorisation with "An input/output error has occurred ... Please check to see
+if the disk containing the working directory ... is full", then still prints
+`RUN COMPLETED` and a positive `Elapsed Time (sec)`, and exits 1 (one node) or
+255 (two nodes): the statuses the fixed-iteration stop also returns. Only the
+error block says that the solve never finished
 ([tests/fixtures/disk-full-abort.log](https://github.com/aws-samples/hpc-applications/blob/main/apps/AnsysMechanical/tests/fixtures/disk-full-abort.log)).
 
 Getting that test right is fiddlier than it looks, and the failure modes are
@@ -533,7 +533,7 @@ silent in both directions. Four traps we hit:
 When parsing that timing line, note the format —
 
 ```
-|   Elapsed Time (sec) =    1327.590    Date  =  08/29/2026   |
+|   Elapsed Time (sec) =     600.000    Date  =  08/29/2026   |
 ```
 
 take the number immediately after the `=`; a trailing regex match will pick the

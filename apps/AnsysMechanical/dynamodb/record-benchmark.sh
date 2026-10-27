@@ -338,7 +338,7 @@ if [ -z "$TIME_TO_SOLUTION" ]; then
             echo "      time from a run that did not finish cleanly." >&2
         else
             # Take the number immediately AFTER the '='. MAPDL's summary line ends
-            # with a Date field (`... = 1327.590   Date = 08/29/2026 |`), so taking
+            # with a Date field (`... = 600.000   Date = 08/29/2026 |`), so taking
             # the LAST number on the line records the YEAR as the solve time.
             _mln="$(grep -hiE 'Elapsed [Tt]ime *\(sec\)' "$_out" 2>/dev/null | tail -1)"
             if [ -n "$_mln" ]; then
