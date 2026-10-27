@@ -6,7 +6,7 @@ with EFA networking. Organised by STAR-CCM+ version and architecture.
 ## Directory Structure
 
 ```
-submit/
+scripts/
 ├── 18.06/                    # STAR-CCM+ 18.06 (works on AL2, AL2023, RHEL8, Ubuntu)
 │   ├── x86/
 │   │   ├── submit_batch.sbatch    # Headless batch run (Intel MPI)
@@ -38,7 +38,7 @@ sbatch submit_batch.sbatch -v 21.02.007 -s /fsx/simulations/model.sim -m RunAndT
 # Chain commands: run a macro, then mesh, then solve
 sbatch submit_batch.sbatch -v 21.02.007 -s model.sim -m "macro.java,mesh,run"
 
-# With an explicit license key
+# With an explicit license key (single-user clusters only)
 sbatch submit_batch.sbatch -v 21.02.007 -s model.sim -l "your-pod-key"
 
 # Server mode (connect via STAR-CCM+ GUI)
@@ -52,7 +52,7 @@ sbatch submit_server.sbatch -v 21.02.007 -s /fsx/simulations/model.sim
 | `-v` | STAR-CCM+ version | Script-specific (e.g. `21.02.007`) |
 | `-s` | Simulation file path | `/fsx/simulations/model.sim` |
 | `-m` | Batch command: a `.java` macro, `run`, `mesh`, `step`, or a comma-separated combination | `run` _(solves the sim)_ |
-| `-l` | PoD license key | `$PODLIC` env var |
+| `-l` | PoD license key | `$PODLIC` env var, else the Parameter Store parameter named by `PODLIC_SSM_PARAMETER` (21.02 x86) |
 
 ## MPI Selection by Version and Architecture
 
@@ -61,9 +61,9 @@ sbatch submit_server.sbatch -v 21.02.007 -s /fsx/simulations/model.sim
 | 18.06 | Intel MPI | Intel MPI | OpenMPI |
 | 21.02+ | OpenMPI | OpenMPI | OpenMPI |
 
-OpenMPI is the recommended MPI for Linux per the Siemens STAR-CCM+ 2602 user
-guide. Intel MPI is unsupported on AMD and crashes on 21.02+ during mesh
-repartitioning on AMD Turin/Genoa. All 21.02 scripts use OpenMPI.
+OpenMPI is the default and recommended MPI for Linux per the Siemens STAR-CCM+
+installation guide (2606 bundles Open MPI 5.0.9 and Intel MPI 2021.16.1). Use
+it on AMD instances: all 21.02 scripts do.
 
 For 18.06, Intel MPI is retained as it works reliably across all tested
 platforms and versions prior to 21.x.
@@ -82,9 +82,8 @@ platforms and versions prior to 21.x.
 ## CPU Binding
 
 No `-cpubind` flag is needed in the submit scripts. STAR-CCM+ defaults to
-`-cpubind bandwidth` which maximises memory bandwidth across NUMA nodes.
-Benchmarking confirmed this is 42-45% faster than `-cpubind off` on AMD
-multi-CCD architectures (hpc8a, hpc7a).
+`-cpubind bandwidth`, which maximises memory bandwidth across NUMA nodes;
+keep that default on AMD multi-CCD architectures (hpc8a, hpc7a).
 
 ## OS Compatibility
 
@@ -105,6 +104,17 @@ export PODLIC="your-pod-key-here"
 sbatch submit_batch.sbatch
 ```
 
+The 21.02 x86 scripts can also read the key when the job starts, from an AWS Systems
+Manager Parameter Store parameter (the nodes' role needs `ssm:GetParameter` on it):
+
+```bash
+PODLIC_SSM_PARAMETER=/starccm/pod-key sbatch submit_batch.sbatch -v 21.04.007 -s model.sim
+```
+
+They pass the key to STAR-CCM+ in `LM_PROJECT` (what `-podkey` sets), which keeps it out
+of STAR-CCM+'s command line, log and `-benchmark` reports. Avoid `-l` on shared
+clusters: Slurm keeps a job's arguments in its job record.
+
 Or edit the `LICENSEOPTS` line in the script to use a license server instead.
 
 ## Customisation
@@ -112,4 +122,6 @@ Or edit the `LICENSEOPTS` line in the script to use a license server instead.
 - Edit `#SBATCH --nodes=` for your node count
 - Edit `#SBATCH --partition=` to match your cluster's partition name
 - Add `#SBATCH --time=HH:MM:SS` for a wall time limit
-- Add `#SBATCH --ntasks-per-node=N` for undersubscription testing
+- Add `#SBATCH --ntasks-per-node=N` for undersubscription testing (on hpc7a.96xlarge and
+  hpc8a.96xlarge: 24, 48, 72, 96, 120, 144, 168 or 192, see
+  [Utils/flexible-cores](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores))
