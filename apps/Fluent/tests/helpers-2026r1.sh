@@ -5,7 +5,14 @@
 # It defines the PASS/FAIL counters, writes the stubs, and defines run_2026r1,
 # which runs the script ASSEMBLED, in an empty environment (env -i) whose PATH
 # starts with the stubs:
-#   curl      IMDS: a token, then STUB_INSTANCE_TYPE as the instance type
+#   curl      IMDS: a token, then STUB_INSTANCE_TYPE as the instance type; it
+#             logs the arguments of each call, and STUB_IMDS=no-answer or
+#             http-error stands for metadata that gives no answer or an
+#             HTTP error
+#   lscpu     the summary of a node with STUB_CPU="<vendor id> <sockets>
+#             <cores per socket> [<threads per core>] [indented]" (default
+#             "AuthenticAMD 2 96", one thread per core), or none, with German
+#             keys in a German locale; it logs each call
 #   scontrol  `scontrol show nodes`: one record per node of STUB_NODES
 #   srun      records its arguments and runs nothing (the cache drop, THP)
 #   module, sudo
@@ -59,11 +66,56 @@ mkdir -p "${WORK}/bin"
 cat > "${WORK}/bin/curl" <<'EOF'
 #!/bin/bash
 # IMDS: the token request, then the instance-type lookup. Nothing else answers.
+# Logs the arguments of each call to curl.log.
+#   STUB_IMDS=no-answer   no answer within curl's time limit: no output, exit 28
+#   STUB_IMDS=http-error  an HTTP 401 for the instance type, which curl -f
+#                         (alone or in a group, such as -fs) or --fail turns
+#                         into no output and exit 22, and plain curl into the
+#                         error page and exit 0
+printf '%s\n' "$*" >> "${STUB_STATE}/curl.log"
+[ "${STUB_IMDS:-}" = no-answer ] && exit 28
 case "$*" in
     *api/token*)     echo "stub-token" ;;
-    *instance-type*) printf '%s' "${STUB_INSTANCE_TYPE-}" ;;
+    *instance-type*)
+        if [ "${STUB_IMDS:-}" = http-error ]; then
+            for a in "$@"; do case "${a}" in --fail) exit 22 ;; --*) ;; -*f*) exit 22 ;; esac; done
+            printf '%s' "<html><title>401 - Unauthorized</title></html>"
+        else
+            printf '%s' "${STUB_INSTANCE_TYPE-}"
+        fi ;;
 esac
 exit 0
+EOF
+cat > "${WORK}/bin/lscpu" <<'EOF'
+#!/bin/bash
+# lscpu's summary for a node with STUB_CPU="<vendor id> <sockets> <cores per
+# socket> [<threads per core>] [indented]", one thread per core unless given:
+# flat, as util-linux 2.37 prints it into a pipe, or indented, as it prints it
+# on a terminal. A BIOS vendor line follows the vendor's, as when lscpu can
+# read the DMI tables. In a German locale (LC_ALL, else LC_MESSAGES, else
+# LANG) the keys are German, as util-linux 2.37 translates them.
+# STUB_CPU=none: no output, exit 1. Logs each call to lscpu.log.
+printf '%s\n' "lscpu $*" >> "${STUB_STATE}/lscpu.log"
+read -r vendor sockets cores more <<< "${STUB_CPU:-AuthenticAMD 2 96}"
+[ "${vendor}" = none ] && exit 1
+threads=1; i=""
+for w in ${more}; do case "${w}" in indented) i="  " ;; *) threads="${w}" ;; esac; done
+cpus=$((sockets * cores * threads))
+de=""; case "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}" in de|de[_.@]*) de=1 ;; esac
+line() {  # <indent> <English key> <German key> <value>: one line, in the locale's language
+    if [ -n "${de}" ]; then printf '%s%-33s%s\n' "$1" "$3" "$4"; else printf '%s%-33s%s\n' "$1" "$2" "$4"; fi
+}
+line ""         "Architecture:"        "Architektur:"             x86_64
+line "${i}"     "CPU op-mode(s):"      "CPU Operationsmodus:"     "32-bit, 64-bit"
+line "${i}"     "Byte Order:"          "Byte-Reihenfolge:"        "Little Endian"
+line ""         "CPU(s):"              "CPU(s):"                  "${cpus}"
+line "${i}"     "On-line CPU(s) list:" "Liste der Online-CPU(s):" "0-$((cpus - 1))"
+line ""         "Vendor ID:"           "Anbieterkennung:"         "${vendor}"
+line "${i}"     "BIOS Vendor ID:"      "BIOS-Anbieterkennung:"    "Amazon EC2"
+line "${i}"     "Model name:"          "Modellname:"              synthetic
+line "${i}${i}" "Thread(s) per core:"  "Thread(s) pro Kern:"      "${threads}"
+line "${i}${i}" "Core(s) per socket:"  "Kern(e) pro Sockel:"      "${cores}"
+line "${i}${i}" "Socket(s):"           "Sockel:"                  "${sockets}"
 EOF
 cat > "${WORK}/bin/scontrol" <<'EOF'
 #!/bin/bash

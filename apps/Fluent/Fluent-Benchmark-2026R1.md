@@ -79,6 +79,13 @@ sbatch -N1 --ntasks=192 --constraint=hpc8a.96xlarge \
     x86/Fluent-Benchmark.2026R1.sbatch v261 shipped
 ```
 
+On `hpc8a.96xlarge` and `hpc7a.96xlarge` the script runs only at 24, 48, 72,
+96, 120, 144, 168 or 192 ranks per node, and stops before Fluent starts at any
+other count: see
+[Cores per node (flexible cores)](Readme.md#cores-per-node-flexible-cores),
+which also says what it does when the instance metadata gives no instance
+type.
+
 ## Automatic benchmark recording
 
 Both the CPU and GPU launch scripts call

@@ -72,8 +72,63 @@ export FLUENT_ARCH=lnamd64
 
 benchmark_file=$(basename ${benchmark_uri})
 
-TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-instanceType=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
+# The instance type, from the instance metadata (IMDSv2). Each request gives
+# up after 5 seconds (2 to connect), and -f turns an HTTP error into no answer.
+# An answer that is not an instance type name (tested in the C locale: in some
+# locales [a-z] leaves out i), a proxy's page for example, counts as none, so
+# it never names the run directory.
+TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+instanceType=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
+( LC_ALL=C; [[ "${instanceType}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || instanceType=""
+
+# Ranks per node on hpc8a.96xlarge and hpc7a.96xlarge: only the counts that put
+# the same number of ranks on each of their 24 CCDs (Utils/flexible-cores/).
+# Fluent spreads its SLURM_NPROCS ranks evenly over the hostfile's nodes, so a
+# node runs SLURM_NPROCS / SLURM_JOB_NUM_NODES of them. Any other count, or a
+# total that does not divide evenly, stops the job here, before the run
+# directory and Fluent. Other instance types and sizes are not checked. When
+# the instance type cannot be read (no answer in time, an HTTP error, or an
+# answer that is not an instance type name), a count outside the set is
+# refused only on an AMD node with 192 cores (lscpu: sockets x cores per
+# socket), which could be one of those two. Any other node runs, with a NOTE
+# that the check was skipped: no run is refused only because the instance
+# metadata did not answer.
+ranks_per_node=""
+if [[ "${SLURM_NPROCS:-}" =~ ^[1-9][0-9]{0,6}$ && "${SLURM_JOB_NUM_NODES:-}" =~ ^[1-9][0-9]{0,6}$ ]] \
+        && (( SLURM_NPROCS % SLURM_JOB_NUM_NODES == 0 )); then
+    ranks_per_node=$(( SLURM_NPROCS / SLURM_JOB_NUM_NODES ))
+fi
+case "${ranks_per_node}" in
+    24|48|72|96|120|144|168|192) ;;
+    *)
+        layout="${SLURM_NPROCS:-?} ranks on ${SLURM_JOB_NUM_NODES:-?} node(s)${ranks_per_node:+ (${ranks_per_node} per node)}"
+        supported="24, 48, 72, 96, 120, 144, 168 or 192 ranks per node"
+        case "${instanceType}" in
+            hpc8a.96xlarge|hpc7a.96xlarge)
+                echo "ERROR: ${layout} load the 24 CCDs of ${instanceType} unevenly;" \
+                     "run ${supported} (Utils/flexible-cores). Not starting Fluent." >&2
+                exit 1 ;;
+        esac
+        if [ -z "${instanceType}" ]; then
+            amd_192_cores="$(LC_ALL=C lscpu 2>/dev/null | awk -F: '
+                { k = $1; sub(/^[[:space:]]+/, "", k); v = $2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", v) }
+                k == "Vendor ID" { vendor = v }
+                k == "Socket(s)" { sockets = v }
+                k == "Core(s) per socket" { cores = v }
+                END { if (vendor == "AuthenticAMD" && sockets ~ /^[0-9]+$/ && cores ~ /^[0-9]+$/ &&
+                          sockets * cores == 192) print "yes" }')"
+            if [ "${amd_192_cores}" = yes ]; then
+                echo "ERROR: ${layout} load the 24 CCDs of hpc8a.96xlarge or hpc7a.96xlarge unevenly (the instance" \
+                     "metadata did not name the instance type, and this node has 192 AMD cores, as those two do);" \
+                     "run ${supported} (Utils/flexible-cores). Not starting Fluent." >&2
+                exit 1
+            fi
+            echo "NOTE: the instance metadata did not name the instance type, and lscpu does not show the 192 AMD" \
+                 "cores of hpc8a.96xlarge and hpc7a.96xlarge, so their ranks-per-node check (Utils/flexible-cores)" \
+                 "is skipped for ${layout}." >&2
+        fi ;;
+esac
+
 workdir="$(readlink -m "${basedir}/${SLURM_JOB_NAME%.*}")/${benchmark_name}/${fluentversion}-2026R1-cpu/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${instanceType}-${SLURM_NPROCS}-$(date "+%d-%m-%Y-%H-%M")"
 
 echo "Execution directory is: ${workdir}"

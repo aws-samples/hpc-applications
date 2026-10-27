@@ -15,9 +15,9 @@ every value in them.
 The `test-2026r1-*.sh` files run **`x86/Fluent-Benchmark.2026R1.sbatch`
 itself**, so that the assembled script really executes. `helpers-2026r1.sh`
 runs it in an empty environment whose `PATH` starts with stubs of `curl`,
-`scontrol`, `srun`, `module`, `mpirun`, `sudo` and `aws`, and with a stub in
-place of Fluent's bundled Python, which the script starts with the 2026 R1
-harness. The stubs touch nothing on the host: the cache drop and the THP
+`lscpu`, `scontrol`, `srun`, `module`, `mpirun`, `sudo` and `aws`, and with a
+stub in place of Fluent's bundled Python, which the script starts with the 2026
+R1 harness. The stubs touch nothing on the host: the cache drop and the THP
 setting that the script starts through `srun` are not run, and the `aws` stub
 refuses every call. The Python stub records the harness's command line and
 writes a fixture where the 2026 R1 harness writes its transcript of the case,
