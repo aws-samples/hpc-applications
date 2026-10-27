@@ -124,7 +124,7 @@ They run the case and mesh in `CASE_SRC`, the 236M mesh by default; the Arm laun
 
 ### Arm
 
-A single launcher works for both Graviton generations — pick the right build via `OPENFOAM_ENV` and set the partition and core count accordingly. OpenMPI 5 is loaded at runtime because the default OpenMPI 4.1.7 cannot scale EFA endpoints to 192 ranks per node on Graviton4.
+A single launcher works for both Graviton generations — pick the right build via `OPENFOAM_ENV` and set the partition and core count accordingly. The launcher loads OpenMPI 5 at run time: Graviton4 at 192 ranks per node over EFA needs it rather than the default OpenMPI 4.1.7.
 
 The mesh size is selectable via `MESH_SIZE` (65, 110, or 236 — millions of cells). Default is **65M (coarse)**, the mesh that fits a 64-core Graviton3E node's memory during the serial `decomposePar` phase. Use `MESH_SIZE=236` on Graviton4 for the full workload.
 

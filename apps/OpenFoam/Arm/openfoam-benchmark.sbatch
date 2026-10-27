@@ -3,8 +3,8 @@
 # Works for hpc7g (Graviton3E, 64 cores/node) and m8g/r8g (Graviton4, 192 cores/node)
 # Select the build via the OPENFOAM_ENV variable.
 #
-# Uses OpenMPI 5 (openmpi5/5.0.9amzn1) which correctly handles EFA with full-density
-# rank placement on Graviton4 (OpenMPI 4.1.7 fails at 192 ranks/node).
+# Uses OpenMPI 5 (openmpi5/5.0.9amzn1) for EFA with full-density rank placement
+# (Graviton4 at 192 ranks per node needs OpenMPI 5).
 #
 # Mesh size is selectable via MESH_SIZE (65, 110, or 236 million cells).
 # Default is 65M ("coarse"), which fits the 128 GiB of one hpc7g.16xlarge
@@ -76,8 +76,8 @@ set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # Load OpenMPI 5 AFTER sourcing OpenFOAM so it takes precedence in PATH
-# OpenMPI 4.1.7 (default) has EFA endpoint limits that fail at 192 ranks/node
-# on Graviton4. OpenMPI 5.0.9 handles full-density EFA correctly on both
+# Graviton4 at 192 ranks per node over EFA needs OpenMPI 5 rather than the
+# default OpenMPI 4.1.7. OpenMPI 5.0.9 runs full-density EFA on both
 # Graviton3E (64 cores) and Graviton4 (192 cores). OMPI 4 and 5 share the same
 # libmpi.so.40 ABI, so OpenFOAM binaries built with OMPI 4 run under OMPI 5.
 # ---------------------------------------------------------------------------
