@@ -2,7 +2,7 @@
 # =============================================================================
 # End-to-end test of the WRF benchmark scripts as ASSEMBLED.
 # =============================================================================
-# Runs every benchmark script with stubbed Slurm, IMDS, MPI and wrf.exe
+# Runs every benchmark script with stubbed Slurm, IMDS, lscpu, MPI and wrf.exe
 # commands, so the whole script executes: the run directory, a stubbed solve
 # that leaves a fixture as rsl.error.0000 and the output files it names, the
 # timing extraction, the report, the run check and the recorder call.
@@ -46,13 +46,59 @@ mkdir -p "${STUBS}/bin" "${STUBS}/WRF/test/em_real" "${STUBS}/conus" "${STUBS}/e
 
 cat > "${STUBS}/bin/curl" <<'EOF'
 #!/bin/bash
-# IMDS stub: token request or instance-type lookup.
+# IMDS stub: token request or instance-type lookup (IMDS_INSTANCE_TYPE, set
+# even to nothing, replaces the default type). Each call's arguments go to
+# CURL_LOG, one line per call, when it is set. IMDS_MODE=down answers nothing
+# (exit 28, as curl does at its time limit); IMDS_MODE=http-error answers an
+# HTTP 401, which curl -f (--fail, or f among short options) turns into exit 22
+# and no output, and plain curl prints, with exit 0.
+[ -n "${CURL_LOG:-}" ] && printf '%s\n' "$*" >> "${CURL_LOG}"
+case "${IMDS_MODE:-}" in
+  down) exit 28 ;;
+  http-error)
+    for a in "$@"; do
+      case "${a}" in --fail) exit 22 ;; --*) ;; -*f*) exit 22 ;; esac
+    done
+    echo "<html><head><title>401 - Unauthorized</title></head></html>"
+    exit 0 ;;
+esac
 case "$*" in
   *api/token*)     echo "stub-token";;
-  *instance-type*) echo "stub.48xlarge";;
+  *instance-type*) echo "${IMDS_INSTANCE_TYPE-stub.48xlarge}";;
   *)               echo "";;
 esac
 exit 0
+EOF
+
+cat > "${STUBS}/bin/lscpu" <<'EOF'
+#!/bin/bash
+# lscpu stub: the node STUB_LSCPU names, <vendor>-<sockets>x<cores per
+# socket>[-smt] (amd-2x96 is an hpc8a.96xlarge or an hpc7a.96xlarge; -smt
+# gives 2 threads per core), or none, an lscpu that fails. Like lscpu, it
+# answers in the language of LC_ALL, else LC_MESSAGES, else LANG: English in
+# C, C.UTF-8, POSIX and en_*, German in any other locale. Each call's LC_ALL
+# goes to LSCPU_LOG, when it is set.
+[ -n "${LSCPU_LOG:-}" ] && echo "LC_ALL=${LC_ALL-unset}" >> "${LSCPU_LOG}"
+case "${STUB_LSCPU:-}" in
+  amd-2x96)     set -- AuthenticAMD 2 96 1 ;;
+  amd-1x192)    set -- AuthenticAMD 1 192 1 ;;
+  amd-2x48-smt) set -- AuthenticAMD 2 48 2 ;;
+  amd-1x96)     set -- AuthenticAMD 1 96 1 ;;
+  amd-2x128)    set -- AuthenticAMD 2 128 1 ;;
+  intel-2x96)   set -- GenuineIntel 2 96 1 ;;
+  *)            echo "lscpu: cannot read the CPUs" >&2; exit 1 ;;
+esac
+lang="${LC_ALL:-${LC_MESSAGES:-${LANG:-C}}}"
+case "${lang}" in
+  C|C.*|POSIX|en_*)
+    printf '%-33s %s\n' "Architecture:" x86_64 "CPU(s):" "$(( $2 * $3 * $4 ))" "Vendor ID:" "$1" \
+        "  Model name:" "Stub CPU" "    Thread(s) per core:" "$4" "    Core(s) per socket:" "$3" \
+        "    Socket(s):" "$2" ;;
+  *)
+    printf '%-33s %s\n' "Architektur:" x86_64 "CPU(s):" "$(( $2 * $3 * $4 ))" "Anbieterkennung:" "$1" \
+        "  Modellname:" "Stub CPU" "    Thread(s) pro Kern:" "$4" "    Kern(e) pro Sockel:" "$3" \
+        "    Sockel:" "$2" ;;
+esac
 EOF
 
 cat > "${STUBS}/bin/scontrol" <<'EOF'
@@ -465,6 +511,175 @@ for s in "${SCRIPTS[@]}"; do
         "NOTE: not recording this run: stub check refused"
     [ -s "${RECLOG}" ] && bad "WRF_RUN_CHECK_LIB's refusal: not recorded" "recorder not called" "$(head -1 "${RECLOG}")" \
         || ok "WRF_RUN_CHECK_LIB's refusal: the run is not recorded"
+done
+
+# On hpc8a.96xlarge and hpc7a.96xlarge the x86 scripts run only the counts per
+# node that put the same number of ranks on each of the 24 CCDs (24, 48, ...,
+# 192) and stop any other before the run directory and mpirun. Other types and
+# sizes, named by the instance metadata, are not checked and lscpu is not asked.
+# When the instance metadata gives no instance type (no answer, an HTTP error,
+# or an answer that is not a type name), such a count stops them on a node
+# whose lscpu shows 192 AMD cores (sockets x cores per socket), which could be
+# either type, and runs, with a NOTE on stderr, on any other node.
+# refused_early <label>: the job failed before the run directory and wrf.exe,
+# and recorded nothing
+refused_early() {
+    if [ "${RC}" -ne 0 ] && [ ! -e "$(dirname "${RECLOG}")/Run" ] && ! grep -q 'starting wrf task' <<<"${OUT}" \
+            && [ ! -s "${RECLOG}" ]; then ok "$1"
+    else bad "$1" "a failed job, no run directory, no wrf.exe, nothing recorded" \
+             "exit ${RC}; $(grep -c 'starting wrf task' <<<"${OUT}") wrf.exe start(s); recorder log $(wc -l < "${RECLOG}") line(s)"; fi
+}
+# ran <label>: the job completed and started wrf.exe
+ran() {
+    if [ "${RC}" -eq 0 ] && grep -q 'starting wrf task' <<<"${OUT}"; then ok "$1"
+    else bad "$1" "exit 0 and wrf.exe started" "exit ${RC}: $(grep ERROR <<<"${OUT}" | head -1)"; fi
+}
+# says <label> <exact line>: the output holds that line
+says() {
+    if grep -qxF -- "$2" <<<"${OUT}"; then ok "$1"
+    else bad "$1" "$2" "$(grep -E '^(ERROR|NOTE)' <<<"${OUT}" | head -3 | tr '\n' '|')"; fi
+}
+# lacks <label> <ERE>: no line of the output matches it
+lacks() {
+    if ! grep -qE -- "$2" <<<"${OUT}"; then ok "$1"
+    else bad "$1" "no line matching '$2'" "$(grep -E -- "$2" <<<"${OUT}" | head -1)"; fi
+}
+COUNTS="run 24, 48, 72, 96, 120, 144, 168 or 192 ranks per node there (Utils/flexible-cores), and below 192 also replace this script's pinning with that count's list (README, Fewer ranks per node). Not starting WRF."
+type_error() { echo "ERROR: $1 ranks per node load the 24 CCDs of $2 unevenly; ${COUNTS}"; }
+amd_error() {
+    echo "ERROR: $1 ranks per node load the 24 CCDs of hpc8a.96xlarge and hpc7a.96xlarge unevenly, and this node could be either (the instance metadata gave no instance type, and lscpu shows 192 AMD cores); ${COUNTS}"
+}
+skip_note() {
+    echo "NOTE: the instance metadata gave no instance type, and lscpu does not show the 192 AMD cores of hpc8a.96xlarge and hpc7a.96xlarge, so the ranks-per-node check (Utils/flexible-cores) is skipped: running $1 ranks per node."
+}
+SKIPPED='^NOTE: the instance metadata gave no instance type'
+# per_node <script> <ranks per node> [NAME=value...]: run_script on 2 nodes at
+# that count, with fresh logs of the curl and lscpu calls (CURLLOG, LSCPULOG)
+ncase=0
+per_node() {
+    local s="$1" c="$2"; shift 2
+    ncase=$((ncase + 1)); CURLLOG="${STUBS}/curl-${ncase}.log"; LSCPULOG="${STUBS}/lscpu-${ncase}.log"
+    : > "${CURLLOG}"; : > "${LSCPULOG}"
+    run_script "${s}" "${FIX}/hourly-history.rsl" CURL_LOG="${CURLLOG}" LSCPU_LOG="${LSCPULOG}" \
+        SLURM_NTASKS_PER_NODE="${c}" SLURM_NTASKS=$(( 2 * c )) "$@"
+}
+# lscpu_asked <label> yes|no: lscpu was asked, in the C locale, or not at all
+lscpu_asked() {
+    local got="not asked" want="not asked"
+    [ -s "${LSCPULOG}" ] && got="$(sort -u "${LSCPULOG}" | tr '\n' ' ')"
+    [ "$2" = yes ] && want="LC_ALL=C "
+    if [ "${got}" = "${want}" ]; then ok "$1"; else bad "$1" "lscpu: ${want}" "lscpu: ${got}"; fi
+}
+# imds_calls <label>: two instance-metadata requests, the token's and the
+# instance type's, each with -f and a time limit of 5 seconds, 2 to connect
+imds_calls() {
+    local tok='^-fs --connect-timeout 2 --max-time 5 -X PUT http://169\.254\.169\.254/latest/api/token -H X-aws-ec2-metadata-token-ttl-seconds: 21600$'
+    local typ='^-fs --connect-timeout 2 --max-time 5 -H X-aws-ec2-metadata-token: .* http://169\.254\.169\.254/latest/meta-data/instance-type$'
+    if [ "$(wc -l < "${CURLLOG}")" -eq 2 ] && sed -n 1p "${CURLLOG}" | grep -qE -- "${tok}" \
+            && sed -n 2p "${CURLLOG}" | grep -qE -- "${typ}"; then ok "$1"
+    else bad "$1" "2 calls, each -fs --connect-timeout 2 --max-time 5 ..." "$(tr '\n' '|' < "${CURLLOG}")"; fi
+}
+# BASH_ENV file that discards a benchmark script's stdout, and not its
+# children's: what is left of the output is its stderr.
+printf 'case "$0" in */x86/wrf-benchmark*.sbatch) exec > /dev/null ;; esac\n' > "${STUBS}/stdout-off.sh"
+echo "== ranks per node on hpc8a.96xlarge and hpc7a.96xlarge (the x86 scripts) =="
+for s in "${SCRIPTS[@]}"; do
+    case "${s}" in x86/*) ;; *) continue ;; esac
+    for t in hpc8a.96xlarge hpc7a.96xlarge; do
+        for c in 24 48 72 96 120 144 168 192; do
+            per_node "${s}" "${c}" IMDS_INSTANCE_TYPE="${t}"
+            ran "${s}: ${c} ranks per node on ${t} run"
+        done
+        imds_calls "${s}: both instance-metadata requests carry -f and give up after 5 seconds, 2 to connect"
+        for c in 25 32 64 100 191; do
+            per_node "${s}" "${c}" IMDS_INSTANCE_TYPE="${t}" STUB_LSCPU=amd-2x96
+            refused_early "${s}: ${c} ranks per node on ${t} stop the job before the run directory and mpirun"
+            says "${s}: ${c} ranks per node on ${t}: the ERROR names the supported counts" "$(type_error "${c}" "${t}")"
+        done
+        lscpu_asked "${s}: ${t} named by the instance metadata: lscpu is not asked" no
+    done
+    # Other types and sizes named by the instance metadata run any count, with no
+    # NOTE and no lscpu, also those with 192 AMD cores (c7a, m8a.48xlarge) and,
+    # in a Turkish locale, those with an i in their name.
+    for c in hpc7a.48xlarge c8i.96xlarge c7a.48xlarge m8a.48xlarge "hpc6id.32xlarge LANG=tr_TR.UTF-8" \
+             "c8i.96xlarge LANG=tr_TR.UTF-8"; do
+        read -r t loc <<<"${c}"
+        per_node "${s}" 64 IMDS_INSTANCE_TYPE="${t}" STUB_LSCPU=amd-2x96 ${loc:+"${loc}"}
+        ran "${s}: 64 ranks per node on ${t}${loc:+ (${loc})} run"
+        lacks "${s}: ${t}${loc:+ (${loc})}: no NOTE" "${SKIPPED}"
+        lscpu_asked "${s}: ${t}${loc:+ (${loc})}: lscpu is not asked" no
+    done
+    # No instance type from the instance metadata on a node whose lscpu shows
+    # 2 x 96 AMD cores: no answer, an HTTP error, an empty answer, and answers
+    # that are not a type name (an error page, a proxy's page that names a host,
+    # a type after other text, a type and a second line, a type in capitals).
+    for k in IMDS_MODE=down IMDS_MODE=http-error IMDS_INSTANCE_TYPE= \
+             "IMDS_INSTANCE_TYPE=<html><body>401 Unauthorized</body></html>" \
+             "IMDS_INSTANCE_TYPE=Access denied by proxy.example.com" \
+             "IMDS_INSTANCE_TYPE=Not found: hpc8a.96xlarge" \
+             "IMDS_INSTANCE_TYPE=hpc8a.96xlarge"$'\n'"<html>" \
+             IMDS_INSTANCE_TYPE=HPC8A.96XLARGE; do
+        l="${k//$'\n'/\\n}"
+        per_node "${s}" 64 "${k}" STUB_LSCPU=amd-2x96
+        refused_early "${s}: ${l}, lscpu 2 x 96 AMD cores: 64 ranks per node stop the job"
+        says "${s}: ${l}: the ERROR names both types, why, and the supported counts" "$(amd_error 64)"
+        lacks "${s}: ${l}: no NOTE that the check is skipped" "${SKIPPED}"
+        lscpu_asked "${s}: ${l}: lscpu is asked, in the C locale" yes
+    done
+    for c in 192 24; do
+        per_node "${s}" "${c}" IMDS_MODE=down STUB_LSCPU=amd-2x96
+        ran "${s}: no answer, 2 x 96 AMD cores: ${c} ranks per node run"
+        lacks "${s}: no answer, ${c} ranks per node: no NOTE" "${SKIPPED}"
+    done
+    # With -f, an HTTP error leaves no instance type, so the error page does not
+    # name the run directory.
+    per_node "${s}" 192 IMDS_MODE=http-error STUB_LSCPU=amd-2x96
+    ran "${s}: an HTTP error, 192 ranks per node: the job runs"
+    w="$(find "$(dirname "${RECLOG}")/Run" -mindepth 3 -maxdepth 3 2>/dev/null)"
+    [[ "${w##*/}" =~ ^4242-2x-384-[0-9-]+$ && "$(wc -l <<<"${w}")" -eq 1 ]] \
+        && ok "${s}: an HTTP error: the run directory's name has no instance type, and no error page" \
+        || bad "${s}: an HTTP error: the run directory's name" "4242-2x-384-<date>" "${w//$'\n'/|}"
+    # An answer that is not a type name counts as none too: a proxy's page does
+    # not name the run directory either.
+    per_node "${s}" 192 "IMDS_INSTANCE_TYPE=Access denied by proxy.example.com" STUB_LSCPU=amd-2x96
+    ran "${s}: a proxy's page, 192 ranks per node: the job runs"
+    w="$(find "$(dirname "${RECLOG}")/Run" -mindepth 3 -maxdepth 3 2>/dev/null)"
+    [[ "${w##*/}" =~ ^4242-2x-384-[0-9-]+$ && "$(wc -l <<<"${w}")" -eq 1 ]] \
+        && ok "${s}: a proxy's page: the run directory's name has no instance type, and none of the page" \
+        || bad "${s}: a proxy's page: the run directory's name" "4242-2x-384-<date>" "${w//$'\n'/|}"
+    # No answer: lscpu decides. 192 AMD cores in one socket stop 64 ranks per
+    # node too; 96 AMD cores with 2 threads each (192 CPUs), 96 or 256 AMD
+    # cores, 192 Intel cores, or an lscpu that fails run them, with the NOTE.
+    per_node "${s}" 64 IMDS_MODE=down STUB_LSCPU=amd-1x192
+    refused_early "${s}: no answer, lscpu 1 x 192 AMD cores: 64 ranks per node stop the job"
+    says "${s}: no answer, lscpu 1 x 192 AMD cores: the ERROR names both types" "$(amd_error 64)"
+    for shape in amd-2x48-smt amd-1x96 amd-2x128 intel-2x96 none; do
+        per_node "${s}" 64 IMDS_MODE=down STUB_LSCPU="${shape}"
+        ran "${s}: no answer, lscpu ${shape}: 64 ranks per node run"
+        says "${s}: no answer, lscpu ${shape}: the NOTE says the check is skipped" "$(skip_note 64)"
+    done
+    # An HTTP error, or an error page, on an Intel node and on a 96-core AMD node.
+    for k in IMDS_MODE=http-error "IMDS_INSTANCE_TYPE=<html><body>401 Unauthorized</body></html>"; do
+        for shape in intel-2x96 amd-1x96; do
+            per_node "${s}" 64 "${k}" STUB_LSCPU="${shape}"
+            ran "${s}: ${k}, lscpu ${shape}: 64 ranks per node run"
+            says "${s}: ${k}, lscpu ${shape}: the NOTE says the check is skipped" "$(skip_note 64)"
+        done
+    done
+    # lscpu is read in the C locale: in German, its keys are translated.
+    per_node "${s}" 64 IMDS_MODE=down STUB_LSCPU=amd-2x96 LC_ALL=de_DE.UTF-8
+    refused_early "${s}: no answer, 2 x 96 AMD cores, LC_ALL=de_DE.UTF-8: 64 ranks per node stop the job"
+    says "${s}: LC_ALL=de_DE.UTF-8: the ERROR names both types" "$(amd_error 64)"
+    lscpu_asked "${s}: LC_ALL=de_DE.UTF-8: lscpu is asked in the C locale" yes
+    # The two ERROR lines and the NOTE go to stderr: with the script's stdout
+    # discarded, the output still holds them.
+    per_node "${s}" 64 IMDS_INSTANCE_TYPE=hpc8a.96xlarge BASH_ENV="${STUBS}/stdout-off.sh"
+    says "${s}: the ERROR for hpc8a.96xlarge goes to stderr" "$(type_error 64 hpc8a.96xlarge)"
+    per_node "${s}" 64 IMDS_MODE=down STUB_LSCPU=amd-2x96 BASH_ENV="${STUBS}/stdout-off.sh"
+    says "${s}: the ERROR for a 192-core AMD node goes to stderr" "$(amd_error 64)"
+    per_node "${s}" 64 IMDS_MODE=down STUB_LSCPU=intel-2x96 BASH_ENV="${STUBS}/stdout-off.sh"
+    says "${s}: the NOTE goes to stderr" "$(skip_note 64)"
+    lacks "${s}: (the script's stdout was discarded)" '^=== WRF'
 done
 
 echo "== the stubs kept AWS out of it =="

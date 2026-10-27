@@ -121,7 +121,9 @@ for N in 1 2 4 8; do sbatch --nodes=$N x86/wrf-benchmark-conus2.5km-intel.sbatch
 for N in 1 2 4 8 16; do sbatch -p hpc6a --ntasks-per-node=96 --nodes=$N x86/wrf-benchmark-conus2.5km-intel.sbatch; done
 ```
 
-The x86 scripts ask for the `hpc8a` partition and 192 tasks per node (`hpc8a.96xlarge`). On another instance type, pass its partition and its core count per node, as in the `hpc6a` line above.
+The x86 scripts ask for the `hpc8a` partition and 192 tasks per node (`hpc8a.96xlarge`). On another instance type, pass its partition and its core count per node, as in the `hpc6a` line above. On `hpc8a.96xlarge` and `hpc7a.96xlarge` they run only 24, 48, 72, 96, 120, 144, 168 or 192 tasks per node, the counts that put the same number of ranks on each of their 24 CCDs ([flexible cores](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores)), and stop with any other count before the run directory and `mpirun`, with an ERROR that names these counts. Below 192, also replace the scripts' pinning with that count's list, as [Fewer ranks per node](#best-practice-in-brief) says: the scripts' own pinning is for full nodes.
+
+When the instance metadata gives no instance type (no answer within 5 seconds, an HTTP error, or an answer that is not an instance type name), the x86 scripts check the count the same way on a node with 192 AMD cores (`lscpu`: vendor `AuthenticAMD`, and sockets × cores per socket is 192), which could be either type, and stop with an ERROR that names both types, says why, and names the same counts. `m8a.48xlarge` also has 192 AMD cores, so there too a count outside the list stops them when the instance type cannot be read. Any other node without an instance type runs such a count, with a one-line NOTE on stderr that the check was skipped; a supported count runs on every node, with no NOTE: no run stops only because the instance metadata did not answer.
 
 > **Note:** The CONUS 12km grid (425×300) requires a minimum of 10 cells per MPI rank in each direction. With 192 cores/node, runs beyond 4 nodes (768 cores) will hit decomposition errors. Use the CONUS 2.5km case for larger scaling tests.
 

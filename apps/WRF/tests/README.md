@@ -51,7 +51,7 @@ logs, and every benchmark script's own `AVG_STEP` pipeline on generated steps
 with a fixed and an adaptive time step. It also runs this suite.
 
 `test-sbatch-e2e.sh` runs **every benchmark script itself**
-(`x86/wrf-benchmark*.sbatch` and `Arm/wrf-benchmark.sbatch`), with `curl`,
+(`x86/wrf-benchmark*.sbatch` and `Arm/wrf-benchmark.sbatch`), with `curl`, `lscpu`,
 `scontrol`, `srun`, `mpirun`, `sudo`, `aws` and `wrf.exe` replaced by stubs, so
 the assembled script really executes. The stubs touch nothing on the host: the
 cache drops and THP settings are swallowed, and the `aws` stub refuses every
@@ -59,6 +59,28 @@ call. The `wrf.exe` stub leaves a fixture as `rsl.error.0000`, and the output
 files its log says WRF wrote (or none, empty ones, or no restart file, as a
 case asks). For each script it asserts:
 
+  * on `hpc8a.96xlarge` and `hpc7a.96xlarge` the x86 scripts run each of the
+    eight supported ranks per node, 24 to 192, and stop 25, 32, 64, 100 and
+    191 before the run directory and `mpirun`, with an ERROR on stderr that
+    names the supported counts; other types and sizes the instance metadata
+    names run 64, with no NOTE and no `lscpu` call: `hpc7a.48xlarge`,
+    `c8i.96xlarge`, `c7a.48xlarge` and `m8a.48xlarge` (192 AMD cores), and
+    `hpc6id.32xlarge` and `c8i.96xlarge` under `LANG=tr_TR.UTF-8`, where
+    `[a-z]` leaves out `i` unless the type name is tested in the C locale. Both
+    instance-metadata requests carry `-f`, `--connect-timeout 2` and
+    `--max-time 5` (the `curl` stub logs them);
+  * when the instance metadata gives no instance type (no answer, an HTTP
+    error, an empty answer, an error page, a page that names a host, a type
+    after other text or before a second line, a type in capitals), 64 ranks per
+    node stop on a node whose `lscpu` (a stub) shows 192 AMD cores, 2 × 96 or
+    1 × 192, with an ERROR on stderr that names both types and no NOTE, and 24
+    and 192 run; 64 runs, with a NOTE on stderr that the check is skipped, on 96
+    AMD cores with 2 threads each (192 CPUs), on 96 or 256 AMD cores, on 192
+    Intel cores and when `lscpu` fails. `lscpu` is asked in the C locale (under
+    `LC_ALL=de_DE.UTF-8` its German keys would hide the cores), and, with `-f`,
+    an HTTP error leaves the run directory's name without an instance type
+    rather than with the error page, as does a proxy's page that is not a type
+    name. These cases are 125 checks for each x86 script;
   * the average step is unchanged, and the report gives `Median timestep:` and
     `Steady timestep:` right after `Avg timestep:` (the x86 scripts also print
     both next to their average in the checking section);
