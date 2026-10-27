@@ -324,7 +324,7 @@ GROMACS computes the long-range electrostatics with PME (particle-mesh Ewald), o
 
 ## Performance
 
-The charts and tables below give relative values only: the rate GROMACS prints on md.log's `Performance:` line (ns/day of the timed second half), the median over each configuration's runs, against one node of the same CPU vendor and benchmark = 1.00× — higher is faster. For the AMD types that node is one `hpc7a.96xlarge`; `c8i.96xlarge` (Intel) and `m8g.48xlarge` (Graviton4), the one type of each of those vendors in the October 2026 runs, are against one node of their own type. The Arm section's charts are means against one Graviton3E node instead, and the GPU section uses a different metric: aggregate throughput under NVIDIA MPS GPU-sharing.
+The charts and tables below give relative values only: the rate GROMACS prints on md.log's `Performance:` line (ns/day of the timed second half), the median over each configuration's runs, against one node of the same CPU vendor and benchmark = 1.00× — higher is faster. For the AMD types that node is one `hpc7a.96xlarge`; `c8i.96xlarge` (Intel) and `m8g.48xlarge` (Graviton4), the one type of each of those vendors in the October 2026 runs, are against one node of their own type. The Arm section's chart is against one Graviton3E node instead, and the GPU section uses a different metric: aggregate throughput under NVIDIA MPS GPU-sharing.
 
 The October 2026 runs used GROMACS 2024.4 built with GCC 11: AVX_512 on hpc8a, hpc7a, c8i and m8a (`x86/build_gromacs_x86.sbatch`); AVX2_256 on hpc6a (see [x86](#x86--thread_mpi--library_mpi)); ARM_SVE with OpenMPI 5.0.9 on m8g (`Arm/build_gromacs_arm.sbatch`). Every node ran one MPI rank per core (192; 96 on `hpc6a.48xlarge`; c8i with SMT off) and one OpenMP thread per rank: Thread_MPI `gmx` with `-pin on` on one node, `gmx_mpi` with OpenMPI over EFA and `mpirun --bind-to core --map-by slot` on more (OpenMPI 4.1.7 on x86). mdrun ran with `-resethway -noconfout -nstlist 100` and each benchmark's default `nsteps` (benchRIB: 10,000), benchPEP-h and benchRIB with `-notunepme`, benchRIB with a quarter of the ranks on PME (see [PME settings](#pme-settings)). hpc8a, c8i, hpc7a and hpc6a ran in eu-north-1, with ParallelCluster 3.16.0 and EFA installer 1.49.0; m8g and m8a in us-east-2, with ParallelCluster 3.15.0 and EFA installer 1.47.0. hpc7a and hpc6a also ran in us-east-2; the charts take their eu-north-1 runs, so that each type is measured on one software stack. Regenerate the two charts with `python3 generate_instance_charts.py` in [`Doc/img/Gromacs/`](../../Doc/img/Gromacs/).
 
@@ -404,13 +404,7 @@ Values are medians of 3 runs, except where a cell gives its run count, and the r
 
 ### Arm — Graviton3E (hpc7g) vs Graviton4 (m8g)
 
-These charts come from an earlier sweep of the launchers in us-east-2 (May and June 2026): (1N, 2N, 4N) × {benchMEM, benchPEP-h} × {Graviton3E on `c7gn.16xlarge` (64 cores per node, the processor of hpc7g, labelled hpc7g in the charts), m8g (Graviton4, `m8g.48xlarge`, 192 cores per node)}, OpenMPI 5. Speedups normalise to a single Graviton3E node, and each bar is the mean of its runs: 2 per point, except 4 for Graviton3E benchMEM on 4 nodes and 1 for Graviton3E benchPEP-h on 2 and 4 nodes. The October 2026 m8g runs are under [Graviton4](#graviton4-m8g48xlarge) above. Regenerate with `python3 generate_charts.py` in [`Doc/img/Gromacs/`](../../Doc/img/Gromacs/).
-
-#### benchMEM (~80,000 atoms, MPINAT membrane protein)
-
-![GROMACS benchMEM Graviton3E vs Graviton4](../../Doc/img/Gromacs/Gromacs-benchMEM-Graviton3VsGraviton4.png)
-
-#### benchPEP-h (~12,000,000 atoms, MPINAT peptide)
+This chart comes from an earlier sweep of the launchers in us-east-2 (May and June 2026): benchPEP-h on 1, 2 and 4 nodes of Graviton3E (`c7gn.16xlarge`, 64 cores per node, the processor of hpc7g) and Graviton4 (`m8g.48xlarge`, 192 cores per node), with OpenMPI 5 on more than one node. Values are relative to one Graviton3E node, each bar the median of its runs: 3 on 4 Graviton3E nodes and on one Graviton4 node, 1 on 2 Graviton3E nodes (the hatched bar), 2 elsewhere. The chart's runs on 2 and 4 Graviton3E nodes were 2,000 or 3,000 steps long, and the others 5,000, the default. The October 2026 m8g runs, benchMEM included, are under [Graviton4](#graviton4-m8g48xlarge) above. Regenerate with `python3 generate_charts.py` in [`Doc/img/Gromacs/`](../../Doc/img/Gromacs/).
 
 ![GROMACS benchPEP-h Graviton3E vs Graviton4](../../Doc/img/Gromacs/Gromacs-benchPEP-h-Graviton3VsGraviton4.png)
 
@@ -513,7 +507,7 @@ The launcher extracts:
 |------|-------------|
 | `record-benchmark.sh` | Contribution recorder the launchers call after every successful run (see [Contribute your results](#contribute-your-results)) |
 | `record_to_dynamodb.sh` | Optional helper that records each benchmark run to a centralised DynamoDB table |
-| `scan_sweep.sh` | Pull per-cell `ns/day` means from `Gromacs_Benchmarks` (`us-east-1`) and emit them in the shape the chart pipeline consumes |
+| `scan_sweep.sh` | Pull per-cell `ns/day` runs and means from `Gromacs_Benchmarks` (`us-east-1`): the input of the chart generators' relative values |
 | `README.md` | Table schema, IAM permissions, and setup instructions — see [`dynamodb/README.md`](dynamodb/README.md) |
 
 ## Contribute your results

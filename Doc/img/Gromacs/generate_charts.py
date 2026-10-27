@@ -2,206 +2,122 @@
 """
 Generate the GROMACS performance charts of the May-June 2026 sweeps:
 
-1. Arm chart (Phase 2): hpc7g (Graviton3E / Neoverse V1) vs m8g (Graviton4 /
-   Neoverse V2) per workload — gated behind ``data_available_arm`` until the
-   Arm sweep lands.
-2. GPU chart (Phase 3): three-family comparison g6e (L40S) vs g7e (Blackwell
-   RTX PRO 6000) vs p5 (H100) per workload, plus a price/performance chart
-   (ns/day per dollar-hour, us-east-2 on-demand) — gated behind
-   ``data_available_gpu`` until the GPU sweep lands.
+1. Arm chart: Graviton3E (c7gn.16xlarge, Neoverse V1) vs Graviton4
+   (m8g.48xlarge, Neoverse V2) on benchPEP-h, 1 to 4 nodes.
+2. GPU charts (disabled, see ``data_available_gpu``): three-family comparison
+   g6e (L40S) vs g7e (Blackwell RTX PRO 6000) vs p5 (H100) per workload, plus a
+   relative price-performance chart (us-east-2 on-demand prices).
+3. GPU MPS chart: the aggregate throughput gain of N simulations sharing one
+   g7e GPU, by system size.
 
 The instance charts of the October 2026 runs, on the AMD types, are written by
 ``generate_instance_charts.py`` in this directory.
 
-Workloads: ``benchMEM`` (~80k atoms, MPINAT membrane protein) and ``benchPEP-h``
-(~12M atoms, MPINAT peptide). Each cell holds the per-replicate ``Performance:
-<ns/day>`` values pulled from ``Gromacs_Benchmarks`` in DynamoDB (us-east-1).
+Every value below is relative: a configuration's performance against a
+reference of the same workload (one Graviton3E node for Arm, the slowest family
+on one GPU for GPU, one simulation for MPS), with its run count where the sweep
+gives one. No absolute ``ns/day`` value appears here or on any chart.
 
-Speedups are normalised to a single-node baseline of the same architecture
-(1N hpc7g for Arm, 1-GPU g6e for GPU), matching the
-LAMMPS / OpenRadioss / WRF convention used elsewhere in this repo. Only
-speedups are rendered — absolute ``ns/day`` values do not appear on any chart
-.
-
-Usage:
+Usage (from this directory):
     python3 generate_charts.py
-
-When a workload's per-replicate lists are still placeholders (all zeros / empty
-lists), the script prints a "data not yet collected" message for that cell and
-moves on cleanly — it never raises and never writes a meaningless PNG built
-from sentinel values.
 """
 
 import sys
 
+import matplotlib
+matplotlib.use("Agg")  # write the PNGs without a display
 import matplotlib.pyplot as plt
 import numpy as np
 
 # ---------------------------------------------------------------------------
-# Phase gating — flip these to ``True`` when the corresponding sweep has run
-# and the per-replicate lists below have been populated from DynamoDB.
+# Chart gating.
 # ---------------------------------------------------------------------------
-data_available_arm = True    # Phase 2 (hpc7g / m8g) — populated 2026-05-29
+data_available_arm = True
 # GPU (single-simulation multi-GPU scaling) charts are intentionally DISABLED.
 # That approach anti-scaled (PCIe-bound) and is the wrong model for GROMACS.
 # The GPU study was redone with NVIDIA MPS GPU-sharing — see ``data_available_mps``
 # below. Do NOT re-enable this legacy gate.
 data_available_gpu = False
 
-# GPU MPS GPU-sharing charts (Phase 3, redone). Many independent simulations
+# GPU MPS GPU-sharing charts (redone GPU study). Many independent simulations
 # packed onto ONE GPU via NVIDIA CUDA MPS, reported as aggregate throughput
-# gain (sum of per-sim ns/day, normalised to a single sim) by system size.
+# gain (relative to a single sim) by system size.
 # Measured on g7e (Blackwell RTX PRO 6000) in us-east-2, 2026-06-05.
 data_available_mps = True
 
 # ---------------------------------------------------------------------------
-# Workload list. Each entry is ``(model_id, chart_subtitle)``. ``model_id`` is
-# used verbatim in the output PNG filenames, so it must match the GROMACS
-# ``MODEL`` value used by the benchmark scripts.
+# Arm: benchPEP-h (12.5M atoms) on Graviton3E (c7gn.16xlarge, 64 cores per
+# node) and Graviton4 (m8g.48xlarge, 192), us-east-2, May and June 2026,
+# OpenMPI 5 on more than one node, mdrun -notunepme -resethway. Each value: the
+# median rate of the configuration's runs over the median rate of one
+# Graviton3E node (2 runs), higher is faster; and the run count. Graviton3E on
+# 2 and 4 nodes ran 32 MPI ranks per node x 2 OpenMP threads, the fastest
+# layout measured there; every other point one MPI rank per core.
+# ---------------------------------------------------------------------------
+ARM_NODES = [1, 2, 4]
+ARM_DATA = {
+    # workload: {instance type: {nodes: (relative performance, runs)}}
+    "benchPEP-h": {
+        "c7gn.16xlarge": {1: (1.00000, 2), 2: (1.96552, 1), 4: (3.87069, 3)},
+        "m8g.48xlarge": {1: (2.47414, 3), 2: (4.87388, 2), 4: (9.55781, 2)},
+    },
+}
+ARM_SUBTITLES = {
+    "benchPEP-h": "benchPEP-h (~12,000,000 atoms, MPINAT peptide)",
+}
+
+# ---------------------------------------------------------------------------
+# GPU: one simulation over 1 to 8 GPUs of one node (disabled, see
+# ``data_available_gpu``). GROMACS v2026.1 / CUDA 13, g6e = L40S (sm_89),
+# g7e = Blackwell RTX PRO 6000 (sm_120), p5 = H100 (sm_90), .48xlarge SKUs,
+# us-east-2, 2026-06-01/02. Each value: the family's mean rate on that many
+# GPUs over the mean rate of the slowest family on one GPU, same workload; and
+# the run count. None: not charted.
+#
+# benchMEM (~80k atoms) ran on one GPU only: it is far too small to split
+# across GPUs (two g6e GPUs ran it at 0.03x the rate of one).
+# benchPEP-h (~12M atoms) ran with -notunepme (PME tuning does not converge by
+# the -resethway midpoint on a system this large) and -npme 1 (a dedicated PME
+# rank, required for multi-rank PME-on-GPU). These are single-node runs over
+# PCIe (no NVLink on these SKUs), so even the 12M-atom system anti-scales:
+# inter-GPU PME/PP traffic dominates, and the 1-GPU column is the comparison.
 # ---------------------------------------------------------------------------
 WORKLOADS = [
     ("benchMEM",   "benchMEM (~80,000 atoms, MPINAT membrane protein)"),
     ("benchPEP-h", "benchPEP-h (~12,000,000 atoms, MPINAT peptide)"),
 ]
-
-# ---------------------------------------------------------------------------
-# Node counts present in each sweep
-# ---------------------------------------------------------------------------
-NODES_ARM = [1, 2, 4]   # hpc7g / m8g
-GPU_COUNTS = [1, 2, 4, 8]  # g6e / p5 — single-node multi-GPU
-
-# ---------------------------------------------------------------------------
-# Measured data — Performance: <ns/day> per replicate.
-#
-# Pulled from the Gromacs_Benchmarks DynamoDB table (us-east-1) via
-# ``apps/Gromacs/dynamodb/scan_sweep.sh``. Each list is the per-replicate
-# ``ns/day`` for a single (instance, node-count, model) cell. Use ``[]`` for
-# cells that were not measured.
-# ---------------------------------------------------------------------------
-
-# Arm — benchMEM ----------------------------------------------------------
-# hpc7g (Graviton3E / Neoverse V1, c7gn.16xlarge 64 c/n, OpenMPI 5) — us-east-2 sweep 2026-05-29
-ns_hpc7g_1n_benchMEM = [77.814, 78.556]
-ns_hpc7g_2n_benchMEM = [145.677, 146.755]
-# 4N r-low (192.904) excluded as a confirmed outlier: 4 further reps clustered at
-# 239.818 / 239.167 / 231.990 / 231.211 (~235 ns/day), the low rep was a noisy node.
-ns_hpc7g_4n_benchMEM = [239.818, 239.167, 231.990, 231.211]
-# m8g (Graviton4 / Neoverse V2, m8g.48xlarge 192 c/n, OpenMPI 5)
-ns_m8g_1n_benchMEM   = [196.742, 197.413]
-ns_m8g_2n_benchMEM   = [266.421, 301.490]
-ns_m8g_4n_benchMEM   = [273.766, 280.428]
-
-# Arm — benchPEP-h --------------------------------------------------------
-# benchPEP-h (12M atoms) run with -notunepme -resethway: PME tuning does not
-# converge by the -resethway midpoint on a system this large, so tuning is
-# disabled for a fair, deterministic cross-arch comparison.
-ns_hpc7g_1n_benchPEPh = [0.464, 0.464]
-# hpc7g 2N/4N benchPEP-h collected with per-node-count layout tuning
-# (2026-06-12/14). The 12M-atom system is fastest with a hybrid 32 ranks/node x 2
-# OMP-threads split (more OpenMP threads, fewer MPI ranks) on the 64-core
-# Graviton3E nodes. Values below are the tuned optimum per node count:
-#   2N: 32x2 = 0.912  (vs 8x8 0.833, 16x4 0.777)
-#   4N: 32x2 = 1.792  (vs 8x8 1.512)
-ns_hpc7g_2n_benchPEPh = [0.912]
-ns_hpc7g_4n_benchPEPh = [1.792]
-ns_m8g_1n_benchPEPh   = [1.147, 1.148]
-ns_m8g_2n_benchPEPh   = [2.255, 2.268]
-ns_m8g_4n_benchPEPh   = [4.407, 4.463]
-
-# GPU — benchMEM ----------------------------------------------------------
-# Single-node multi-GPU scaling, GROMACS v2026.1 / CUDA 13. ns/day per
-# replicate. g6e = L40S (sm_89), g7e = Blackwell RTX PRO 6000 (sm_120),
-# p5 = H100 (sm_90). Measured in us-east-2, .48xlarge SKUs, 2026-06-01/02.
-#
-# benchMEM (~80k atoms) is run 1-GPU ONLY: it is far too small to split
-# across GPUs, so multi-GPU anti-scales hard and stalls. Evidence: g6e
-# 2-GPU measured 8.0 ns/day vs 1-GPU 265 ns/day (recorded below as a comment,
-# not charted). We therefore present benchMEM as a single-GPU throughput
-# comparison only.
-# g6e (L40S)
-ns_g6e_1g_benchMEM = [264.744, 265.445]
-ns_g6e_2g_benchMEM = []     # anti-scales (measured 8.003, 8.014) — not charted
-ns_g6e_4g_benchMEM = []     # not run (anti-scaling, too small to split)
-ns_g6e_8g_benchMEM = []     # not run
-# g7e (Blackwell RTX PRO 6000)
-ns_g7e_1g_benchMEM = [383.187, 386.679]
-ns_g7e_2g_benchMEM = []     # not run
-ns_g7e_4g_benchMEM = []     # not run
-ns_g7e_8g_benchMEM = []     # not run
-# p5 (H100)
-ns_p5_1g_benchMEM  = [232.040, 237.447]
-ns_p5_2g_benchMEM  = []     # not run
-ns_p5_4g_benchMEM  = []     # not run
-ns_p5_8g_benchMEM  = []     # not run
-
-# GPU — benchPEP-h --------------------------------------------------------
-# benchPEP-h (~12M atoms), full 1/2/4/8-GPU scaling, run with -notunepme
-# (PME tuning does not converge by the -resethway midpoint on a system this
-# large) and -npme 1 (dedicated PME rank, required for multi-rank PME-on-GPU).
-# NOTE: these are single-node multi-GPU runs over PCIe (no NVLink on these
-# SKUs), so even the 12M-atom system anti-scales — inter-GPU PME/PP traffic
-# dominates. The 1-GPU column is the meaningful raw-throughput comparison.
-# g6e (L40S)
-ns_g6e_1g_benchPEPh = [3.436, 3.452]
-ns_g6e_2g_benchPEPh = [2.477, 2.487]
-ns_g6e_4g_benchPEPh = [0.850, 0.855]
-ns_g6e_8g_benchPEPh = [0.417]            # r2 not parseable (transient); r1 valid
-# g7e (Blackwell)
-ns_g7e_1g_benchPEPh = [6.614]            # r1 not parseable (transient); r2 valid
-ns_g7e_2g_benchPEPh = [4.390, 4.361]
-ns_g7e_4g_benchPEPh = [0.855, 0.849]
-ns_g7e_8g_benchPEPh = [0.425, 0.426]
-# p5 (H100)
-ns_p5_1g_benchPEPh  = [4.117, 4.116]
-ns_p5_2g_benchPEPh  = [2.899, 2.918]
-ns_p5_4g_benchPEPh  = [0.847, 0.846]
-ns_p5_8g_benchPEPh  = [0.410, 0.409]
-
-# ---------------------------------------------------------------------------
-# GPU instance on-demand pricing — us-east-2, retrieved 2026-06-01.
-# Used only for the price/performance chart (ns/day per dollar-hour). The
-# .48xlarge SKU is the one swept (8 GPUs/node) for all three families.
-# Keep prices out of matplotlib calls.
-# ---------------------------------------------------------------------------
-GPU_PRICE_USD_PER_HR = {
-    "g6e": 30.13,   # g6e.48xlarge (8x L40S)
-    "g7e": 33.14,   # g7e.48xlarge (8x Blackwell RTX PRO 6000)
-    "p5":  55.04,   # p5.48xlarge  (8x H100)
-}
-
-# ---------------------------------------------------------------------------
-# Per-workload lookup tables — keep numeric values out of matplotlib calls.
-# ---------------------------------------------------------------------------
-ARM_DATA = {
-    "benchMEM": {
-        "hpc7g": [ns_hpc7g_1n_benchMEM, ns_hpc7g_2n_benchMEM, ns_hpc7g_4n_benchMEM],
-        "m8g":   [ns_m8g_1n_benchMEM,   ns_m8g_2n_benchMEM,   ns_m8g_4n_benchMEM],
-    },
-    "benchPEP-h": {
-        "hpc7g": [ns_hpc7g_1n_benchPEPh, ns_hpc7g_2n_benchPEPh, ns_hpc7g_4n_benchPEPh],
-        "m8g":   [ns_m8g_1n_benchPEPh,   ns_m8g_2n_benchPEPh,   ns_m8g_4n_benchPEPh],
-    },
-}
-
+GPU_COUNTS = [1, 2, 4, 8]
 GPU_DATA = {
+    # workload: {family: [(relative performance, runs) or None, per GPU count]}
     "benchMEM": {
-        "g6e": [ns_g6e_1g_benchMEM, ns_g6e_2g_benchMEM, ns_g6e_4g_benchMEM, ns_g6e_8g_benchMEM],
-        "g7e": [ns_g7e_1g_benchMEM, ns_g7e_2g_benchMEM, ns_g7e_4g_benchMEM, ns_g7e_8g_benchMEM],
-        "p5":  [ns_p5_1g_benchMEM,  ns_p5_2g_benchMEM,  ns_p5_4g_benchMEM,  ns_p5_8g_benchMEM],
+        "g6e": [(1.12929, 2), None, None, None],
+        "g7e": [(1.63980, 2), None, None, None],
+        "p5":  [(1.00000, 2), None, None, None],
     },
     "benchPEP-h": {
-        "g6e": [ns_g6e_1g_benchPEPh, ns_g6e_2g_benchPEPh, ns_g6e_4g_benchPEPh, ns_g6e_8g_benchPEPh],
-        "g7e": [ns_g7e_1g_benchPEPh, ns_g7e_2g_benchPEPh, ns_g7e_4g_benchPEPh, ns_g7e_8g_benchPEPh],
-        "p5":  [ns_p5_1g_benchPEPh,  ns_p5_2g_benchPEPh,  ns_p5_4g_benchPEPh,  ns_p5_8g_benchPEPh],
+        "g6e": [(1.00000, 2), (0.72067, 2), (0.24753, 2), (0.12108, 1)],
+        "g7e": [(1.92044, 1), (1.27047, 2), (0.24739, 2), (0.12355, 2)],
+        "p5":  [(1.19527, 2), (0.84451, 2), (0.24579, 2), (0.11890, 2)],
     },
 }
 
+# On-demand price of each family's 8-GPU .48xlarge SKU relative to
+# g6e.48xlarge (us-east-2, 2026-06-01), for the relative price-performance
+# chart only.
+GPU_RELATIVE_PRICE = {
+    "g6e": 1.00000,
+    "g7e": 1.09990,
+    "p5":  1.82675,
+}
+
 # ---------------------------------------------------------------------------
-# GPU MPS GPU-sharing data — aggregate throughput (sum of per-sim ns/day) for
-# N independent simulations sharing ONE GPU via NVIDIA CUDA MPS. Measured in
-# us-east-2 (2026-06-05), GROMACS v2026.1 / CUDA 13, nstlist=150, ntomp=1,
-# --bind-to none, GPU_UPDATE=auto, -notunepme. cuda_graph=1 for villin/
-# rnase_cubic, =0 for ion_channel.
+# GPU MPS GPU-sharing: N independent simulations sharing ONE g7e GPU
+# (Blackwell RTX PRO 6000) through NVIDIA CUDA MPS, us-east-2, 2026-06-05,
+# GROMACS v2026.1 / CUDA 13, nstlist=150, ntomp=1, --bind-to none,
+# GPU_UPDATE=auto, -notunepme; cuda_graph=1 for villin and rnase_cubic, 0 for
+# ion_channel. Each value: the aggregate throughput (the sum of the sims'
+# rates) at 1, 2, 4 and 8 concurrent sims over that of one sim of the same
+# system.
 #
 # Systems span the GPU-utilization range where MPS matters: villin (~5K atoms,
 # heavily under-utilizes a modern GPU) → ion_channel (~149K atoms, closer to
@@ -215,19 +131,19 @@ MPS_SYSTEMS = [
     ("ion_channel",  "Ion-channel (~149,000 atoms)"),
 ]
 
-# g7e (Blackwell RTX PRO 6000) aggregate ns/day by concurrent-sim count.
+# g7e (Blackwell RTX PRO 6000): aggregate throughput relative to one sim.
 MPS_G7E = {
-    "villin":      [2697, 4662, 8130, 12354],
-    "rnase_cubic": [1166, 2041, 3232, 4203],
-    "ion_channel": [323,  520,  739,  908],
+    "villin":      [1.00000, 1.72859, 3.01446, 4.58065],
+    "rnase_cubic": [1.00000, 1.75043, 2.77187, 3.60463],
+    "ion_channel": [1.00000, 1.60991, 2.28793, 2.81115],
 }
 
 # ---------------------------------------------------------------------------
 # Styling — match LAMMPS / WRF / OpenRadioss convention
 # ---------------------------------------------------------------------------
 BAR_W = 0.35
-BASELINE_COLOR = "#4E79A7"     # hpc7g (Arm) / g6e (GPU)
-COMPARISON_COLOR = "#F28E2B"   # m8g  (Arm) / p5  (GPU)
+BASELINE_COLOR = "#4E79A7"     # Graviton3E (Arm)
+COMPARISON_COLOR = "#F28E2B"   # Graviton4 (Arm)
 EDGE_COLOR = "black"
 GRID_LINESTYLE = "--"
 GRID_ALPHA = 0.5
@@ -241,115 +157,65 @@ Y_HEADROOM = 1.15  # 15% headroom above the tallest bar for annotation room
 FIG_SIZE = (9, 6)
 DPI = 150
 
+# Arm: instance type -> (colour, legend label)
+ARM_STYLE = {
+    "c7gn.16xlarge": (BASELINE_COLOR, "c7gn.16xlarge (Graviton3E, 64 cores/node)"),
+    "m8g.48xlarge": (COMPARISON_COLOR, "m8g.48xlarge (Graviton4, 192 cores/node)"),
+}
+
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Arm chart renderer
 # ---------------------------------------------------------------------------
-def cell_mean(values):
-    """Return the mean of a non-empty, non-zero replicate list, else ``None``.
+def render_arm_chart(workload_subtitle, cells, output_filename, suptitle):
+    """Paired bars per node count, relative to one Graviton3E node.
 
-    A cell is considered "absent" — and skipped in the chart — if its
-    replicate list is empty (no measurement attempted) or contains only
-    sentinel zeros (placeholder pending live data collection). In both
-    cases we return ``None`` so the caller can skip the bar without
-    raising.
+    ``cells`` maps an instance type to ``{nodes: (relative performance,
+    runs)}``. A point measured by one run is drawn as a hatched bar.
     """
-    if not values:
-        return None
-    if all(v == 0 for v in values):
-        return None
-    return float(np.mean(values))
-
-
-def collect_speedups(per_x_lists, x_values, baseline):
-    """Return (xs_present, speedups) for cells with data.
-
-    Speedup = ``ns/day_current / ns/day_baseline`` (higher is better).
-    Cells whose replicate lists are empty/zero are skipped silently.
-    """
-    xs_present = []
-    speedups = []
-    for x, vals in zip(x_values, per_x_lists):
-        m = cell_mean(vals)
-        if m is None:
-            continue
-        xs_present.append(x)
-        speedups.append(m / baseline)
-    return xs_present, speedups
-
-
-def render_two_instance_chart(
-    workload_id,
-    workload_subtitle,
-    x_values,
-    baseline_lists,
-    comparison_lists,
-    baseline_label,
-    comparison_label,
-    baseline_unit_label,
-    x_axis_label,
-    output_filename,
-    suptitle,
-):
-    """Render a paired-bar speedup chart for a single workload.
-
-    Returns ``True`` on success, ``False`` if the baseline 1-unit cell is
-    missing (chart cannot be normalised, so we skip cleanly).
-    """
-    baseline_mean = cell_mean(baseline_lists[0])
-    if baseline_mean is None:
-        print(
-            f"  skipping {output_filename} — baseline 1{baseline_unit_label} "
-            f"{baseline_label} data not yet collected for {workload_id}"
-        )
-        return False
-
-    base_xs, base_su = collect_speedups(baseline_lists, x_values, baseline_mean)
-    cmp_xs,  cmp_su  = collect_speedups(comparison_lists, x_values, baseline_mean)
-
-    # Use a unified x-axis covering every count present on either side so
-    # missing cells leave a visible gap rather than collapsing the layout.
-    all_xs = sorted(set(base_xs) | set(cmp_xs))
-    base_lookup = dict(zip(base_xs, base_su))
-    cmp_lookup  = dict(zip(cmp_xs,  cmp_su))
-    base_bars = [base_lookup.get(x, 0.0) for x in all_xs]
-    cmp_bars  = [cmp_lookup.get(x,  0.0) for x in all_xs]
-
     fig, ax = plt.subplots(figsize=FIG_SIZE)
-    x_pos = np.arange(len(all_xs))
-
-    ax.bar(x_pos - BAR_W / 2, base_bars, BAR_W, color=BASELINE_COLOR,
-           edgecolor=EDGE_COLOR, label=baseline_label)
-    ax.bar(x_pos + BAR_W / 2, cmp_bars,  BAR_W, color=COMPARISON_COLOR,
-           edgecolor=EDGE_COLOR, label=comparison_label)
-
-    for i, v in enumerate(base_bars):
-        if v > 0:
-            ax.text(i - BAR_W / 2, v + ANNOTATION_OFFSET, f"{v:.2f}x",
+    x_pos = np.arange(len(ARM_NODES))
+    families = list(cells)
+    tallest = 1.0
+    for fi, fam in enumerate(families):
+        colour, label = ARM_STYLE[fam]
+        offset = (fi - (len(families) - 1) / 2) * BAR_W
+        for i, n in enumerate(ARM_NODES):
+            if n not in cells[fam]:
+                continue
+            rel, runs = cells[fam][n]
+            single = runs == 1
+            ax.bar(i + offset, rel, BAR_W, color="white" if single else colour,
+                   edgecolor=colour if single else EDGE_COLOR,
+                   hatch="///" if single else None, linewidth=1.2,
+                   label=label if i == 0 else None)
+            ax.text(i + offset, rel + ANNOTATION_OFFSET, f"{rel:.2f}x",
                     ha="center", va="bottom",
                     fontsize=ANNOTATION_FONTSIZE, fontweight=ANNOTATION_WEIGHT)
-    for i, v in enumerate(cmp_bars):
-        if v > 0:
-            ax.text(i + BAR_W / 2, v + ANNOTATION_OFFSET, f"{v:.2f}x",
-                    ha="center", va="bottom",
-                    fontsize=ANNOTATION_FONTSIZE, fontweight=ANNOTATION_WEIGHT)
+            tallest = max(tallest, rel)
 
     ax.set_xticks(x_pos)
-    ax.set_xticklabels([f"{x}{baseline_unit_label}" for x in all_xs])
-    ax.set_xlabel(x_axis_label)
-    ax.set_ylabel(
-        f"Speedup vs 1{baseline_unit_label} {baseline_label}  "
-        "(higher is better)"
-    )
+    ax.set_xticklabels([f"{n}N" for n in ARM_NODES])
+    ax.set_xlabel("Number of nodes  (c7gn.16xlarge: 64 cores/node, m8g.48xlarge: 192)")
+    ax.set_ylabel("Relative performance (1 x c7gn.16xlarge = 1.00, higher is faster)")
     ax.set_title(f"GROMACS — {workload_subtitle}", fontsize=TITLE_FONTSIZE)
     ax.grid(True, axis="y", linestyle=GRID_LINESTYLE, alpha=GRID_ALPHA)
     ax.legend(loc="upper left")
-    y_top = max(base_bars + cmp_bars + [1.0]) * Y_HEADROOM
-    ax.set_ylim(0, y_top)
-
+    ax.set_ylim(0, tallest * Y_HEADROOM)
+    runs = [r for pts in cells.values() for (_, r) in pts.values()]
+    runs_text = "Median of " + " or ".join(str(r) for r in sorted({r for r in runs if r > 1})) + " runs per bar"
+    if 1 in runs:
+        runs_text += "; hatched bar: 1 run"
+    notes = [
+        runs_text + ". Graviton3E on 2 and 4 nodes: 32 MPI ranks per node x 2 OpenMP threads,",
+        "the fastest layout measured there; every other bar one rank per core. AWS runs of May and June 2026, "
+        + "us-east-2.",
+    ]
+    fig.text(0.01, 0.005, "\n".join(notes), fontsize=7.5, style="italic", color="dimgray",
+             ha="left", va="bottom")
     fig.suptitle(suptitle, fontsize=SUPTITLE_FONTSIZE,
                  fontweight=SUPTITLE_WEIGHT, y=1.00)
-    plt.tight_layout()
+    plt.tight_layout(rect=(0, 0.06, 1, 1))
     plt.savefig(output_filename, dpi=DPI, bbox_inches="tight")
     plt.close(fig)
     print(f"  wrote {output_filename}")
@@ -365,6 +231,11 @@ GPU_FAMILY_STYLE = {
 GPU_FAMILY_ORDER = ["g6e", "g7e", "p5"]
 
 
+def relative_values(cells):
+    """The relative performance of each cell, or ``None`` where not charted."""
+    return [c[0] if c else None for c in cells]
+
+
 def render_three_family_gpu_chart(
     workload_id,
     workload_subtitle,
@@ -373,32 +244,26 @@ def render_three_family_gpu_chart(
     output_filename,
     suptitle,
 ):
-    """Render a grouped-bar speedup chart across up to three GPU families.
+    """Render a grouped-bar chart across up to three GPU families.
 
-    Speedup is normalised to the slowest family's 1-GPU mean so all three
-    families share one baseline. Families/cells with no
-    data are skipped without raising. Returns ``True`` if at least one bar
-    was drawn.
+    The values are relative to the slowest family on one GPU, so every
+    rendered 1-GPU bar is >= 1.0x. Families/cells with no data are skipped
+    without raising. Returns ``True`` if at least one bar was drawn.
     """
     present = {
-        fam: [cell_mean(c) for c in family_cells[fam]]
+        fam: relative_values(family_cells[fam])
         for fam in GPU_FAMILY_ORDER if fam in family_cells
     }
-    # Baseline = the smallest 1-GPU mean among families that have one, so
-    # every rendered family is >= 1.0x and the comparison is like-for-like.
-    one_gpu_means = [
-        means[0] for means in present.values()
-        if means and means[0] is not None
-    ]
-    if not one_gpu_means:
+    one_gpu = [vals[0] for vals in present.values() if vals and vals[0] is not None]
+    if not one_gpu:
         print(f"  skipping {output_filename} — no 1-GPU data for {workload_id}")
         return False
-    baseline = min(one_gpu_means)
+    baseline = min(one_gpu)
 
     fig, ax = plt.subplots(figsize=FIG_SIZE)
     families_drawn = [
         fam for fam in GPU_FAMILY_ORDER
-        if fam in present and any(m is not None for m in present[fam])
+        if fam in present and any(v is not None for v in present[fam])
     ]
     n_fam = len(families_drawn)
     group_w = 0.8
@@ -408,9 +273,8 @@ def render_three_family_gpu_chart(
     any_bar = False
     for fi, fam in enumerate(families_drawn):
         color, label = GPU_FAMILY_STYLE[fam]
-        means = present[fam]
         offset = (fi - (n_fam - 1) / 2) * bar_w
-        heights = [(m / baseline) if m is not None else 0.0 for m in means]
+        heights = [(v / baseline) if v is not None else 0.0 for v in present[fam]]
         ax.bar(x_pos + offset, heights, bar_w, color=color,
                edgecolor=EDGE_COLOR, label=label)
         for i, h in enumerate(heights):
@@ -447,29 +311,29 @@ def render_gpu_price_perf_chart(
     workload_subtitle,
     gpu_counts,
     family_cells,
-    price_per_hr,
+    relative_price,
     output_filename,
     suptitle,
 ):
-    """Render a price/performance chart: ns/day per US dollar-hour.
+    """Render a relative price-performance chart.
 
-    For each family and GPU count, the metric is
-    ``mean(ns/day) / hourly_price``. Absolute ns/day is
-    never rendered. Skips cells/families with no data or no price without
+    For each family and GPU count, the metric is the cell's relative
+    performance over the family's relative on-demand price, against g6e on
+    one GPU = 1.00. Skips cells/families with no data or no price without
     raising. Returns ``True`` if at least one bar was drawn.
     """
+    if "g6e" not in family_cells or not family_cells["g6e"][0] or "g6e" not in relative_price:
+        print(f"  skipping {output_filename} — no 1-GPU g6e reference for {workload_id}")
+        return False
+    reference = family_cells["g6e"][0][0] / relative_price["g6e"]
+
     fig, ax = plt.subplots(figsize=FIG_SIZE)
     families_drawn = [
         fam for fam in GPU_FAMILY_ORDER
-        if fam in family_cells and fam in price_per_hr
-        and any(cell_mean(c) is not None for c in family_cells[fam])
+        if fam in family_cells and fam in relative_price
+        and any(v is not None for v in relative_values(family_cells[fam]))
     ]
     n_fam = len(families_drawn)
-    if n_fam == 0:
-        plt.close(fig)
-        print(f"  skipping {output_filename} — no priced data for {workload_id}")
-        return False
-
     group_w = 0.8
     bar_w = group_w / n_fam
     x_pos = np.arange(len(gpu_counts))
@@ -477,11 +341,11 @@ def render_gpu_price_perf_chart(
     any_bar = False
     for fi, fam in enumerate(families_drawn):
         color, base_label = GPU_FAMILY_STYLE[fam]
-        price = price_per_hr[fam]
-        label = f"{base_label}  (${price:.2f}/hr)"
-        means = [cell_mean(c) for c in family_cells[fam]]
+        price = relative_price[fam]
+        label = f"{base_label}  (price {price:.2f}x g6e)"
         offset = (fi - (n_fam - 1) / 2) * bar_w
-        heights = [(m / price) if m is not None else 0.0 for m in means]
+        heights = [(v / price / reference) if v is not None else 0.0
+                   for v in relative_values(family_cells[fam])]
         ax.bar(x_pos + offset, heights, bar_w, color=color,
                edgecolor=EDGE_COLOR, label=label)
         for i, h in enumerate(heights):
@@ -500,7 +364,7 @@ def render_gpu_price_perf_chart(
     ax.set_xticks(x_pos)
     ax.set_xticklabels([f"{g}G" for g in gpu_counts])
     ax.set_xlabel("Number of GPUs (single-node)")
-    ax.set_ylabel("ns/day per $/hr  (higher is better)")
+    ax.set_ylabel("Relative price-performance (1 x g6e GPU = 1.00, higher is better)")
     ax.set_title(f"GROMACS — {workload_subtitle}", fontsize=TITLE_FONTSIZE)
     ax.grid(True, axis="y", linestyle=GRID_LINESTYLE, alpha=GRID_ALPHA)
     ax.legend(loc="upper right", fontsize=8)
@@ -595,34 +459,24 @@ def render_mps_gain_chart(
 
 
 # ---------------------------------------------------------------------------
-# Chart 1 — Arm Graviton3E (hpc7g) vs Graviton4 (m8g) — Phase 2
+# Chart 1 — Arm: Graviton3E (c7gn) vs Graviton4 (m8g)
 # ---------------------------------------------------------------------------
 if data_available_arm:
-    print("Arm charts (m8g vs hpc7g):")
-    for model_id, subtitle in WORKLOADS:
-        fname = f"Gromacs-{model_id}-Graviton3VsGraviton4.png"
-        cells = ARM_DATA[model_id]
-        render_two_instance_chart(
-            workload_id=model_id,
-            workload_subtitle=subtitle,
-            x_values=NODES_ARM,
-            baseline_lists=cells["hpc7g"],
-            comparison_lists=cells["m8g"],
-            baseline_label="hpc7g (Graviton3E, 64 c/n)",
-            comparison_label="m8g (Graviton4, 192 c/n)",
-            baseline_unit_label="N",
-            x_axis_label="Number of nodes  (hpc7g: 64 c/n, m8g: 192 c/n)",
-            output_filename=fname,
-            suptitle="GROMACS — Graviton3E (hpc7g) vs Graviton4 (m8g)   "
-                     "[GCC + OpenMPI 4/5 + EFA]",
+    print("Arm charts (m8g vs c7gn):")
+    for model_id, cells in ARM_DATA.items():
+        render_arm_chart(
+            workload_subtitle=ARM_SUBTITLES[model_id],
+            cells=cells,
+            output_filename=f"Gromacs-{model_id}-Graviton3VsGraviton4.png",
+            suptitle="GROMACS — Graviton3E (c7gn) vs Graviton4 (m8g)   [GCC + OpenMPI 5 + EFA]",
         )
 else:
     print("\nArm charts: skipped — set data_available_arm=True once the Arm "
-          "sweep data has been pulled from DynamoDB.")
+          "sweep's relative values are in ARM_DATA.")
 
 # ---------------------------------------------------------------------------
-# Chart 2 — GPU three-family comparison (g6e / g7e / p5) — Phase 3
-# Plus a price/performance chart (ns/day per dollar-hour) per workload.
+# Chart 2 — GPU three-family comparison (g6e / g7e / p5)
+# Plus a relative price-performance chart per workload.
 # ---------------------------------------------------------------------------
 if data_available_gpu:
     print("\nGPU performance charts (g6e vs g7e vs p5):")
@@ -637,24 +491,24 @@ if data_available_gpu:
                      "[CUDA 13 + GCC 14, GROMACS v2026.1]",
         )
 
-    print("\nGPU price/performance charts (ns/day per $/hr, us-east-2):")
+    print("\nGPU relative price-performance charts (us-east-2 on-demand prices):")
     for model_id, subtitle in WORKLOADS:
         render_gpu_price_perf_chart(
             workload_id=model_id,
             workload_subtitle=subtitle,
             gpu_counts=GPU_COUNTS,
             family_cells=GPU_DATA[model_id],
-            price_per_hr=GPU_PRICE_USD_PER_HR,
+            relative_price=GPU_RELATIVE_PRICE,
             output_filename=f"Gromacs-{model_id}-GpuPricePerf.png",
-            suptitle="GROMACS GPU price/performance — g6e vs g7e vs p5   "
+            suptitle="GROMACS GPU price-performance — g6e vs g7e vs p5   "
                      "[us-east-2 on-demand, 8-GPU .48xlarge SKUs]",
         )
 else:
-    print("\nGPU charts: skipped — set data_available_gpu=True once the GPU "
-          "sweep results have been filled into the ns_* lists.")
+    print("\nGPU charts: skipped — the single-simulation GPU charts are disabled "
+          "(see data_available_gpu).")
 
 # ---------------------------------------------------------------------------
-# Chart 3 — GPU MPS GPU-sharing (Phase 3, redone)
+# Chart 3 — GPU MPS GPU-sharing (the redone GPU study)
 #   MPS throughput-gain vs system size (g7e), one bar group per system
 # ---------------------------------------------------------------------------
 if data_available_mps:
@@ -670,10 +524,6 @@ if data_available_mps:
     )
 else:
     print("\nGPU MPS charts: skipped — set data_available_mps=True once the "
-          "MPS sweep results have been filled into the MPS_* tables.")
+          "MPS sweep's relative values are in MPS_G7E.")
 
-# ---------------------------------------------------------------------------
-# Final exit. Empty/sentinel data is not an error condition — Phase 1
-# generation should run cleanly even before the live sweep has been pulled.
-# ---------------------------------------------------------------------------
 sys.exit(0)
