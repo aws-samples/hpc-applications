@@ -25,8 +25,69 @@ esac
 # ---------------------------------------------------------------------------
 # Working directory (follows Fluent convention)
 # ---------------------------------------------------------------------------
-TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-instanceType=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
+# The instance type, from IMDS. No answer within a few seconds, an HTTP error,
+# or an answer that is not an instance type name (checked in the C locale)
+# leaves it empty: see "Rank placement" for what is checked then.
+TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" || true)
+instanceType=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type || true)
+if ! ( LC_ALL=C; [[ "${instanceType}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ); then instanceType=""; fi
+
+# ---------------------------------------------------------------------------
+# Rank placement (Utils/flexible-cores). A full node runs rank i on core i. On
+# hpc8a.96xlarge and hpc7a.96xlarge (192 cores in 24 CCDs of 8, one L3 each),
+# a node with fewer ranks binds them to the flexible-cores list for its count,
+# which puts the same number of ranks on every CCD; any other count would load
+# the CCDs unevenly, so it is refused before anything runs. Other instance
+# types get no list. When IMDS gives no instance type, lscpu decides: a node
+# with 192 AMD cores (sockets x cores per socket) could be either of those two
+# types, so it gets the same list or refusal; any other node runs with no list,
+# and a NOTE on stderr says that the check was skipped. A full node runs rank i
+# on core i with no NOTE, whatever IMDS answers, and no run is refused only
+# because IMDS did not answer.
+# ---------------------------------------------------------------------------
+flexible_cores_list() {  # <ranks per node>: its list in Utils/flexible-cores/hello-cpu.*.explicit.sbatch
+    case "$1" in
+        24)  echo "0,8,16,24,32,40,48,56,64,72,80,88,96,104,112,120,128,136,144,152,160,168,176,184" ;;
+        48)  echo "0,4,8,12,16,20,24,28,32,36,40,44,48,52,56,60,64,68,72,76,80,84,88,92,96,100,104,108,112,116,120,124,128,132,136,140,144,148,152,156,160,164,168,172,176,180,184,188" ;;
+        72)  echo "0,1,2,8,9,10,16,17,18,24,25,26,32,33,34,40,41,42,48,49,50,56,57,58,64,65,66,72,73,74,80,81,82,88,89,90,96,97,98,104,105,106,112,113,114,120,121,122,128,129,130,136,137,138,144,145,146,152,153,154,160,161,162,168,169,170,176,177,178,184,185,186" ;;
+        96)  echo "0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,42,44,46,48,50,52,54,56,58,60,62,64,66,68,70,72,74,76,78,80,82,84,86,88,90,92,94,96,98,100,102,104,106,108,110,112,114,116,118,120,122,124,126,128,130,132,134,136,138,140,142,144,146,148,150,152,154,156,158,160,162,164,166,168,170,172,174,176,178,180,182,184,186,188,190" ;;
+        120) echo "0,1,2,3,4,8,9,10,11,12,16,17,18,19,20,24,25,26,27,28,32,33,34,35,36,40,41,42,43,44,48,49,50,51,52,56,57,58,59,60,64,65,66,67,68,72,73,74,75,76,80,81,82,83,84,88,89,90,91,92,96,97,98,99,100,104,105,106,107,108,112,113,114,115,116,120,121,122,123,124,128,129,130,131,132,136,137,138,139,140,144,145,146,147,148,152,153,154,155,156,160,161,162,163,164,168,169,170,171,172,176,177,178,179,180,184,185,186,187,188" ;;
+        144) echo "0,1,2,3,4,5,8,9,10,11,12,13,16,17,18,19,20,21,24,25,26,27,28,29,32,33,34,35,36,37,40,41,42,43,44,45,48,49,50,51,52,53,56,57,58,59,60,61,64,65,66,67,68,69,72,73,74,75,76,77,80,81,82,83,84,85,88,89,90,91,92,93,96,97,98,99,100,101,104,105,106,107,108,109,112,113,114,115,116,117,120,121,122,123,124,125,128,129,130,131,132,133,136,137,138,139,140,141,144,145,146,147,148,149,152,153,154,155,156,157,160,161,162,163,164,165,168,169,170,171,172,173,176,177,178,179,180,181,184,185,186,187,188,189" ;;
+        168) echo "0,1,2,3,4,5,6,8,9,10,11,12,13,14,16,17,18,19,20,21,22,24,25,26,27,28,29,30,32,33,34,35,36,37,38,40,41,42,43,44,45,46,48,49,50,51,52,53,54,56,57,58,59,60,61,62,64,65,66,67,68,69,70,72,73,74,75,76,77,78,80,81,82,83,84,85,86,88,89,90,91,92,93,94,96,97,98,99,100,101,102,104,105,106,107,108,109,110,112,113,114,115,116,117,118,120,121,122,123,124,125,126,128,129,130,131,132,133,134,136,137,138,139,140,141,142,144,145,146,147,148,149,150,152,153,154,155,156,157,158,160,161,162,163,164,165,166,168,169,170,171,172,173,174,176,177,178,179,180,181,182,184,185,186,187,188,189,190" ;;
+        *)   return 1 ;;
+    esac
+}
+BIND_FLAGS="--bind-to core --map-by slot"
+FC_NODE=""   # what the lists apply to, as the job log names it
+case "${instanceType}" in
+    hpc8a.96xlarge|hpc7a.96xlarge) FC_NODE="${instanceType}" ;;
+esac
+if [ -z "${instanceType}" ] && [ "${SLURM_NTASKS_PER_NODE}" != 192 ]; then
+    _cpu="$(LC_ALL=C lscpu 2>/dev/null | awk -F: '
+        /^[[:space:]]*Vendor ID:/            {v = $2}
+        /^[[:space:]]*Socket\(s\):/          {s = $2}
+        /^[[:space:]]*Core\(s\) per socket:/ {c = $2}
+        END {gsub(/[[:space:]]/, "", v); gsub(/[[:space:]]/, "", s); gsub(/[[:space:]]/, "", c)
+             if (s ~ /^[0-9]+$/ && c ~ /^[0-9]+$/) print v, s * c}' || true)"
+    if [ "${_cpu}" = "AuthenticAMD 192" ]; then
+        FC_NODE="hpc8a.96xlarge or hpc7a.96xlarge"
+        echo "NOTE: IMDS gave no instance type, and lscpu shows 192 AMD cores, as on an hpc8a.96xlarge" \
+             "or hpc7a.96xlarge, so the flexible-cores check applies." >&2
+    else
+        echo "NOTE: IMDS gave no instance type, and lscpu does not show the 192 AMD cores of an hpc8a.96xlarge" \
+             "or hpc7a.96xlarge, so the flexible-cores check is skipped: ${SLURM_NTASKS_PER_NODE} ranks per node run with no list." >&2
+    fi
+fi
+if [ -n "${FC_NODE}" ] && [ "${SLURM_NTASKS_PER_NODE}" != 192 ]; then
+    if ! CPU_LIST="$(flexible_cores_list "${SLURM_NTASKS_PER_NODE}")"; then
+        echo "ERROR: ${SLURM_NTASKS_PER_NODE} ranks per node would load the 24 CCDs of ${FC_NODE} unevenly;" \
+             "the supported counts are 24, 48, 72, 96, 120, 144, 168 and 192 (see Utils/flexible-cores)" >&2
+        exit 1
+    fi
+    BIND_FLAGS="--bind-to cpu-list:ordered --cpu-list ${CPU_LIST}"
+    echo "Binding ${SLURM_NTASKS_PER_NODE} ranks per node to the flexible-cores list of ${FC_NODE}"
+fi
+
 workdir="${basedir}/Run/${SLURM_JOB_NAME%.*}/${SLURM_CLUSTER_NAME}/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${instanceType}-${TOTAL_CORES}-$(date "+%d-%m-%Y-%H-%M")"
 
 echo "=== OCC DrivAer Fine (236M) — OpenMPI ==="
@@ -50,6 +111,8 @@ export FI_EFA_USE_DEVICE_RDMA=1
 MPI_FLAGS="--mca pml cm --mca mtl ofi --mca btl ^tcp,openib --bind-to core --map-by slot"
 MPI_FLAGS="$MPI_FLAGS -x PATH -x LD_LIBRARY_PATH -x WM_PROJECT_DIR -x FOAM_LIBBIN -x FOAM_USER_LIBBIN -x FOAM_APPBIN"
 MPI_FLAGS="$MPI_FLAGS -x FI_PROVIDER -x FI_EFA_USE_DEVICE_RDMA"
+# The solver phases: BIND_FLAGS (see "Rank placement") in place of rank i on core i
+SOLVER_MPI_FLAGS="${MPI_FLAGS/--bind-to core --map-by slot/${BIND_FLAGS}}"
 
 # ---------------------------------------------------------------------------
 # Build hostfile
@@ -194,17 +257,17 @@ echo "Decomposition time: ${DECOMP_TIME}s"
 # ---------------------------------------------------------------------------
 echo "=== Solver phase ==="
 T_RENUMBER_START=$(get_timestamp)
-mpirun -np "$TOTAL_CORES" $MPI_FLAGS renumberMesh -parallel -overwrite 2>&1 | tee log.renumber
+mpirun -np "$TOTAL_CORES" $SOLVER_MPI_FLAGS renumberMesh -parallel -overwrite 2>&1 | tee log.renumber
 T_RENUMBER_END=$(get_timestamp)
 RENUMBER_TIME=$(elapsed_seconds "$T_RENUMBER_START" "$T_RENUMBER_END")
 
 T_POTENTIAL_START=$(get_timestamp)
-mpirun -np "$TOTAL_CORES" $MPI_FLAGS potentialFoam -parallel 2>&1 | tee log.potential
+mpirun -np "$TOTAL_CORES" $SOLVER_MPI_FLAGS potentialFoam -parallel 2>&1 | tee log.potential
 T_POTENTIAL_END=$(get_timestamp)
 POTENTIAL_TIME=$(elapsed_seconds "$T_POTENTIAL_START" "$T_POTENTIAL_END")
 
 T_SOLVE_START=$(get_timestamp)
-mpirun -np "$TOTAL_CORES" $MPI_FLAGS simpleFoam -parallel 2>&1 | tee log.solver
+mpirun -np "$TOTAL_CORES" $SOLVER_MPI_FLAGS simpleFoam -parallel 2>&1 | tee log.solver
 T_SOLVE_END=$(get_timestamp)
 SOLVE_TIME=$(elapsed_seconds "$T_SOLVE_START" "$T_SOLVE_END")
 
