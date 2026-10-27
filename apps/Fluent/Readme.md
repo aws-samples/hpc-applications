@@ -51,19 +51,21 @@ For multi-node runs Fluent must live on a shared filesystem. We recommend [Amazo
 
 ### Scalability
 
-Fluent scales well while each core has enough cells. On `hpc8a.96xlarge`, `hpc7a.96xlarge` and `hpc6a.48xlarge`, every configuration we measured at 18,000 cells per core or more kept 80% parallel efficiency or better, and below about 10,000 cells per core efficiency falls quickly:
+Fluent scales well while each core has enough cells. On `hpc8a.96xlarge`, `hpc7a.96xlarge` and `hpc6a.48xlarge`, every configuration we measured at 19,000 cells per core or more kept 80% parallel efficiency or better, and below about 10,000 cells per core efficiency falls quickly:
 
 | Cells per core | Measured on | Configurations | Parallel efficiency |
 |---|---|--:|--:|
-| 46,000–365,000 | `f1_racecar_140m` on 2 to 16 nodes | 8 | 82–99% |
-| 36,000–42,000 | the 14–16M-cell cases on 2 `hpc8a.96xlarge` nodes (384 cores) | 3 | 94–104% |
-| 18,000–21,000 | the 14–16M-cell cases on 768 cores | 9 | 80–96% |
+| 45,000–364,000 | `f1_racecar_140m` on 2 to 16 nodes | 8 | 82–99% |
+| 37,000–41,000 | the 14–16M-cell cases on 2 `hpc8a.96xlarge` nodes (384 cores) | 3 | 94–104% |
+| 19,000–21,000 | the 14–16M-cell cases on 768 cores | 9 | 80–96% |
 | 7,000–10,000 | the 4–16M-cell cases on 384 to 1,920 cores | 10 | 48–88% |
 | 2,000–5,000 | `sedan_4m` on 768 to 1,920 cores | 6 | 30–64% |
 
 Every node is fully populated, and parallel efficiency is the speed-up over the same instance type's 192-core point (one node, two for `hpc6a.48xlarge`) divided by the core ratio. The runs are those of [Performance](#performance), on `hpc8a.96xlarge`, `hpc7a.96xlarge` and `hpc6a.48xlarge`.
 
-Four Intel instance types were measured on 8 nodes, with parallel efficiency against two nodes of the same type. On `c7i.48xlarge`, `m7i.48xlarge` and `r7i.48xlarge` (768 cores, 18,000–21,000 cells per core), the 14–16M-cell cases kept 67–86%. On `hpc6id.32xlarge` (512 cores, 27,000–31,000 cells per core), they kept 79–100%.
+The cells-per-core figures count each case's own cells, as Fluent reads them from the case's mesh: about 139.7 million for `f1_racecar_140m`, and 3.6, 14.4, 15.1 and 15.8 million for `sedan_4m`, `aircraft_wing_14m`, `landing_gear_15m` and `lm6000_16m`.
+
+Four Intel instance types were measured on 8 nodes, with parallel efficiency against two nodes of the same type. On `c7i.48xlarge`, `m7i.48xlarge` and `r7i.48xlarge` (768 cores, 19,000–21,000 cells per core), the 14–16M-cell cases kept 67–86%. On `hpc6id.32xlarge` (512 cores, 28,000–31,000 cells per core), they kept 79–100%.
 
 While each core has enough cells, more nodes cost little more per run: on one instance type, the EC2 cost per run (nodes × time) against the 192-core point is 1 / parallel efficiency. `f1_racecar_140m` ran 7.3× as fast on 8 `hpc8a.96xlarge` nodes as on one for 1.09× the EC2 cost per run, and 13.8× as fast on 16 nodes for 1.16× (on `hpc7a.96xlarge`: 7.2× for 1.11×, 13.1× for 1.22×). With licences counted per core, the licence core-hours per run (cores × time) move by the same ratio. Ranked by cost per run alone, one node comes first, by 9–22%, ahead of 8 or 16 nodes that finish 7.2–13.8× sooner: weigh the run time too. Where efficiency falls, the cost per run rises with it: `sedan_4m` on 768 to 1,920 cores, at 30–64% parallel efficiency, cost 1.56–3.36× as much per run as on 192 cores.
 
@@ -150,7 +152,7 @@ Every node is fully populated (192 ranks per node). Performance is relative to o
 | | EC2 cost per run | 1.00× | 1.02× | 1.05× | 1.11× | 1.22× |
 
 - `hpc8a.96xlarge` runs `f1_racecar_140m` 1.48–1.57× as fast as `hpc7a.96xlarge`, node for node.
-- On 16 nodes (3,072 cores, about 46,000 cells per core), parallel efficiency is 82–86%, and the EC2 cost per run 1.16–1.22× that of one node.
+- On 16 nodes (3,072 cores, about 45,000 cells per core), parallel efficiency is 82–86%, and the EC2 cost per run 1.16–1.22× that of one node.
 
 ### The same cores on more nodes
 
