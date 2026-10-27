@@ -12,9 +12,13 @@ required. `pytest tests` runs the same suite (`tests/test_gromacs_launchers.py`)
 ## What is covered and why
 
 The suite runs **the launch scripts themselves**, `x86/gromacs-benchmark.sbatch` and
-`Arm/gromacs-benchmark.sbatch`, with `curl` (IMDS), `scontrol`, `srun`, `sudo`,
-`fi_info`, `mpirun`, `ldd`, `aws`, `gmx` and `gmx_mpi` replaced by the stubs of
+`Arm/gromacs-benchmark.sbatch`, with `curl` (IMDS), `lscpu`, `scontrol`, `srun`,
+`sudo`, `fi_info`, `mpirun`, `ldd`, `aws`, `gmx` and `gmx_mpi` replaced by the stubs of
 `harness.sh`, so the assembled script executes from its checks to its results block.
+The `curl` stub answers IMDS as `STUB_IMDS` says (an instance type by default; no
+answer, an HTTP error, or a page that is not an instance type name), and the `lscpu`
+stub describes the CPU `STUB_LSCPU` names and logs each call, so the test host's CPU
+never decides a case.
 The stubs touch nothing on the host: the cache drop and the THP setting are
 swallowed, a download is refused (and its URL logged), and the `aws` stub refuses
 every call. The `gmx` and `gmx_mpi` stubs log each `mdrun` command line with its

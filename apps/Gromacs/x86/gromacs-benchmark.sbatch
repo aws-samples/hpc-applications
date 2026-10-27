@@ -238,17 +238,78 @@ fi
 # of the tuple appears in the path so two runs differing in any single
 # component yield different directories.
 # ---------------------------------------------------------------------------
-TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-    -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-INSTANCE_TYPE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
-    http://169.254.169.254/latest/meta-data/instance-type)
+# Instance metadata (IMDSv2). Each read gives up after a few seconds and never
+# ends the job: no answer, an HTTP error or an answer that is not an instance
+# type name (an error page, for example; the name is tested in the C locale)
+# leaves INSTANCE_TYPE empty, and the run directory and the job log then name
+# the type "unknown".
+IMDS_CURL=(curl -fs --connect-timeout 2 --max-time 5)
+TOKEN=$("${IMDS_CURL[@]}" -X PUT "http://169.254.169.254/latest/api/token" \
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") || TOKEN=""
+INSTANCE_TYPE=$("${IMDS_CURL[@]}" -H "X-aws-ec2-metadata-token: ${TOKEN}" \
+    http://169.254.169.254/latest/meta-data/instance-type) || INSTANCE_TYPE=""
+( LC_ALL=C; [[ "${INSTANCE_TYPE}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || INSTANCE_TYPE=""
 # REGION is referenced by the optional DynamoDB recorder block at the
 # bottom of this file (commented out by default).
 # shellcheck disable=SC2034
-REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
-    http://169.254.169.254/latest/meta-data/placement/region)
+REGION=$("${IMDS_CURL[@]}" -H "X-aws-ec2-metadata-token: ${TOKEN}" \
+    http://169.254.169.254/latest/meta-data/placement/region) || REGION=""
 
-WORKDIR="${BASE_DIR}/Run/${SLURM_JOB_NAME}/${MODEL}/${SLURM_CLUSTER_NAME:-cluster}/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${INSTANCE_TYPE}-${NRANK_TOTAL}x${THREADS_PER_RANK}-$(date '+%d-%m-%Y-%H-%M')"
+# ---------------------------------------------------------------------------
+# Cores per node on hpc8a.96xlarge and hpc7a.96xlarge: 192 cores in 24 CCDs of
+# 8, one L3 cache per CCD. Only 24, 48, 72, 96, 120, 144, 168 or 192 cores per
+# node (ranks x threads per rank) give every CCD the same number of cores
+# (Utils/flexible-cores/), so any other count stops the job here, before the
+# run directory is made. A supported count below 192 is pinned as before.
+# Other instance types and sizes have no list and no check.
+# With no instance type from IMDS and a count outside that set, a node that
+# lscpu shows as AMD with 192 cores (sockets x cores per socket) could be either
+# type and gets the same check; any other node runs it, with a NOTE on stderr
+# that the check was skipped. A supported count needs no instance type, and no
+# run is refused only because IMDS did not answer.
+# ---------------------------------------------------------------------------
+amd_192_cores() {
+    local info vendor sockets per_socket
+    info="$(LC_ALL=C lscpu 2>/dev/null)" || return 1
+    vendor="$(awk -F: '/^[[:space:]]*Vendor ID:/ { gsub(/[[:space:]]/, "", $2); print $2; exit }' <<< "${info}")"
+    sockets="$(awk -F: '/^[[:space:]]*Socket\(s\):/ { gsub(/[[:space:]]/, "", $2); print $2; exit }' <<< "${info}")"
+    per_socket="$(awk -F: '/^[[:space:]]*Core\(s\) per socket:/ { gsub(/[[:space:]]/, "", $2); print $2; exit }' <<< "${info}")"
+    [ "${vendor}" = AuthenticAMD ] && [[ "${sockets}" =~ ^[1-9][0-9]{0,2}$ ]] \
+        && [[ "${per_socket}" =~ ^[1-9][0-9]{0,3}$ ]] && (( sockets * per_socket == 192 ))
+}
+CORES_PER_NODE=$(( NRANK_PER_NODE * THREADS_PER_RANK ))
+FLEX_NODE=""   # the node the check applies to, as the messages name it ("": no check)
+FLEX_ON=""
+case "${INSTANCE_TYPE}" in
+    hpc8a.96xlarge|hpc7a.96xlarge)
+        FLEX_NODE="${INSTANCE_TYPE}"; FLEX_ON="this type"
+        ;;
+    "")
+        case "${CORES_PER_NODE}" in
+            24|48|72|96|120|144|168|192) ;;   # a supported count: nothing to check
+            *)
+                if amd_192_cores; then
+                    FLEX_NODE="this 192-core AMD node"; FLEX_ON="this node"
+                    echo "NOTE: no instance type from IMDS; lscpu shows a 192-core AMD node, which could be an hpc8a.96xlarge or hpc7a.96xlarge, so their cores-per-node check applies" >&2
+                else
+                    echo "NOTE: no instance type from IMDS, and lscpu does not show a 192-core AMD node, so the flexible-cores check for hpc8a.96xlarge and hpc7a.96xlarge is skipped" >&2
+                fi ;;
+        esac
+        ;;
+esac
+if [ -n "${FLEX_NODE}" ]; then
+    case "${CORES_PER_NODE}" in
+        24|48|72|96|120|144|168|192) ;;
+        *)
+            echo "ERROR: ${CORES_PER_NODE} cores per node (${NRANK_PER_NODE} ranks, THREADS_PER_RANK=${THREADS_PER_RANK}) would load the 24 CCDs of ${FLEX_NODE} unevenly" >&2
+            echo "       On ${FLEX_ON} use 24, 48, 72, 96, 120, 144, 168 or 192 cores per node (--ntasks-per-node; see Utils/flexible-cores/)" >&2
+            echo "       This launcher places a count below 192 from the node's first core rather than spreading it over the CCDs: use 192 to match the published results" >&2
+            exit 1
+            ;;
+    esac
+fi
+
+WORKDIR="${BASE_DIR}/Run/${SLURM_JOB_NAME}/${MODEL}/${SLURM_CLUSTER_NAME:-cluster}/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${INSTANCE_TYPE:-unknown}-${NRANK_TOTAL}x${THREADS_PER_RANK}-$(date '+%d-%m-%Y-%H-%M')"
 
 if [ -e "${WORKDIR}" ]; then
     echo "ERROR: workdir already exists: ${WORKDIR}" >&2
@@ -263,7 +324,7 @@ echo "=== GROMACS benchmark ==="
 echo "Date:          $(date)"
 echo "SLURM Job ID:  ${SLURM_JOB_ID}"
 echo "Model:         ${MODEL} (${TPR_FILE})"
-echo "Nodes:         ${SLURM_JOB_NUM_NODES} x ${INSTANCE_TYPE}"
+echo "Nodes:         ${SLURM_JOB_NUM_NODES} x ${INSTANCE_TYPE:-unknown}"
 echo "MPI ranks:     ${NRANK_TOTAL} total (${NRANK_PER_NODE}/node)"
 echo "OMP threads:   ${THREADS_PER_RANK}/rank -> ${NPROC_TOTAL} cores total"
 echo "Timesteps:     ${TIMESTEPS}"
@@ -621,7 +682,7 @@ GROMACS benchmark results
 Date:             $(date)
 SLURM Job ID:     ${SLURM_JOB_ID}
 Model:            ${MODEL}
-Nodes:            ${SLURM_JOB_NUM_NODES} x ${INSTANCE_TYPE}
+Nodes:            ${SLURM_JOB_NUM_NODES} x ${INSTANCE_TYPE:-unknown}
 MPI ranks:        ${NRANK_TOTAL} (${NRANK_PER_NODE}/node)
 OMP threads:      ${THREADS_PER_RANK}/rank  (total cores: ${NPROC_TOTAL})
 Atoms:            ${ATOMS}

@@ -3,11 +3,13 @@
 # Shared stubs for the GROMACS shell tests (sourced by test-*.sh).
 # =============================================================================
 # run_launcher runs a CPU benchmark launcher (x86/ or Arm/gromacs-benchmark.sbatch)
-# as Slurm would, with curl, scontrol, srun, sudo, fi_info, mpirun, ldd, aws and
-# the GROMACS binaries replaced by stubs, so the whole script executes. The gmx and
-# gmx_mpi stubs log their arguments and OpenMP environment and write a synthetic
+# as Slurm would, with curl, lscpu, scontrol, srun, sudo, fi_info, mpirun, ldd, aws
+# and the GROMACS binaries replaced by stubs, so the whole script executes. The gmx
+# and gmx_mpi stubs log their arguments and OpenMP environment and write a synthetic
 # md.log; mpirun logs its command line and runs the gmx_mpi stub; srun, sudo and
-# the cache drop touch nothing; the aws stub refuses every call.
+# the cache drop touch nothing; the aws stub refuses every call. curl answers the
+# IMDS reads as STUB_IMDS says, and lscpu describes the CPU STUB_LSCPU names, so
+# the test host's CPU never decides a case.
 #
 # No Slurm, no EC2, no GROMACS, no MPI, no AWS credentials, no network.
 #
@@ -32,8 +34,33 @@ mkdir -p "${STUBS}/bin"
 
 cat > "${STUBS}/bin/curl" <<'EOF'
 #!/bin/bash
-# IMDS stub (token, instance type, Region). Any other URL is a download: refused,
-# with the URL logged, so no test reaches the network.
+# IMDS stub (token, instance type, Region), answering as STUB_IMDS says:
+#   ok (default)  the token, STUB_INSTANCE_TYPE (default hpc8a.96xlarge), eu-north-1;
+#   none          no answer: nothing printed, exit 28, as curl when its time limit ends;
+#   http-error    HTTP 401 to every request: with -f (--fail) nothing printed and
+#                 exit 22, as curl does; without it, the error page and exit 0;
+#   not-a-type    an HTML page, with status 200, for the instance type.
+# Each IMDS call's arguments are logged to IMDS_LOG, so a test can check its time limits.
+# Any other URL is a download: refused, with the URL logged, so no test reaches the
+# network.
+case "$*" in
+  *169.254.169.254*)
+    printf '%s\n' "$*" >> "${IMDS_LOG:-/dev/null}"
+    fail=0
+    for a in "$@"; do case "$a" in --fail) fail=1;; --*) ;; -*f*) fail=1;; esac; done
+    case "${STUB_IMDS:-ok}" in
+      none) exit 28;;
+      http-error)
+        [ "${fail}" = 1 ] && exit 22
+        printf '%s\n' '<?xml version="1.0" encoding="iso-8859-1"?>' \
+          '<html><head><title>401 - Unauthorized</title></head><body><h1>401 - Unauthorized</h1></body></html>'
+        exit 0;;
+      not-a-type)
+        case "$*" in *meta-data/instance-type*)
+          printf '%s\n' '<html><body><h1>Instance metadata</h1></body></html>'; exit 0;;
+        esac;;
+    esac;;
+esac
 case "$*" in
   *api/token*)               echo "stub-token"; exit 0;;
   *meta-data/instance-type*) echo "${STUB_INSTANCE_TYPE:-hpc8a.96xlarge}"; exit 0;;
@@ -41,6 +68,39 @@ case "$*" in
 esac
 for a in "$@"; do case "$a" in https://*) echo "${a}" >> "${CURL_LOG}";; esac; done
 exit 22
+EOF
+cat > "${STUBS}/bin/lscpu" <<'EOF'
+#!/bin/bash
+# lscpu stub, laid out as util-linux 2.37 prints it, for the CPU STUB_LSCPU names:
+#   intel-192 (default)  GenuineIntel, 2 sockets x 96 cores (192 cores, not AMD);
+#   amd-192              AuthenticAMD, 2 sockets x 96 cores (as hpc8a/hpc7a.96xlarge);
+#   amd-96               AuthenticAMD, 2 sockets x 48 cores (as hpc6a.48xlarge);
+#   amd-1x96             AuthenticAMD, 1 socket x 96 cores;
+#   amd-256              AuthenticAMD, 2 sockets x 128 cores;
+#   none                 nothing printed, exit 1.
+# Each call is logged to LSCPU_LOG.
+printf '%s\n' "lscpu $*" >> "${LSCPU_LOG:-/dev/null}"
+sockets=2
+case "${STUB_LSCPU:-intel-192}" in
+  amd-192)  vendor=AuthenticAMD; per_socket=96;;
+  amd-96)   vendor=AuthenticAMD; per_socket=48;;
+  amd-1x96) vendor=AuthenticAMD; per_socket=96; sockets=1;;
+  amd-256)  vendor=AuthenticAMD; per_socket=128;;
+  none)     exit 1;;
+  *)        vendor=GenuineIntel; per_socket=96;;
+esac
+cat <<OUT
+Architecture:             x86_64
+  CPU op-mode(s):         32-bit, 64-bit
+CPU(s):                   $(( sockets * per_socket ))
+  On-line CPU(s) list:    0-$(( sockets * per_socket - 1 ))
+Vendor ID:                ${vendor}
+  BIOS Vendor ID:         Amazon EC2
+  Model name:             stub CPU
+    Thread(s) per core:   1
+    Core(s) per socket:   ${per_socket}
+    Socket(s):            ${sockets}
+OUT
 EOF
 cat > "${STUBS}/bin/scontrol" <<'EOF'
 #!/bin/bash
@@ -148,33 +208,38 @@ ENV
 # run_launcher <x86|Arm> [NAME=value...]
 # Runs one CPU launcher in a clean environment (1 node, 192 tasks per node,
 # MODEL=benchMEM unless overridden) with a fresh BASE_DIR holding stub installs and
-# a staged .tpr for every MODEL. Sets OUT (stdout and stderr), RC, BASE, and the
-# logs GMXLOG (one BIN/ARGS/ENV block per mdrun), MPILOG (mpirun command lines),
-# CURLLOG (download URLs) and RECLOG (recorder calls).
+# a staged .tpr for every MODEL. Sets OUT (stdout, then stderr), ERR (stderr), RC,
+# BASE, and the logs GMXLOG (one BIN/ARGS/ENV block per mdrun), MPILOG (mpirun
+# command lines), CURLLOG (download URLs), RECLOG (recorder calls), IMDSLOG (the
+# arguments of each IMDS call) and LSCPULOG (one line per lscpu call).
 run_launcher() {
     local arch="$1"; shift
     BASE="$(mktemp -d "${STUBS}/case.XXXXXX")"
     GMXLOG="${BASE}/gmx.log"; MPILOG="${BASE}/mpirun.log"; CURLLOG="${BASE}/curl.log"; RECLOG="${BASE}/recorder.log"
-    : > "${GMXLOG}"; : > "${MPILOG}"; : > "${CURLLOG}"; : > "${RECLOG}"
+    IMDSLOG="${BASE}/imds.log"; LSCPULOG="${BASE}/lscpu.log"
+    : > "${GMXLOG}"; : > "${MPILOG}"; : > "${CURLLOG}"; : > "${RECLOG}"; : > "${IMDSLOG}"; : > "${LSCPULOG}"
     make_install "${BASE}" x86_64 gromacs-v2024.4-tmpi-env.sh gromacs-v2024.4-ompi-env.sh
     make_install "${BASE}" aarch64-graviton4-ompi5 gromacs-v2024.4-tmpi-env.sh gromacs-v2024.4-ompi5-env.sh
     for m in benchMEM benchPEP-h STMV RNAse; do
         mkdir -p "${BASE}/benchmarks/${m}"; echo "stub tpr" > "${BASE}/benchmarks/${m}/${m}.tpr"
     done
-    # OUT and RC are read by the test files that source this one.
-    # shellcheck disable=SC2034
-    OUT="$(cd "${BASE}" && env -i \
+    # OUT, ERR and RC are read by the test files that source this one.
+    (cd "${BASE}" && env -i \
         PATH="${STUBS}/bin:/usr/local/bin:/usr/bin:/bin" HOME="${BASE}" LANG=C \
         BASE_DIR="${BASE}" GMX_LOG="${GMXLOG}" MPIRUN_LOG="${MPILOG}" CURL_LOG="${CURLLOG}" \
-        RECORDER_LOG="${RECLOG}" AWS_STUB_LOG="${STUBS}/aws-calls.log" \
+        RECORDER_LOG="${RECLOG}" AWS_STUB_LOG="${STUBS}/aws-calls.log" IMDS_LOG="${IMDSLOG}" LSCPU_LOG="${LSCPULOG}" \
         CONTRIB_RECORDER="${STUBS}/bin/recorder-stub.sh" \
         SLURM_JOB_ID=4242 SLURM_JOB_NAME=gromacs SLURM_CLUSTER_NAME=test \
         SLURM_JOB_NUM_NODES=1 SLURM_NTASKS_PER_NODE=192 SLURM_NODELIST="node[1-8]" \
         SLURM_SUBMIT_DIR="${GROMACS_APP}/${arch}" \
         "$@" \
-        bash "${GROMACS_APP}/${arch}/gromacs-benchmark.sbatch" 2>&1)"
+        bash "${GROMACS_APP}/${arch}/gromacs-benchmark.sbatch" > "${BASE}/stdout" 2> "${BASE}/stderr")
     # shellcheck disable=SC2034
     RC=$?
+    # shellcheck disable=SC2034
+    OUT="$(cat "${BASE}/stdout" "${BASE}/stderr")"
+    # shellcheck disable=SC2034
+    ERR="$(cat "${BASE}/stderr")"
 }
 
 # mdrun_args: the ARGS line of the (one) mdrun the last run made
