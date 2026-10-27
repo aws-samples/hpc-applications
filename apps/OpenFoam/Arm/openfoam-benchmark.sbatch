@@ -347,6 +347,21 @@ fi
 # See apps/OpenFoam/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
 # ---------------------------------------------------------------------------
 _of_version="$(basename "${OPENFOAM_ENV}" 2>/dev/null | grep -oE 'v[0-9]+' | head -1 || true)"
+# What makes the run comparable with others: its mesh, from the cell count OpenFOAM
+# writes in the header of constant/polyMesh/owner ("nCells:"), in millions (a mesh
+# under half a million cells, which would round to none, is not recorded), and its
+# number of iterations, endTime in system/controlDict.
+_cells="$({ head -c 4096 "${CASE_SRC}/constant/polyMesh/owner" 2>/dev/null \
+              || gzip -dc "${CASE_SRC}/constant/polyMesh/owner.gz" 2>/dev/null | head -c 4096; } \
+            | grep -a -o -m 1 'nCells:[0-9]*' | cut -d: -f2 || true)"
+_mesh=""
+_mesh_note="cannot tell its mesh size from the header of ${CASE_SRC}/constant/polyMesh/owner (nCells)"
+case "${_cells}" in
+    ''|*[!0-9]*) ;;
+    *) if [ "${_cells}" -ge 500000 ]; then _mesh=$(( (_cells + 500000) / 1000000 ))
+       else _mesh_note="its mesh has ${_cells} cells, under half a million (the record gives the mesh in millions)"; fi ;;
+esac
+_iterations="$(awk '/^[[:space:]]*endTime[[:space:]]/ {gsub(";", "", $2); print $2; exit}' system/controlDict 2>/dev/null || true)"
 _recorder="${DYNAMODB_RECORDER:-}"
 for _c in "${_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
@@ -354,10 +369,12 @@ for _c in "${_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/apps/OpenFoam/dynamodb/record-benchmark.sh"; do
     if [ -n "${_c}" ] && [ -x "${_c}" ]; then _recorder="${_c}"; break; fi
 done
-if [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
-    OPENFOAM_VERSION="${_of_version}" BENCHMARK_CASE="occDrivAer-${MESH_SIZE}M" \
-    MESH_CELLS_MILLION="${MESH_SIZE}" SOLVER="simpleFoam" \
-    TIME_TO_SOLUTION="${SOLVE_TIME}" RUN_DIR="${workdir}" "${_recorder}" \
+if [ -z "${_mesh}" ]; then
+    echo "NOTE: the run is not recorded: ${_mesh_note}." >&2
+elif [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
+    OPENFOAM_VERSION="${_of_version}" BENCHMARK_CASE="occDrivAer-${_mesh}M" \
+    MESH_CELLS_MILLION="${_mesh}" SOLVER="simpleFoam" \
+    TIME_TO_SOLUTION="${SOLVE_TIME}" RUN_DIR="${workdir}" "${_recorder}" --metric "num_iterations=${_iterations}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 else
     echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2

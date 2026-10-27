@@ -118,7 +118,7 @@ sbatch -p hpc6a --nodes=N --ntasks-per-node=96 \
   x86/openfoam-benchmark-openmpi.sbatch
 ```
 
-They run the 236M mesh, which they record as `occDrivAer-236M`. The Arm launcher below selects the mesh with `MESH_SIZE`.
+They run the case and mesh in `CASE_SRC`, the 236M mesh by default; the Arm launcher below selects the mesh with `MESH_SIZE`. Every benchmark script records the mesh it ran by the cell count OpenFOAM writes in the header of `constant/polyMesh/owner`, in millions (`occDrivAer-236M` for the 236M mesh), and the number of iterations (`endTime`); a mesh whose header gives no cell count, or fewer than half a million cells, is not recorded, and a NOTE says which.
 
 ### Arm
 
