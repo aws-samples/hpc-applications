@@ -98,7 +98,7 @@ Graviton3E was measured on `c7gn.16xlarge` (64 cores, 128 GiB and 200 Gbps EFA: 
 
 ## Benchmark
 
-The benchmark case is the [OCC DrivAer static-mesh](https://develop.openfoam.com/committees/hpc/-/tree/develop/incompressible/simpleFoam/occDrivAerStaticMesh) from the [1st OpenFOAM HPC Challenge](https://zenodo.org/records/15012221) — a steady-state external aerodynamics case using `simpleFoam`. Three mesh resolutions are available (65M / 110M / 236M cells); mesh tarballs are fetched from Zenodo on first run and cached under `/fsx/openfoam/occ-drivaer/`. The case runs 4,000 SIMPLE iterations as it ships; every result on this page ran 200 (see [Iterations](#iterations)).
+The benchmark case is the [OCC DrivAer static-mesh](https://develop.openfoam.com/committees/hpc/-/tree/develop/incompressible/simpleFoam/occDrivAerStaticMesh) from the [1st OpenFOAM HPC Challenge](https://zenodo.org/records/15012221) — a steady-state external aerodynamics case using `simpleFoam`. Three mesh resolutions are available (65M / 110M / 236M cells); mesh tarballs are fetched from Zenodo on first run and cached under `/fsx/openfoam/occ-drivaer/`. The case runs 4,000 SIMPLE iterations as it ships; the benchmark scripts run 200, as every result on this page did (see [Iterations](#iterations)).
 
 ### x86
 
@@ -153,6 +153,7 @@ All benchmark scripts:
 |----------|---------|-------------|
 | `OPENFOAM_ENV` | see script | Path to OpenFOAM environment setup script |
 | `MESH_SIZE` | `65` (Arm only) | Mesh resolution: `65`, `110`, or `236` million cells |
+| `END_TIME` | `200` | SIMPLE iterations (`endTime`): see [Iterations](#iterations) |
 | `CASE_SRC` | `/fsx/openfoam/occ-drivaer/occDrivAerStaticMesh[-${MESH_SIZE}M]` | Case and mesh source directory |
 | `BASE_DIR` | `/fsx/openfoam` | Root for run output directories |
 | `DECOMP_CACHE` | unset | Directory (absolute path) to save each case and layout's decomposition in and reuse it from: see [Reusing a decomposition](#reusing-a-decomposition) |
@@ -175,7 +176,7 @@ sbatch --nodes=8 --export=ALL,DECOMP_CACHE=/fsx/openfoam/decomposed x86/openfoam
 
 ### Iterations
 
-The case's `controlDict` runs 4,000 SIMPLE iterations (`endTime 4000`). Every result on this page ran 200: to compare with them, uncomment the `endTime` line in the benchmark script, which sets `endTime 200`. Leave it commented to run the case as it ships.
+The case's `controlDict` runs 4,000 SIMPLE iterations (`endTime 4000`). The benchmark scripts set `endTime` to `END_TIME`, 200 by default, which every result on this page ran, so a run compares with them as it is. To run the case as it ships, set `END_TIME=4000` (`--export=ALL,END_TIME=4000`) and give the job a time limit to match (`--time`). The scripts refuse an `END_TIME` that is not a whole number of iterations, 1 or more, before they create the run directory.
 
 ## Performance
 

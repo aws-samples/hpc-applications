@@ -44,6 +44,11 @@ case "$MESH_SIZE" in
     65|110|236) ;;
     *) echo "ERROR: MESH_SIZE must be 65, 110, or 236 (got: $MESH_SIZE)"; exit 1 ;;
 esac
+# SIMPLE iterations (endTime): 200, as every result in ../README.md ran; the case ships with 4000
+END_TIME="${END_TIME:-200}"
+case "${END_TIME}" in
+    ''|0*|*[!0-9]*) echo "ERROR: END_TIME must be a whole number of iterations, 1 or more (got: ${END_TIME})" >&2; exit 1 ;;
+esac
 
 # ---------------------------------------------------------------------------
 # Working directory (follows Fluent convention; all output on FSx Lustre)
@@ -145,8 +150,12 @@ cp -r "${CASE_SRC}/constant" ./constant
 cp -r "${CASE_SRC}/system" ./system
 cp -r ./0.orig ./0
 sed -i '/#include.*FOwallClockTimeStatistics/d' system/controlDict 2>/dev/null || true
-# To limit iterations for quick benchmarking, uncomment the next line:
-# sed -i '/^[[:space:]]*endTime[[:space:]]/s/endTime.*/endTime         200;/' system/controlDict
+# Run END_TIME iterations (see Configuration)
+sed -i "/^[[:space:]]*endTime[[:space:]]/s/endTime.*/endTime         ${END_TIME};/" system/controlDict
+if [ "$(awk '/^[[:space:]]*endTime[[:space:]]/ {gsub(";", "", $2); print $2; exit}' system/controlDict)" != "${END_TIME}" ]; then
+    echo "ERROR: could not set endTime ${END_TIME} in system/controlDict" >&2
+    exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # System prep
