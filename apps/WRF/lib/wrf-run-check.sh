@@ -28,14 +28,23 @@
 # run that writes history needs namelist.input in <run dir> (the scripts copy
 # it there). A run that writes no output passes on its log alone.
 #
-# frames_per_outfile is read from the line that sets it, which must start
-# with it,
+# The line gives the file's name as WRF made it: with nocolons = .true., an '_'
+# for each ':' of the name. Serial netCDF (io_form_history = 2, WRF's default)
+# writes the file under that name, while PnetCDF (11) writes each ':' left in it
+# as '_' (WRF 4, external/io_pnetcdf/wrf_io.F90): with 11, the line's
+# wrfout_d01_2000-01-01_00:00:00 is the file wrfout_d01_2000-01-01_00_00_00. The
+# check looks for each file under the name WRF writes for the run's
+# io_form_history; a file under the other name counts as missing.
+#
+# frames_per_outfile and io_form_history are each read from the line that sets
+# it, which must start with it,
 #   frames_per_outfile = <n>[, <domain 2>, ...]
 # in any case, <n> a positive whole number (a repeat count, <r>*<n>, reads as
-# <n>). WRF's default of 10 is used only when no line names the key: a namelist
-# that names it in any other form (after another setting on the same line, with
-# a subscript, with its value on the next line) or on more than one line is
-# refused, so the check never guesses which history files WRF wrote.
+# <n>). WRF's default (10 frames per file; io_form 2) is used only when no line
+# names the key: a namelist that names it in any other form (after another
+# setting on the same line, with a subscript, with its value on the next line)
+# or on more than one line is refused, so the check never guesses which history
+# files WRF wrote, or their names.
 #
 # The rule assumes WRF's default file names (history_outname, rst_outname),
 # in the run directory, and every write in a single file (io_form 2 or 11),
@@ -49,7 +58,7 @@
 
 # wrf_run_check <run dir>
 wrf_run_check() {
-    local d="${1:-}" rsl nl fpo f p problems="" restart_lines restart_files=0
+    local d="${1:-}" rsl nl k v fpo iof f p problems="" restart_lines restart_files=0
     if [ -z "${d}" ] || [ ! -d "${d}" ]; then
         printf '%s\n' "no run directory '${d}'"
         return 1
@@ -62,47 +71,55 @@ wrf_run_check() {
     grep -q 'SUCCESS COMPLETE WRF' "${rsl}" \
         || problems+="rsl.error.0000 does not say SUCCESS COMPLETE WRF"$'\n'
 
-    # History: the files the 1st, (frames_per_outfile + 1)th, ... write lines name.
+    # History: the files the 1st, (frames_per_outfile + 1)th, ... write lines name,
+    # under the names io_form_history gives them.
     if grep -q '^Timing for Writing wrfout_d01_' "${rsl}"; then
         nl="${d}/namelist.input"
-        fpo=""
+        fpo="" iof=""
         if [ -f "${nl}" ] && [ -r "${nl}" ]; then
-            # Domain 1's frames_per_outfile, comments removed: "unset" when no
-            # line names it; "ok <n>" when the one line that does reads
-            # "frames_per_outfile = <n>[, ...]" in any case, <n> a positive whole
-            # number (a repeat count, <r>*<n>, reads as <n>); otherwise
-            # "bad <that line>", or "lines <count>" when several lines name it.
-            fpo="$(LC_ALL=C awk '
-                { line = $0; sub(/!.*/, "", line); low = tolower(line)
-                  if (low !~ /(^|[^a-z0-9_])frames_per_outfile([^a-z0-9_]|$)/) next
-                  if (++n > 1) next
-                  text = line; gsub(/^[[:space:]]+|[[:space:]]+$/, "", text)
-                  if (match(low, /^[[:space:]]*frames_per_outfile[[:space:]]*=[[:space:]]*/)) {
-                      rest = substr(line, RLENGTH + 1)
-                      if (rest ~ /^[0-9]+\*[0-9]/) rest = substr(rest, index(rest, "*") + 1)
-                      if (rest ~ /^[0-9]+([[:space:],\/]|$)/) {
-                          v = rest; sub(/[^0-9].*$/, "", v); sub(/^0+/, "", v) }
-                  } }
-                END { if (n == 0) print "unset"; else if (n > 1) print "lines " n
-                      else if (v != "") print "ok " v; else print "bad " text }' \
-                   "${nl}" 2>/dev/null)" || fpo=""
-            case "${fpo}" in
-                unset)    fpo=10 ;;
-                "ok "*)   fpo="${fpo#ok }" ;;
-                "lines "*)
-                    problems+="cannot read frames_per_outfile from namelist.input (set on ${fpo#lines } lines)"$'\n'
-                    fpo="" ;;
-                "bad "*)
-                    problems+="cannot read frames_per_outfile from namelist.input ('${fpo#bad }')"$'\n'
-                    fpo="" ;;
-                *)  problems+="cannot read frames_per_outfile from namelist.input"$'\n'
-                    fpo="" ;;
-            esac
+            for k in frames_per_outfile io_form_history; do
+                # The key's value (domain 1's, for a key with one per domain),
+                # comments removed: "unset" when no line names the key; "ok <n>"
+                # when the one line that does reads "<key> = <n>[, ...]" in any
+                # case, <n> a positive whole number (a repeat count, <r>*<n>,
+                # reads as <n>); otherwise "bad <that line>", or "lines <count>"
+                # when several lines name it.
+                v="$(LC_ALL=C awk -v key="${k}" '
+                    { line = $0; sub(/!.*/, "", line); low = tolower(line)
+                      if (low !~ ("(^|[^a-z0-9_])" key "([^a-z0-9_]|$)")) next
+                      if (++n > 1) next
+                      text = line; gsub(/^[[:space:]]+|[[:space:]]+$/, "", text)
+                      if (match(low, "^[[:space:]]*" key "[[:space:]]*=[[:space:]]*")) {
+                          rest = substr(line, RLENGTH + 1)
+                          if (rest ~ /^[0-9]+\*[0-9]/) rest = substr(rest, index(rest, "*") + 1)
+                          if (rest ~ /^[0-9]+([[:space:],\/]|$)/) {
+                              v = rest; sub(/[^0-9].*$/, "", v); sub(/^0+/, "", v) }
+                      } }
+                    END { if (n == 0) print "unset"; else if (n > 1) print "lines " n
+                          else if (v != "") print "ok " v; else print "bad " text }' \
+                       "${nl}" 2>/dev/null)" || v=""
+                case "${v}" in
+                    unset)    # WRF's defaults: 10 frames per file, serial netCDF
+                        if [ "${k}" = frames_per_outfile ]; then v=10; else v=2; fi ;;
+                    "ok "*)   v="${v#ok }" ;;
+                    "lines "*)
+                        problems+="cannot read ${k} from namelist.input (set on ${v#lines } lines)"$'\n'
+                        v="" ;;
+                    "bad "*)
+                        problems+="cannot read ${k} from namelist.input ('${v#bad }')"$'\n'
+                        v="" ;;
+                    *)  problems+="cannot read ${k} from namelist.input"$'\n'
+                        v="" ;;
+                esac
+                if [ "${k}" = frames_per_outfile ]; then fpo="${v}"; else iof="${v}"; fi
+            done
         else
             problems+="no namelist.input to tell which history files WRF wrote"$'\n'
         fi
-        if [ -n "${fpo}" ]; then
+        if [ -n "${fpo}" ] && [ -n "${iof}" ]; then
             while IFS= read -r f; do
+                # PnetCDF writes each ':' of the name the log gives as '_'.
+                if [ "${iof}" = 11 ]; then f="${f//:/_}"; fi
                 p="${d}/${f}"
                 if [ ! -f "${p}" ]; then
                     problems+="history file ${f} is missing"$'\n'

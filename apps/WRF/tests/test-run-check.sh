@@ -29,7 +29,8 @@ trap 'rm -rf "${WORK}"' EXIT
 # run <name> <event>... writes the run directory ${WORK}/<name> with an
 # rsl.error.0000 of these events, and prints its path. A number is a step
 # taking that many seconds; Hhh:mm a history write (domain 1) at that time of
-# the synthetic day; G the same for domain 2; R a restart write (domain 1); Q a
+# the synthetic day; Uhh:mm the same as WRF logs it with nocolons = .true. (an
+# '_' for each ':'); G the same for domain 2; R a restart write (domain 1); Q a
 # restart write of domain 2; S the closing "SUCCESS COMPLETE WRF" line.
 run() {
     local d="${WORK}/$1" e n=0; shift
@@ -37,6 +38,7 @@ run() {
     for e in "$@"; do
         case "${e}" in
             H*) echo "Timing for Writing wrfout_d01_2000-01-01_${e#H}:00 for domain        1:    3.00000 elapsed seconds" ;;
+            U*) echo "Timing for Writing $(hu "${e#U}") for domain        1:    3.00000 elapsed seconds" ;;
             G*) echo "Timing for Writing wrfout_d02_2000-01-01_${e#G}:00 for domain        2:    3.00000 elapsed seconds" ;;
             R)  echo 'Timing for Writing restart for domain        1:    4.00000 elapsed seconds' ;;
             Q)  echo 'Timing for Writing restart for domain        2:    4.00000 elapsed seconds' ;;
@@ -47,13 +49,16 @@ run() {
     done > "${d}/rsl.error.0000"
     printf '%s\n' "${d}"
 }
-# namelist <dir> [frames_per_outfile line]: a namelist.input, with that line if given.
+# namelist <dir> [lines]: a namelist.input, with those &time_control lines if given.
 namelist() {
     { echo ' &time_control'; echo ' run_hours = 6,'; [ -n "${2:-}" ] && echo " $2"; echo ' /'; } > "$1/namelist.input"
 }
 # out <dir> <file>...: non-empty output files.
 out() { local d="$1" f; shift; for f in "$@"; do echo "stub output" > "${d}/${f}"; done; }
+# h <hh:mm>: the history file a write at that time names in the log; hu <hh:mm>:
+# the same with an '_' for each ':', as PnetCDF, or nocolons = .true., writes it.
 h() { echo "wrfout_d01_2000-01-01_$1:00"; }
+hu() { local n; n="$(h "$1")"; echo "${n//:/_}"; }
 
 # check <label> <dir> <expected status> [expected output]: the output is
 # compared line for line (exactly) when given, and must be empty on a pass.
@@ -211,6 +216,93 @@ d="$(run domain-2 4.0 H00:00 G00:00 1.0 S)"
 namelist "${d}" 'frames_per_outfile = 1,'
 out "${d}" "$(h 00:00)"
 check "domain 2's history writes are not checked" "${d}" 0
+
+echo "== history file names: io_form_history and nocolons =="
+
+# The log names each history file as WRF made the name. Serial netCDF
+# (io_form_history = 2, WRF's default) writes it under that name, PnetCDF (11)
+# with an '_' for each ':' in it; with nocolons = .true. the name has an '_'
+# for each ':' already, in the log too.
+d="$(run pnetcdf 4.0 H00:00 1.0 H01:00 1.0 R 1.0 H02:00 S)"
+namelist "${d}" $'frames_per_outfile = 1,\n io_form_history = 11,'
+out "${d}" "$(hu 00:00)" "$(hu 01:00)" "$(hu 02:00)" wrfrst_d01_2000-01-01_01_30_00
+check "PnetCDF (io_form_history = 11): the log's names with an '_' for each ':' are the files: passes" "${d}" 0
+rm -f "${d}/$(hu 01:00)"; out "${d}" "$(h 01:00)"
+check "PnetCDF: a file under the log's name, colons kept, counts as missing" "${d}" 1 "history file $(hu 01:00) is missing"
+: > "${d}/$(hu 01:00)"
+check "PnetCDF: an empty file under the PnetCDF name: refused, naming it" "${d}" 1 "history file $(hu 01:00) is empty"
+
+d="$(run pnetcdf-colons 4.0 H00:00 1.0 H01:00 S)"
+namelist "${d}" $'frames_per_outfile = 1,\n io_form_history = 11,'
+out "${d}" "$(h 00:00)" "$(h 01:00)"
+check "PnetCDF, every file under the log's names, colons kept: refused, naming the PnetCDF names" "${d}" 1 \
+    "history file $(hu 00:00) is missing
+history file $(hu 01:00) is missing"
+
+d="$(run pnetcdf-frames 4.0 H00:00 H01:00 H02:00 S)"
+namelist "${d}" $'frames_per_outfile = 2,\n io_form_history = 11,'
+out "${d}" "$(hu 00:00)"
+check "PnetCDF, 2 frames per file: the 3rd write's file, under its PnetCDF name, is missing" "${d}" 1 "history file $(hu 02:00) is missing"
+out "${d}" "$(hu 02:00)"
+check "PnetCDF, 2 frames per file: with the 1st and the 3rd write's files, passes" "${d}" 0
+
+d="$(run serial 4.0 H00:00 1.0 H01:00 S)"
+namelist "${d}" $'frames_per_outfile = 1,\n io_form_history = 2,'
+out "${d}" "$(h 00:00)" "$(h 01:00)"
+check "serial netCDF (io_form_history = 2): the log's names, colons kept, are the files: passes" "${d}" 0
+rm -f "${d}/$(h 01:00)"; out "${d}" "$(hu 01:00)"
+check "serial netCDF: a file with an '_' for each ':' counts as missing" "${d}" 1 "history file $(h 01:00) is missing"
+namelist "${d}" 'frames_per_outfile = 1,'
+check "io_form_history unset (WRF's default, serial netCDF): the same" "${d}" 1 "history file $(h 01:00) is missing"
+
+for io in 2 11; do
+    d="$(run "nocolons-${io}" 4.0 U00:00 1.0 U01:00 S)"
+    namelist "${d}" $'frames_per_outfile = 1,\n io_form_history = '"${io}"$',\n nocolons = .true.,'
+    out "${d}" "$(hu 00:00)" "$(hu 01:00)"
+    check "nocolons = .true., io_form_history = ${io}: the log's names already have an '_' for each ':', and so do the files: passes" "${d}" 0
+done
+# nocolons is not read: the log gives the name WRF made, which it reflects. A
+# log that gives colons under nocolons = .true. is not one WRF run's, and its
+# names are looked for as it gives them.
+d="$(run nocolons-colons 4.0 H00:00 S)"
+namelist "${d}" $'frames_per_outfile = 1,\n nocolons = .true.,'
+out "${d}" "$(hu 00:00)"
+check "nocolons = .true. but a log that gives colons, serial netCDF: the log's name is looked for, and is missing" "${d}" 1 \
+    "history file $(h 00:00) is missing"
+
+# io_form_history is read as frames_per_outfile is: from the one line that
+# starts with it, in any case; any other form is refused, never taken for WRF's
+# default.
+d="$(run io-forms 4.0 H00:00 S)"
+out "${d}" "$(hu 00:00)"
+for form in 'IO_FORM_HISTORY = 11' 'io_form_history = 11 ! PnetCDF' 'io_form_history=011,'; do
+    namelist "${d}" $'frames_per_outfile = 1,\n '"${form}"
+    check "'${form}': 11 is read, so the file has an '_' for each ':': passes" "${d}" 0
+done
+for form in 'io_form_restart = 11, io_form_history = 11,' 'io_form_history(1) = 11,' 'io_form_history = 0,' \
+            'io_form_history = pnetcdf,'; do
+    namelist "${d}" $'frames_per_outfile = 1,\n '"${form}"
+    check "'${form}': refused, not read with WRF's default" "${d}" 1 "cannot read io_form_history from namelist.input ('${form}')"
+done
+namelist "${d}" $'frames_per_outfile = 1,\n io_form_history =\n 11,'
+check "io_form_history with its value on the next line: refused" "${d}" 1 "cannot read io_form_history from namelist.input ('io_form_history =')"
+namelist "${d}" $'frames_per_outfile = 1,\n io_form_history = 11,\n io_form_history = 2,'
+check "io_form_history on two lines: refused" "${d}" 1 "cannot read io_form_history from namelist.input (set on 2 lines)"
+namelist "${d}" $'frames_per_outfile = 0,\n io_form_history = pnetcdf,'
+check "neither key readable: both named, frames_per_outfile first" "${d}" 1 \
+    "cannot read frames_per_outfile from namelist.input ('frames_per_outfile = 0,')
+cannot read io_form_history from namelist.input ('io_form_history = pnetcdf,')"
+if locale -a 2>/dev/null | grep -qiE '^tr_TR\.utf-?8$'; then
+    namelist "${d}" $'frames_per_outfile = 1,\n IO_FORM_HISTORY = 11,'
+    got="$(LC_ALL=tr_TR.UTF-8 wrf_run_check "${d}")"; rc=$?
+    if [ "${rc}" -eq 0 ] && [ -z "${got}" ]; then
+        ok "IO_FORM_HISTORY in capitals, under LC_ALL=tr_TR.UTF-8: 11 is read, so the file has an '_' for each ':'"
+    else
+        bad "IO_FORM_HISTORY under LC_ALL=tr_TR.UTF-8" "status 0, no output" "status ${rc}, output: ${got//$'\n'/ | }"
+    fi
+else
+    printf '  \033[33mSKIP\033[0m %s (%s)\n' "IO_FORM_HISTORY in capitals under LC_ALL=tr_TR.UTF-8" "the locale is not installed"
+fi
 
 echo "== restart files =="
 

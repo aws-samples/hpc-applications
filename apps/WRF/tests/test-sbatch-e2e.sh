@@ -175,7 +175,9 @@ EOF
 # (none when WRF_FIXTURE is empty), and the output files its log says WRF
 # wrote: a file for every history write it names, and one for every restart
 # write. WRF_OUTPUT=none writes none of them, =empty writes them all empty, and
-# =no-restart writes the history files only.
+# =no-restart writes the history files only. As WRF does, it writes each
+# history file under the name the log gives it, with an '_' for each ':' when
+# the run directory's namelist.input sets io_form_history = 11 (PnetCDF).
 cat > "${STUBS}/WRF/test/em_real/wrf.exe" <<'EOF'
 #!/bin/bash
 echo " starting wrf task 0 of 8"
@@ -183,12 +185,16 @@ echo " starting wrf task 0 of 8"
 cp "${WRF_FIXTURE}" rsl.error.0000
 mode="${WRF_OUTPUT:-all}"
 [ "${mode}" = none ] && exit 0
+pnetcdf=0
+grep -qE '^[[:space:]]*io_form_history[[:space:]]*=[[:space:]]*11([^0-9]|$)' namelist.input 2>/dev/null && pnetcdf=1
 n=0
 while read -r w1 w2 w3 name _; do
   [ "${w1} ${w2} ${w3}" = "Timing for Writing" ] || continue
   if [ "${name}" = restart ]; then
     [ "${mode}" = no-restart ] && continue
     n=$((n + 1)); name="wrfrst_d01_restart-${n}"
+  elif [ "${pnetcdf}" = 1 ]; then
+    name="${name//:/_}"
   fi
   if [ "${mode}" = empty ]; then : > "${name}"; else echo "stub output" > "${name}"; fi
 done < rsl.error.0000
@@ -308,6 +314,18 @@ recorded() {
             && ! grep -q 'NOTE: not recording this run' <<<"${OUT}"; then ok "$1"
     else bad "$1" "the recorder called, and no 'NOTE: not recording'" \
              "$(grep NOTE <<<"${OUT}" | head -3 | tr '\n' '|')$(head -1 "${RECLOG}")"; fi
+}
+# hist <name>: the history file <name> (as the log gives it) under the name WRF
+# writes in the last run_script's run directory: with an '_' for each ':' when
+# its namelist.input sets io_form_history = 11 (PnetCDF)
+hist() {
+    local f
+    f="$(find "$(dirname "${RECLOG}")/Run" -name namelist.input 2>/dev/null | head -1)"
+    if [ -n "${f}" ] && grep -qE '^[[:space:]]*io_form_history[[:space:]]*=[[:space:]]*11([^0-9]|$)' "${f}"; then
+        echo "${1//:/_}"
+    else
+        echo "$1"
+    fi
 }
 
 for s in "${SCRIPTS[@]}"; do
@@ -551,22 +569,23 @@ for s in "${SCRIPTS[@]}"; do
     [ -s "${RECLOG}" ] && bad "no SUCCESS COMPLETE WRF: not recorded" "recorder not called" "$(head -1 "${RECLOG}")" \
         || ok "no SUCCESS COMPLETE WRF: the run is not recorded"
 
-    # Two problems at once: one NOTE names both, joined with "; ".
+    # Two problems at once: one NOTE names both, joined with "; ". A history
+    # file is named as WRF writes it in this run (hist).
     run_script "${s}" "${FIX}/no-success.rsl" WRF_OUTPUT=none
     has "two problems: the NOTE names both" \
-        "NOTE: not recording this run: rsl.error.0000 does not say SUCCESS COMPLETE WRF; history file wrfout_d01_2000-01-01_00:00:00 is missing"
+        "NOTE: not recording this run: rsl.error.0000 does not say SUCCESS COMPLETE WRF; history file $(hist wrfout_d01_2000-01-01_00:00:00) is missing"
     [ -s "${RECLOG}" ] && bad "two problems: not recorded" "recorder not called" "$(head -1 "${RECLOG}")" \
         || ok "two problems: the run is not recorded"
 
     run_script "${s}" "${FIX}/hourly-history.rsl" WRF_OUTPUT=none
     has "a history file missing: a NOTE names it" \
-        "NOTE: not recording this run: history file wrfout_d01_2000-01-01_00:00:00 is missing"
+        "NOTE: not recording this run: history file $(hist wrfout_d01_2000-01-01_00:00:00) is missing"
     [ -s "${RECLOG}" ] && bad "a history file missing: not recorded" "recorder not called" "$(head -1 "${RECLOG}")" \
         || ok "a history file missing: the run is not recorded"
 
     run_script "${s}" "${FIX}/hourly-history.rsl" WRF_OUTPUT=empty
     has "an empty history file: a NOTE names it" \
-        "NOTE: not recording this run: history file wrfout_d01_2000-01-01_00:00:00 is empty"
+        "NOTE: not recording this run: history file $(hist wrfout_d01_2000-01-01_00:00:00) is empty"
     [ -s "${RECLOG}" ] && bad "an empty history file: not recorded" "recorder not called" "$(head -1 "${RECLOG}")" \
         || ok "an empty history file: the run is not recorded"
 
