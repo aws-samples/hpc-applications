@@ -78,22 +78,46 @@ count in the job itself, before the solver starts, so that a submission made by
 hand is checked as well as one made by your tooling:
 
 ```bash
-# Refuse a cores-per-node count the lists above do not cover. cores_x_node is
-# computed as in the explicit scripts. An IMDS that does not answer within a few
-# seconds refuses the run too.
-TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
-instance_type=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
-case "${instance_type}" in
-    hpc8a.96xlarge|hpc7a.96xlarge)
-        case " 24 48 72 96 120 144 168 192 " in
-            *" ${cores_x_node} "*) ;;
-            *) echo "ERROR: ${cores_x_node} cores per node loads the CCDs of ${instance_type} unevenly" >&2
-               exit 1 ;;
-        esac ;;
-    "") echo "ERROR: cannot read the instance type from IMDS; not starting" >&2
-        exit 1 ;;
+# Refuse a cores-per-node count the lists above do not cover, on Hpc8a.96xlarge
+# and Hpc7a.96xlarge. cores_x_node is computed as in the explicit scripts.
+case "${cores_x_node}" in
+    24|48|72|96|120|144|168|192) ;;   # a count the lists cover: nothing to check
+    *)
+        TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60") || TOKEN=""
+        instance_type=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type) || instance_type=""
+        check_node=""
+        case "${instance_type}" in
+            hpc8a.96xlarge|hpc7a.96xlarge) check_node="${instance_type}" ;;
+        esac
+        if ! ( LC_ALL=C; [[ "${instance_type}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ); then
+            # No instance type from IMDS: no answer within a few seconds, an error, or
+            # not a type name. A node with 192 AMD cores could be either type.
+            amd_cores=$(LC_ALL=C lscpu 2>/dev/null | awk -F': *' '/^ *Vendor ID:/ {v = $2}
+                /^ *Socket\(s\):/ {s = $2} /^ *Core\(s\) per socket:/ {c = $2}
+                END {print (v == "AuthenticAMD" ? s * c : 0)}') || amd_cores=0
+            if [ "${amd_cores}" = 192 ]; then
+                check_node="this 192-core AMD node"
+            else
+                echo "NOTE: no instance type from IMDS, and not a 192-core AMD node; the cores-per-node check is skipped" >&2
+            fi
+        fi
+        if [ -n "${check_node}" ]; then
+            echo "ERROR: ${cores_x_node} cores per node loads the CCDs of ${check_node} unevenly; use 24, 48, 72, 96, 120, 144, 168 or 192" >&2
+            exit 1
+        fi ;;
 esac
 ```
+
+The snippet checks the count on Hpc8a.96xlarge and Hpc7a.96xlarge only, and its
+message names the counts to use. A count the lists cover needs no check, so the
+snippet asks IMDS for the instance type only for another count. When IMDS gives no
+instance type (no answer within a few seconds, an error, or an answer that is not
+an instance type name, tested in the C locale), a node with 192 AMD cores
+(`lscpu`: vendor AuthenticAMD, and sockets × cores per socket is 192) could be
+either of them, so the count is checked in the same way. Without an instance type,
+any other node runs it, with a one-line NOTE on stderr that the check was skipped:
+a run is never refused only because IMDS did not answer. The snippet is written for
+bash, like the explicit scripts.
 
 If your own tooling submits the jobs, refuse the count there as well, so that no
 node starts for it.
