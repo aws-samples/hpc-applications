@@ -118,7 +118,7 @@ for training:
 | `--put` | Force the DynamoDB write (error out if it fails). |
 | `--no-put` | Never call AWS; only write the JSON file. |
 | `--dry-run` | Print the record; touch no file and no AWS. |
-| `--run-dir DIR` | Directory scanned for the solver log to recover metrics in zero-argument use (default: current dir). |
+| `--run-dir DIR` | Directory scanned for the solver log, to recover the metrics no flag or variable gave (default: current dir). |
 | `--out DIR` | Directory for the saved JSON (default: current dir). |
 | `-h`, `--help` | Full option list (authoritative for that app). |
 
@@ -135,13 +135,15 @@ On a cluster these are auto-detected. Off-cluster, pass `--instance-type`,
 
 | App | Discipline | Key result metric(s) | Size metric | Notable extra characteristics |
 |-----|-----------|----------------------|-------------|-------------------------------|
-| **Fluent** | CFD | `--time-to-solution` **or** `--time-per-iteration` + `--num-iterations`; `--solver-rating`, `--solver-speed` | `--num-cells-million` | `--turbulence-model`, `--solver-type`, `--analysis-type`, `--cell-type` |
-| **OpenFOAM** | CFD | `--time-to-solution` | `--mesh-cells-million` | `--solver` (e.g. `simpleFoam`), `--turbulence-model`, `--solver-type`, `--analysis-type` |
-| **GROMACS** | MD | `--time-to-solution`, `--ns-per-day` | `--atoms-million` | `--analysis-type` (NVE/NVT/NPT) |
-| **WRF** | Weather | `--time-to-solution` | `--num-cells-million` (grid points) | `--analysis-type` (forecast/idealized) |
-| **CFX / STAR-CCM+** | CFD | `--time-to-solution` | see `--help` | see `--help` |
-| **LS-DYNA / OptiStruct / ANSYS Mechanical / OpenRadioss** | FEA / structural | `--time-to-solution` | see `--help` | see `--help` |
-| **LAMMPS** | MD | `--time-to-solution` | see `--help` | see `--help` |
+| **Fluent** | CFD | `--time-to-solution` **or** `--time-per-iteration` + `--num-iterations`; `--solver-rating`, `--solver-speed` (classic `fluentbench.pl`); `--miups` (the 2026 R1 harness; with `--num-cells-million` the recorder derives the time per iteration) | `--num-cells-million` | `--case`, `--turbulence-model`, `--solver-type`, `--analysis-type`, `--cell-type`; `x86/Fluent-Benchmark.2026R1.sbatch` also passes `--char warmup_iterations=<N>` (the `WARMUP_ITERATIONS` setting, which the 2026 R1 harness runs twice) and `--char timed_iterations=<N>` (the iterations the harness timed: for a transient case, every iteration of its timed time steps) |
+| **OpenFOAM** | CFD | `--time-to-solution`; `--metric num_iterations=<N>` (the SIMPLE iterations run, the case's `endTime`) | `--mesh-cells-million` | `--solver` (e.g. `simpleFoam`), `--turbulence-model`, `--solver-type`, `--analysis-type` |
+| **GROMACS** | MD | `--time-to-solution`, `--ns-per-day` | `--atoms-million` | `--analysis-type` (NVE/NVT/NPT); the CPU launchers add the run length, whether PME tuning was left on and the threads per rank (`--metric nsteps=<N> --char pme_tuning=on\|off --metric threads_per_rank=<n>`) |
+| **WRF** | Weather | `--time-to-solution` | `--num-cells-million` (domain 1's `e_we × e_sn × e_vert` / 10^6) | `--analysis-type` (forecast/idealized); the WRF scripts also pass `--char simulated_minutes=<min>`, `--char num_timesteps=<N>` and `--char io_form=<n>` |
+| **CFX** | CFD | `--time-to-solution` (the wall clock around `cfx5solve`); the sbatch example adds `--metric cfd_solver_wall_seconds=<s>` (the iterations' time) and `--metric num_iterations=<n>` (outer loop iterations) | `--mesh-cells-million` (millions of elements, from the solver's output file) | see `--help` |
+| **STAR-CCM+** | CFD | `--time-to-solution` | see `--help` | see `--help` |
+| **ANSYS Mechanical** | FEA / structural | `--time-to-solution` (MAPDL's `Elapsed Time (sec)`; the sbatch also records `wall_clock_seconds`) | `--mdofs` (or `MDOFS`) | `--solver-type` (or `SOLVER_TYPE`): `sparse-direct-nonsymmetric`, `sparse-direct-symmetric`, `sparse-direct-complex`, `jcg-iterative`, `pcg-iterative`; `--analysis-type`; `--char memory_mode=InCore\|OutOfCore` (the sbatch records it from MAPDL's `Memory Option:` line, and `unknown` for an output without that line) |
+| **LS-DYNA / OptiStruct / OpenRadioss** | FEA / structural | `--time-to-solution` | see `--help` | see `--help` |
+| **LAMMPS** | MD | `--time-to-solution` (the launchers pass LAMMPS's `Loop time`), `--timesteps-per-sec` | `--atoms-million` | `--case` (the `MODEL`), `--char scale=<SCALE>`, `--char timesteps=<N>` (the timesteps LAMMPS ran), `--metric atom_steps_per_sec=<X>` |
 
 > For Fluent, if you omit `--time-to-solution` but pass `--time-per-iteration`
 > and `--num-iterations`, total solve time is computed as their product.
@@ -184,17 +186,28 @@ this repository — with the exception of Quantum ESPRESSO, noted above — call
 its app's `record-benchmark.sh` automatically, right after the solve. Just run the benchmark as usual — and set `SOURCE=<YourOrg>`
 if you want your rows tagged. The built-in call is:
 
-- **Zero-argument.** The launch script exports what it already knows (instance
+- **Nothing to pass.** The launch script exports what it already knows (instance
   type, cores, nodes, MPI, the app version, the benchmark case and the measured
   solve time) to the recorder via the environment, and the recorder recovers
   anything still missing by parsing the solver log in the run directory
-  (`--run-dir`, defaulting to the job's working directory). You pass nothing.
+  (`--run-dir`, defaulting to the job's working directory). Several launch
+  scripts also pass what makes runs comparable, read from the run's settings,
+  input files and the solver's output (run length, problem size, the solver's
+  own phase time), as recorder arguments (`--metric`, `--char` or a size flag;
+  see each application's row above). You pass nothing; a recorder you name in
+  `DYNAMODB_RECORDER` (or `CONTRIB_RECORDER`) gets the same arguments, so it
+  must accept them.
 - **Non-fatal, and it never changes your job's result.** A missing recorder,
   missing AWS credentials or a parse miss only prints a `NOTE:`; the job's exit
   status always stays exactly that of the solver.
 - **Successful solves only.** Launch scripts that don't use `set -e` capture the
   solver's exit code and skip recording (and skip a zero/garbage time) when the
-  solve failed, so the dataset isn't polluted with failed runs.
+  solve failed, so the dataset isn't polluted with failed runs. The benchmark
+  scripts of CFX, GROMACS (the CPU launchers), LAMMPS, OpenFOAM, WRF and ANSYS
+  Mechanical, Fluent's `x86/Fluent-Benchmark.2026R1.sbatch` and LS-DYNA's
+  `LS-Dyna.sbatch` also record a run only when the solver's output shows it
+  complete. Each application's README says what its script checks, or for
+  Fluent, [`Fluent-Benchmark-2026R1.md`](Fluent/Fluent-Benchmark-2026R1.md).
 - **Local-first.** As always it writes a local JSON record every run and only
   performs the DynamoDB `put-item` when write access is available.
 
