@@ -87,6 +87,13 @@ really executes rather than only passing `bash -n`. It asserts:
 
   * the job's final exit status per fixture (a fixed-iteration deck exits 0; a
     truncated `rc=0` run exits non-zero; a disk-full abort keeps its 255);
+  * `mapdl` runs with `-perf on`, right after `-b`, when `MAPDL_PERF` is unset,
+    empty or `on`, and without it when `MAPDL_PERF=off`. Its stub writes the
+    `S O L V E R   S T A T I S T I C S` section, with its `Memory Option:` line,
+    only with `-perf on`, as MAPDL 2026 R1 does, so the recorder gets
+    `memory_mode=InCore` by default and `memory_mode=unknown` with
+    `MAPDL_PERF=off`, which still records the run. Any other value ends the job
+    with exit 1 before the run directory and the solve, and records nothing;
   * the memory mode handed to the recorder is the one on MAPDL's `Memory Option:`
     line;
   * the run's time is MAPDL's `Elapsed Time (sec)`: the recorder gets it as the

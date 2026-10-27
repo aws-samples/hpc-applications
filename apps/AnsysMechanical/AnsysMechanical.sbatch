@@ -27,6 +27,12 @@
 #                       solve to run there, in GiB (default 300; 1 to 9999999).
 #     ANSYS_COMPAT_DIR  dir with the legacy libs AL2023 lacks (see Readme.md);
 #                       default ${BASE_DIR}/ansys_compat, used when it exists.
+#     MAPDL_PERF        on | off (default on). on passes MAPDL's -perf on, as
+#                       the command line runBench.py prints does: MAPDL then
+#                       prints the S O L V E R   S T A T I S T I C S section of
+#                       its closing statistics, whose Memory Option: line gives
+#                       the memory mode the run is recorded with. off leaves it
+#                       out, and the memory mode is unknown.
 #     ANSYSLMD_LICENSE_FILE, SOURCE, DYNAMODB_RECORDER    see recorder section.
 #     SOLVER_TYPE       solver family the recorder stores with the run, e.g.
 #                       sparse-direct-symmetric or pcg-iterative. Set it on
@@ -119,6 +125,21 @@ case "${scratch_min_free_gib}" in
         echo "       from 1 to 9999999. It is the free space SCRATCH_ROOT needs on every node" >&2
         echo "       for the solve to use node-local NVMe scratch. Refusing to run rather" >&2
         echo "       than guess at it." >&2
+        exit 1 ;;
+esac
+
+# MAPDL's -perf on, as in the command line runBench.py prints. Only with it does
+# MAPDL 2026 R1 print the S O L V E R   S T A T I S T I C S section of its closing
+# statistics, which holds the Memory Option: line the memory mode is read from
+# (lib/mapdl-verdict.sh); without it the memory mode is recorded as unknown.
+mapdl_perf=${MAPDL_PERF:-"on"}
+case "${mapdl_perf}" in
+    on)  mapdl_perf_args=( -perf on ) ;;
+    off) mapdl_perf_args=() ;;
+    *)
+        echo "ERROR: MAPDL_PERF='${mapdl_perf}' is neither on nor off. on, the default, passes" >&2
+        echo "       MAPDL's -perf on, whose solver statistics give the memory mode the run is" >&2
+        echo "       recorded with; off leaves it out. Refusing to run rather than guess at it." >&2
         exit 1 ;;
 esac
 
@@ -414,7 +435,7 @@ output_file="output-${SLURM_JOB_ID}.log"
 
 # Ansys Mechanical gets the total number of cores from hostlist not from -np
 _rec_t0="$(date +%s)"
-"${APP_BIN_PATH}" -b -dis -mpi intelmpi -ssh -machines $machines -i $(basename ${input_file}) -o "${output_file}"
+"${APP_BIN_PATH}" -b "${mapdl_perf_args[@]}" -dis -mpi intelmpi -ssh -machines $machines -i $(basename ${input_file}) -o "${output_file}"
 _rec_rc=$?
 _rec_secs=$(( $(date +%s) - _rec_t0 ))
 

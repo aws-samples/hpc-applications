@@ -168,7 +168,8 @@ machines=""
 for i in "${!hosts[@]}"; do machines="$machines:${hosts[$i]}:${tpn[$i]}"; done
 machines=${machines:1}
 
-mapdl -b -dis -mpi intelmpi -ssh -machines $machines -i input.dat -o output.log
+# -perf on: MAPDL's solver statistics, with the Memory Option: line (Key settings)
+mapdl -b -perf on -dis -mpi intelmpi -ssh -machines $machines -i input.dat -o output.log
 ```
 
 The recommended layouts further down are all homogeneous and divisible, so this
@@ -638,14 +639,17 @@ give it the `.dat` from the unpacked package
 (`sbatch AnsysMechanical.sbatch v261 /fsx/V26/V26direct-5.dat`): it links every
 `.db` next to the input, and `checkver.mac`, into the working directory, and
 builds `-machines` from the allocation. It launches
-`mapdl -b -dis -mpi intelmpi -ssh -machines <host:cores:...>`; the command line
-above also passes `nolist`, `-perf on` and `-nt 1`, which MAPDL reports at the
-top of its output as `BATCH MODE REQUESTED (-b) = NOLIST`,
-`PERFORMANCE STATS TRACKING REQUESTED` and
-`... WITH SINGLE THREAD PER PROCESS (FORCED)`. Without `-perf on`, MAPDL prints
-no `Memory Option:` line, so the sbatch records the memory mode of every run as
-`unknown`. To record it, add `-perf on` after `-b` on the sbatch's `mapdl`
-line.
+`mapdl -b -perf on -dis -mpi intelmpi -ssh -machines <host:cores:...>`.
+`-perf on`, as in the command line above and in every run in
+[Performance](#performance), makes MAPDL print the
+`S O L V E R   S T A T I S T I C S` section of its closing statistics, which
+holds the `Memory Option:` line the sbatch records the memory mode from; MAPDL
+reports the option at the top of its output as
+`PERFORMANCE STATS TRACKING REQUESTED`. Set `MAPDL_PERF=off` on the submission
+to leave it out: the sbatch then records the memory mode as `unknown`. The
+command line above also passes `nolist` and `-nt 1`, which MAPDL reports as
+`BATCH MODE REQUESTED (-b) = NOLIST` and
+`... WITH SINGLE THREAD PER PROCESS (FORCED)`.
 
 # Recording results
 

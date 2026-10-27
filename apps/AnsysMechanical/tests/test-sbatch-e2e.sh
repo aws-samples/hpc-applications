@@ -627,6 +627,93 @@ else
     bad "missing library aborts" "non-zero + actionable message" "rc=${rc}"
 fi
 
+echo "== MAPDL runs with -perf on unless MAPDL_PERF=off, so the memory mode is recorded =="
+
+# perf_case [<MAPDL_PERF>]: a clean solve, with MAPDL_PERF unset or set, at submission,
+# to the value given. Its mapdl stub stands for MAPDL 2026 R1 as it ran on hardware: it
+# writes the S O L V E R   S T A T I S T I C S section, and in it the Memory Option:
+# line, only when its arguments hold -perf on. Sets RC, OUT, ARGS (the stub's
+# arguments; empty when it did not run), REC (what the recorder stub logged) and
+# RUNDIR (1 when the run directory was created).
+perf_case() {
+    local base; base="$(mktemp -d)"
+    local vdir="${base}/ansys_inc/v261/ansys/bin"
+    mkdir -p "${vdir}" "${base}/inputs"
+    cat > "${vdir}/mapdl" <<EOF
+#!/bin/bash
+outfile=""; prev=""; perf=0
+for a in "\$@"; do
+  [ "\$prev" = "-o" ] && outfile="\$a"
+  [ "\$prev" = "-perf" ] && [ "\$a" = "on" ] && perf=1
+  prev="\$a"
+done
+printf '%s\n' "\$*" > "${base}/mapdl-args"
+if [ "\${perf}" -eq 1 ]; then
+  cp "${FIX}/normal-success.log" "\${outfile}"
+else
+  grep -v -E 'S O L V E R   S T A T I S T I C S|^Solver: |^Memory Option:' \\
+    "${FIX}/normal-success.log" > "\${outfile}"
+fi
+exit 0
+EOF
+    chmod +x "${vdir}/mapdl"
+    : > "${base}/inputs/V26direct-5.dat"
+    : > "${base}/recorder.log"
+    local perf_env=( -u MAPDL_PERF )
+    [ "$#" -gt 0 ] && perf_env=( MAPDL_PERF="$1" )
+    OUT="$(
+      env "${perf_env[@]}" PATH="${STUBS}/bin:${PATH}" RECORDER_LOG="${base}/recorder.log" \
+      DYNAMODB_RECORDER="${STUBS}/bin/recorder-stub.sh" \
+      MAPDL_VERDICT_LIB="${HERE}/../lib/mapdl-verdict.sh" \
+      BASE_DIR="${base}" SCRATCH_MODE="shared" \
+      SLURM_JOB_ID=97000 SLURM_JOB_NAME="AnsysMechanical.sbatch" \
+      SLURM_JOB_NUM_NODES=2 SLURM_NPROCS=128 SLURM_NTASKS=128 \
+      SLURM_JOB_NODELIST="node1,node2" SLURM_TASKS_PER_NODE="64(x2)" \
+      SLURM_SUBMIT_DIR="${HERE}/.." \
+      bash "${SBATCH}" v261 "${base}/inputs/V26direct-5.dat" 2>&1
+    )"
+    RC=$?
+    ARGS="$(cat "${base}/mapdl-args" 2>/dev/null)"
+    REC="$(cat "${base}/recorder.log")"
+    RUNDIR=0; [ -e "${base}/AnsysMechanical" ] && RUNDIR=1
+    rm -rf "${base}"
+}
+
+for perf in unset "" on; do
+    if [ "${perf}" = unset ]; then perf_case; what="MAPDL_PERF not set"
+    else perf_case "${perf}"; what="MAPDL_PERF='${perf}'"; fi
+    if [ "${RC}" -eq 0 ] && grep -qE '^-b -perf on -dis ' <<<"${ARGS}"; then
+        ok "${what}: mapdl runs with -perf on, right after -b"
+    else
+        bad "${what}: -perf on" "exit 0, mapdl arguments starting '-b -perf on -dis '" \
+            "exit ${RC}, mapdl arguments: ${ARGS:-none}"
+    fi
+    grep -q 'memory_mode=InCore' <<<"${REC}" \
+        && ok "${what}: the Memory Option: line's mode reaches the recorder (memory_mode=InCore)" \
+        || bad "${what}: memory_mode" "memory_mode=InCore" "$(grep ARGS <<<"${REC}")"
+done
+
+perf_case off
+if [ "${RC}" -eq 0 ] && [ -n "${ARGS}" ] && ! grep -q -- '-perf' <<<"${ARGS}"; then
+    ok "MAPDL_PERF=off: mapdl runs without -perf on"
+else
+    bad "MAPDL_PERF=off: no -perf" "exit 0, mapdl arguments without -perf" "exit ${RC}, mapdl arguments: ${ARGS:-none}"
+fi
+if grep -q 'memory_mode=unknown' <<<"${REC}" && grep -qx 'BENCHMARK_CASE=V26direct-5' <<<"${REC}"; then
+    ok "MAPDL_PERF=off: the run is still recorded, with memory_mode=unknown"
+else
+    bad "MAPDL_PERF=off: recorded" "memory_mode=unknown and BENCHMARK_CASE=V26direct-5" "${REC:-recorder not called}"
+fi
+
+perf_case yes
+if [ "${RC}" -eq 1 ] && grep -q "^ERROR: MAPDL_PERF='yes' is neither on nor off" <<<"${OUT}" \
+   && [ -z "${ARGS}" ] && [ "${RUNDIR}" -eq 0 ] && [ -z "${REC}" ]; then
+    ok "MAPDL_PERF=yes ends the job with exit 1 and an ERROR, before the run directory and the solve, recording nothing"
+else
+    bad "MAPDL_PERF=yes refused" "exit 1, the ERROR, no run directory, no solve, no row" \
+        "exit ${RC}; run directory ${RUNDIR}; mapdl arguments: ${ARGS:-none}; $(grep -m1 'MAPDL_PERF' <<<"${OUT}")"
+fi
+
 echo
 printf 'sbatch e2e tests: %d passed, %d failed, %d skipped\n' "${pass}" "${fail}" "${skip}"
 [ "${fail}" -eq 0 ] || exit 1
