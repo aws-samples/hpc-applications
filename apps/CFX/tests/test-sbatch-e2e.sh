@@ -187,8 +187,13 @@ else
     bad "the cfx5solve command line is unchanged" "${expected_args//$'\n'/ }" "$(tr '\n' ' ' < "${STATE}/cfx5solve.args")"
 fi
 reclog="$(cat "${STATE}/recorder.log" 2>/dev/null)"
-if grep -qxF -- "ARGS: " <<< "${reclog}"; then ok "the recorder gets no arguments, as before"
-else bad "the recorder gets no arguments" "ARGS: " "$(printf '%s' "${reclog}" | tr '\n' '|')"; fi
+STEADY_ARGS="ARGS: --metric cfd_solver_wall_seconds=123.4500 --metric num_iterations=10 --mesh-cells-million 1.000000"
+if grep -qxF -- "${STEADY_ARGS}" <<< "${reclog}"; then
+    ok "the recorder gets the iteration time, the outer loop iterations and the mesh size"
+else
+    bad "the recorder gets the iteration time, the outer loop iterations and the mesh size" \
+        "${STEADY_ARGS}" "$(printf '%s' "${reclog}" | tr '\n' '|')"
+fi
 for want in "BENCHMARK_CASE=perf_Test_R16" "TIME_TO_SOLUTION=123" "CFX_VERSION=v261" "RUN_DIR=${WORKDIR}"; do
     if grep -qxF -- "${want}" <<< "${reclog}"; then ok "the recorder gets ${want%%=*} as before"
     else bad "the recorder gets ${want}" "${want}" "$(printf '%s' "${reclog}" | tr '\n' '|')"; fi
@@ -196,8 +201,8 @@ done
 [ "$(grep -c '^ARGS:' "${STATE}/recorder.log" 2>/dev/null)" = "1" ] \
     && ok "the recorder runs once" || bad "the recorder runs once" "1" "$(grep -c '^ARGS:' "${STATE}/recorder.log" 2>/dev/null)"
 
-# The item this directory's recorder would store is unchanged: the wall clock,
-# and no attribute for the iteration time.
+# The item this directory's recorder would store: the wall clock as before, and
+# the iteration time, the outer loop iterations and the mesh size beside it.
 RECORDER="${WORK}/bin/real-recorder.sh" run_case steady-real 0 "${FIX}/steady-10-iterations.out"
 item="$(sed -n '/^{/,$p' "${STATE}/recorder.json" 2>/dev/null)"
 if grep -qF '"time_to_solution_seconds": {"N": "123"}' <<< "${item}"; then
@@ -205,10 +210,61 @@ if grep -qF '"time_to_solution_seconds": {"N": "123"}' <<< "${item}"; then
 else
     bad "the recorded time is the wall clock" '"time_to_solution_seconds": {"N": "123"}' "$(printf '%s' "${item}" | tr '\n' ' ')"
 fi
-if grep -q '^{' <<< "${item}" && ! grep -qiE 'iteration|123\.45|12\.345' <<< "${item}"; then
-    ok "the recorded item has no iteration attribute"
+for want in '"cfd_solver_wall_seconds": {"N": "123.4500"}' '"num_iterations": {"N": "10"}' \
+            '"mesh_cells_million": {"N": "1.000000"}'; do
+    if grep -qF -- "${want}" <<< "${item}"; then ok "the recorded item has ${want%%:*}"
+    else bad "the recorded item has ${want%%:*}" "${want}" "$(printf '%s' "${item}" | tr '\n' ' ')"; fi
+done
+
+# The values the recorder gets in other cases (its stub logs its arguments).
+rec_args() {  # <description> <expected ARGS line>: the last run_case's recorder call
+    if grep -qxF -- "$2" "${STATE}/recorder.log" 2>/dev/null; then ok "$1"
+    else bad "$1" "$2" "$(tr '\n' '|' < "${STATE}/recorder.log" 2>/dev/null)"; fi
+}
+run_case rec-two-domains 0 "${FIX}/steady-two-domains.out"
+rec_args "two domains -> the global element count" \
+    "ARGS: --metric cfd_solver_wall_seconds=20.0000 --metric num_iterations=2 --mesh-cells-million 1.500000"
+grep -v 'Global Number of' "${FIX}/steady-two-domains.out" > "${WORK}/rec-no-global.out"
+run_case rec-no-global 0 "${WORK}/rec-no-global.out"
+rec_args "two domains of different sizes, no global count -> no mesh size" \
+    "ARGS: --metric cfd_solver_wall_seconds=20.0000 --metric num_iterations=2"
+sed 's/^\( *Total Number of Elements *=\).*/\1 **********/' \
+    "${FIX}/steady-10-iterations.out" > "${WORK}/rec-mesh-overflow.out"
+run_case rec-mesh-overflow 0 "${WORK}/rec-mesh-overflow.out"
+rec_args "asterisks for the element count -> no mesh size" \
+    "ARGS: --metric cfd_solver_wall_seconds=123.4500 --metric num_iterations=10"
+EXTRA_ENV="MESH_CELLS_MILLION=104" run_case rec-mesh-env 0 "${FIX}/steady-10-iterations.out"
+rec_args "MESH_CELLS_MILLION set in the environment -> no --mesh-cells-million" \
+    "ARGS: --metric cfd_solver_wall_seconds=123.4500 --metric num_iterations=10"
+EXTRA_ENV="MESH_CELLS_MILLION=104" RECORDER="${WORK}/bin/real-recorder.sh" \
+    run_case rec-mesh-env-real 0 "${FIX}/steady-10-iterations.out"
+if grep -qF '"mesh_cells_million": {"N": "104"}' "${STATE}/recorder.json" 2>/dev/null; then
+    ok "MESH_CELLS_MILLION set in the environment -> the recorded mesh size is that value"
 else
-    bad "the recorded item has no iteration attribute" "an item without one" "$(printf '%s' "${item}" | tr '\n' ' ')"
+    bad "MESH_CELLS_MILLION set in the environment -> the recorded mesh size is that value" \
+        '"mesh_cells_million": {"N": "104"}' "$(tr '\n' ' ' < "${STATE}/recorder.json" 2>/dev/null)"
+fi
+run_case rec-transient 0 "${FIX}/transient.out"
+rec_args "a transient run -> the iteration time only" "ARGS: --metric cfd_solver_wall_seconds=50.0000"
+sed 's/^ CFD Solver wall clock seconds: .*/ CFD Solver wall clock seconds: 9.3270E+00/' \
+    "${FIX}/steady-10-iterations.out" > "${WORK}/rec-small.out"
+run_case rec-small 0 "${WORK}/rec-small.out"
+rec_args "a time under 10 s -> four decimals" \
+    "ARGS: --metric cfd_solver_wall_seconds=9.3270 --metric num_iterations=10 --mesh-cells-million 1.000000"
+sed 's/^ CFD Solver wall clock seconds: .*/ CFD Solver wall clock seconds: 1.2345E+05/' \
+    "${FIX}/steady-10-iterations.out" > "${WORK}/rec-large.out"
+run_case rec-large 0 "${WORK}/rec-large.out"
+rec_args "a time of 6 digits -> no exponent" \
+    "ARGS: --metric cfd_solver_wall_seconds=123450.0000 --metric num_iterations=10 --mesh-cells-million 1.000000"
+sed 's/$/\r/' "${FIX}/steady-10-iterations.out" > "${WORK}/rec-crlf.out"
+run_case rec-crlf 0 "${WORK}/rec-crlf.out"
+rec_args "CRLF line ends -> the same values" "${STEADY_ARGS}"
+rec_locale="$(locale -a 2>/dev/null | grep -m1 -iE '^(de_DE|fr_FR|it_IT|es_ES)\.utf-?8$')"
+if [ -n "${rec_locale}" ]; then
+    EXTRA_ENV="LC_ALL=${rec_locale} POSIXLY_CORRECT=1" run_case rec-locale 0 "${FIX}/steady-10-iterations.out"
+    rec_args "a comma-decimal locale -> the same values, with a point" "${STEADY_ARGS}"
+else
+    skipt "a comma-decimal locale -> the same values, with a point" "no such locale installed"
 fi
 
 # ---------------------------------------------------------------------------

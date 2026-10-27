@@ -81,8 +81,11 @@ Iteration time: <seconds> s (CFD Solver wall clock seconds, <case>_001.out)
 Time per iteration: <seconds> s (<n> outer loop iterations)
 ```
 
-The recorder still gets the wall clock. [`tests/run-tests.sh`](tests/run-tests.sh)
-checks the two lines and the recorded time, with stubbed Slurm and solver.
+The recorder still gets the wall clock, and with it what makes runs comparable: the
+iteration time, the number of outer loop iterations and the mesh size in millions
+of elements, from the same output file (`cfd_solver_wall_seconds`, `num_iterations`
+and `mesh_cells_million` in the record). [`tests/run-tests.sh`](tests/run-tests.sh)
+checks the two lines and what the recorder gets, with stubbed Slurm and solver.
 
 ## 100M Airfoil, full nodes
 

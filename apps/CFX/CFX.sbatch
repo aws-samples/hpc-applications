@@ -92,8 +92,8 @@ _rec_t0="$(date +%s)"
 # ---------------------------------------------------------------------------
 # Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal).
 # The recorder self-collects host details from the environment; this launch
-# script times the solve (wall clock) and passes it, so no arguments are
-# needed. Only a SUCCESSFUL solve is recorded, and the job's exit status is
+# script times the solve (wall clock) and passes it, with the record values
+# below. Only a SUCCESSFUL solve is recorded, and the job's exit status is
 # preserved (a recorder problem never changes it). Point DYNAMODB_RECORDER at
 # the script if it isn't found automatically; set SOURCE=<YourOrg> to tag your
 # contributions. See apps/CFX/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
@@ -136,6 +136,41 @@ else
     echo "Time per iteration: N/A"
 fi
 
+# ---------------------------------------------------------------------------
+# What makes runs comparable goes into the record too, from the same output
+# file: the iterations' time (cfd_solver_wall_seconds), the number of outer
+# loop iterations (num_iterations) and the mesh size in millions of elements
+# (mesh_cells_million: the domain's "Total Number of Elements", or the "Global
+# Number of Elements" of a case with several domains). Each is passed only
+# when the file holds it; a MESH_CELLS_MILLION set in the environment is kept.
+# The record's time_to_solution_seconds is still the wall clock.
+# ---------------------------------------------------------------------------
+_rec_args=()
+if [ -n "${_iter_out}" ]; then
+    _rec_vals="$(LC_ALL=C awk '
+        /CFD Solver wall clock seconds:/ {
+            v = $NF; sub(/\r$/, "", v)
+            if (v ~ /^[0-9]+(\.[0-9]*)?([Ee][-+]?[0-9]+)?$/) t = sprintf("%.4f", v + 0)
+        }
+        /OUTER LOOP ITERATION =/ { n++ }
+        /^ *(Total|Global) Number of Elements *=/ {
+            e = $NF; sub(/\r$/, "", e)
+            if (e !~ /^[0-9]+$/) next
+            if ($1 == "Global") g = e
+            else if (d == "") d = e
+            else if (e != d) several = 1
+        }
+        END {
+            cells = (g != "" ? g : (several ? "" : d))
+            printf "%s %s %s\n", (t != "" ? t : "-"), (n > 0 ? n : "-"),
+                   (cells != "" ? sprintf("%.6f", cells / 1000000) : "-")
+        }' "${_iter_out}" 2>/dev/null)"
+    read -r _rec_t _rec_n _rec_mesh <<< "${_rec_vals:-- - -}"
+    [ "${_rec_t}" = "-" ] || _rec_args+=(--metric "cfd_solver_wall_seconds=${_rec_t}")
+    [ "${_rec_n}" = "-" ] || _rec_args+=(--metric "num_iterations=${_rec_n}")
+    [ "${_rec_mesh}" = "-" ] || [ -n "${MESH_CELLS_MILLION:-}" ] || _rec_args+=(--mesh-cells-million "${_rec_mesh}")
+fi
+
 _recorder="${DYNAMODB_RECORDER:-}"
 for _c in "${_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/dynamodb/record-benchmark.sh" \
@@ -161,7 +196,7 @@ if [ -n "${_iter_out}" ] && LC_ALL=C awk '
 fi
 if [ "${_rec_rc}" -eq 0 ] && [ -n "${_rec_ok}" ] && [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
     CFX_VERSION="${cfxversion}" BENCHMARK_CASE="$(basename "${def_file}" .def)" \
-    TIME_TO_SOLUTION="${_rec_secs}" RUN_DIR="${workdir}" "${_recorder}" \
+    TIME_TO_SOLUTION="${_rec_secs}" RUN_DIR="${workdir}" "${_recorder}" "${_rec_args[@]}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 elif [ "${_rec_rc}" -ne 0 ]; then
     echo "NOTE: solver exited ${_rec_rc}; skipping benchmark recording." >&2

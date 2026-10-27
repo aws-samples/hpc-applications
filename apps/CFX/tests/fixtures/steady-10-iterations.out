@@ -1,4 +1,4 @@
- Synthetic cfx5solve output file for apps/CFX/tests: every time in it is made up.
+ Synthetic cfx5solve output file for apps/CFX/tests: every time and mesh count in it is made up.
 
  +--------------------------------------------------------------------+
  |                                                                    |
@@ -24,6 +24,14 @@
  Host computer:  node1 (PID:1001)
 
  Job started:    Mon Jan  5 10:00:00 2026
+ +--------------------------------------------------------------------+
+ |                          Mesh Statistics                           |
+ +--------------------------------------------------------------------+
+ Domain Name : fluid
+     Total Number of Nodes                                =     1030301
+     Total Number of Elements                             =     1000000
+         Total Number of Hexahedrons                      =     1000000
+     Total Number of Faces                                =       60000
 
  +--------------------------------------------------------------------+
  |                  Job Information at End of Run                     |
@@ -42,6 +50,14 @@
  Run mode:       parallel run (Intel(R) MPI Library 2021.14)
 
  Job started:    Mon Jan  5 10:01:05 2026
+ +--------------------------------------------------------------------+
+ |                          Mesh Statistics                           |
+ +--------------------------------------------------------------------+
+ Domain Name : fluid
+     Total Number of Nodes                                =     1030301
+     Total Number of Elements                             =     1000000
+         Total Number of Hexahedrons                      =     1000000
+     Total Number of Faces                                =       60000
 
  ======================================================================
  OUTER LOOP ITERATION =    1                    CPU SECONDS = 1.000E+02
