@@ -93,12 +93,30 @@ for _c in "${_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/apps/CFX/dynamodb/record-benchmark.sh"; do
     if [ -n "${_c}" ] && [ -x "${_c}" ]; then _recorder="${_c}"; break; fi
 done
-if [ "${_rec_rc}" -eq 0 ] && [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
+
+# ---------------------------------------------------------------------------
+# Only a run that ended normally is recorded: cfx5solve exited 0, and the
+# output file read above holds a number on its "CFD Solver wall clock
+# seconds:" line, which the solver run prints at its end. Without that value
+# the run is not recorded, whatever cfx5solve exited with.
+# ---------------------------------------------------------------------------
+_rec_ok=""
+if [ -n "${_iter_out}" ] && LC_ALL=C awk '
+        /CFD Solver wall clock seconds:/ {
+            v = $NF; sub(/\r$/, "", v)
+            if (v ~ /^[0-9]+(\.[0-9]*)?([Ee][-+]?[0-9]+)?$/) have = 1
+        }
+        END { exit !have }' "${_iter_out}" 2>/dev/null; then
+    _rec_ok=1
+fi
+if [ "${_rec_rc}" -eq 0 ] && [ -n "${_rec_ok}" ] && [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
     CFX_VERSION="${cfxversion}" BENCHMARK_CASE="$(basename "${def_file}" .def)" \
     TIME_TO_SOLUTION="${_rec_secs}" RUN_DIR="${workdir}" "${_recorder}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 elif [ "${_rec_rc}" -ne 0 ]; then
     echo "NOTE: solver exited ${_rec_rc}; skipping benchmark recording." >&2
+elif [ -z "${_rec_ok}" ]; then
+    echo "NOTE: no CFD Solver wall clock seconds value was read from the solver's output file; skipping benchmark recording." >&2
 else
     echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2
 fi

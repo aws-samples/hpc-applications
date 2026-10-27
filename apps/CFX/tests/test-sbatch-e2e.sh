@@ -312,10 +312,55 @@ if [ "$(id -u)" -ne 0 ]; then
     expect_rc "an unreadable output file -> the job still exits 0" 0
     expect_line "an unreadable output file -> N/A, and why" "Iteration time: N/A (cannot read perf_Test_R16_001.out)"
     expect_line "an unreadable output file -> no time per iteration" "Time per iteration: N/A"
-    [ -s "${STATE}/recorder.log" ] && ok "an unreadable output file -> still recorded" \
-        || bad "an unreadable output file -> still recorded" "one recorder call" "none"
+    [ ! -e "${STATE}/recorder.log" ] && ok "an unreadable output file -> not recorded" \
+        || bad "an unreadable output file -> not recorded" "no recorder call" "$(cat "${STATE}/recorder.log")"
 else
     skipt "an unreadable output file" "running as root"
+fi
+
+# ---------------------------------------------------------------------------
+# 10. A run is recorded only when it ended normally: cfx5solve exited 0, and
+#     the newest output file holds a CFD Solver wall clock seconds value.
+# ---------------------------------------------------------------------------
+GATE_NOTE="NOTE: no CFD Solver wall clock seconds value was read from the solver's output file; skipping benchmark recording."
+recorded() {  # <description> : the last run_case called the recorder once
+    local n; n="$(grep -c '^ARGS:' "${STATE}/recorder.log" 2>/dev/null)"
+    if [ "${n:-0}" = "1" ]; then ok "$1"; else bad "$1" "one recorder call" "${n:-0} call(s)"; fi
+}
+not_recorded() {  # <description> : the last run_case called no recorder, and gave the NOTE
+    if [ ! -e "${STATE}/recorder.log" ] && grep -qxF -- "${GATE_NOTE}" <<< "${ERR}"; then ok "$1"
+    else bad "$1" "no recorder call, and: ${GATE_NOTE}" \
+        "$(grep -c '^ARGS:' "${STATE}/recorder.log" 2>/dev/null || echo 0) call(s); stderr: ${ERR//$'\n'/ | }"; fi
+}
+run_case gate-stopped 0 "${FIX}/stopped-after-3.out"
+not_recorded "exit 0, but the output file ends before the solver's time -> not recorded"
+run_case gate-no-value 0 "${WORK}/no-value.out"
+not_recorded "exit 0, a CFD Solver wall clock seconds line without a number -> not recorded"
+run_case gate-overflow 0 "${WORK}/overflow.out"
+not_recorded "exit 0, asterisks instead of the solver's time -> not recorded"
+run_case gate-no-output 0 ""
+not_recorded "exit 0, no output file -> not recorded"
+run_case gate-newest-ends-early 0 "${FIX}/steady-10-iterations.out" "${FIX}/stopped-after-3.out"
+not_recorded "the newest output file (_002) has no solver time -> not recorded"
+run_case gate-newest-complete 0 "${FIX}/stopped-after-3.out" "${FIX}/steady-10-iterations.out"
+recorded "the newest output file (_002) has the solver's time -> recorded"
+run_case gate-transient 0 "${FIX}/transient.out"
+recorded "a transient run with the solver's time -> recorded"
+run_case gate-crlf 0 "${WORK}/crlf.out"
+recorded "the solver's time in a file with CRLF line ends -> recorded"
+if [ -n "${comma_locale}" ]; then
+    EXTRA_ENV="LC_ALL=${comma_locale} POSIXLY_CORRECT=1" run_case gate-locale 0 "${FIX}/steady-10-iterations.out"
+    recorded "the solver's time under a comma-decimal locale -> recorded"
+else
+    skipt "the solver's time under a comma-decimal locale -> recorded" "no such locale installed"
+fi
+run_case gate-exit-1 1 "${FIX}/steady-10-iterations.out"
+if [ ! -e "${STATE}/recorder.log" ] && grep -qxF "NOTE: solver exited 1; skipping benchmark recording." <<< "${ERR}" \
+        && ! grep -qF -- "${GATE_NOTE}" <<< "${ERR}"; then
+    ok "exit 1 with the solver's time -> not recorded, with the existing NOTE only"
+else
+    bad "exit 1 with the solver's time -> not recorded, with the existing NOTE only" \
+        "no recorder call; NOTE: solver exited 1; skipping benchmark recording." "stderr: ${ERR//$'\n'/ | }"
 fi
 
 echo

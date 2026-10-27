@@ -62,7 +62,15 @@ or with the asterisks Fortran prints for a field too narrow for its value (N/A,
 never 0); a comma-decimal locale with `POSIXLY_CORRECT` set, under which gawk would
 read `1.2345E+02` as 1 unless the script ran awk in the C locale (skipped when no
 such locale is installed); and an output file the job cannot read (N/A, and the
-job still exits 0 and records the run; skipped as root).
+job still exits 0, but the run is not recorded; skipped as root).
+
+A run is recorded only when cfx5solve exits 0 and the newest output file holds a
+`CFD Solver wall clock seconds` value. The last cases check that a run that exits
+0 without one is not recorded, and says so in a NOTE: an output file that ends
+before the solver's time, the line without a number or with asterisks, no output
+file, and a newest `_002` without the value next to an `_001` with it. A transient
+run, CRLF line ends and a comma-decimal locale are recorded, and a run that exits
+1 gets the existing NOTE only.
 
 ## Adding a case
 

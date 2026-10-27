@@ -292,3 +292,5 @@ Relative performance, Intel MPI with its own libfabric = 1.00.
 ## Contribute your results
 
 The benchmark scripts in this folder call [`dynamodb/record-benchmark.sh`](dynamodb/record-benchmark.sh) after every successful run. The recorder saves the run as a small JSON record (`<record_id>.json`) and adds it to the shared AI-Powered HPC benchmark dataset when you have write access to it. That dataset trains a model that predicts HPC performance on AWS, so every result you share helps. Set `SOURCE=<YourOrg>` to tag your runs, and see [BENCHMARK-RECORDERS.md](../BENCHMARK-RECORDERS.md) for the options and how to send the record in.
+
+The sbatch example records a run only when it ended normally: cfx5solve exited 0, and the solver's output file holds the `CFD Solver wall clock seconds` value, which the solver run prints at its end. A run without that value is not recorded, and a NOTE in the job output says so.
