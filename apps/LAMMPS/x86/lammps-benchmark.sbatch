@@ -509,6 +509,19 @@ _atoms_m=""
 if [ -n "${ATOMS:-}" ] && [ "${ATOMS}" != "0" ]; then
     _atoms_m="$(awk -v x="${ATOMS}" 'BEGIN{if (x+0>0) printf "%.6g", x/1000000}' 2>/dev/null || true)"
 fi
+# The success gate: record only a run that LAMMPS ended normally (log.lammps
+# has its closing "Total wall time:" line) after the timesteps asked for (its
+# "Loop time of ..." line reports TIMESTEPS steps). mpirun exited 0 to get
+# here (set -e and pipefail). Otherwise a NOTE says why, and the job's exit
+# status and the results block above are as they were.
+_not_recorded=""
+if [ -z "${LOOP_LINE}" ]; then
+    _not_recorded="log.lammps has no 'Loop time of ...' line"
+elif [ "${LOOP_STEPS}" != "${TIMESTEPS}" ]; then
+    _not_recorded="LAMMPS ran ${LOOP_STEPS} timesteps, not the ${TIMESTEPS} requested"
+elif ! grep -qE '^Total wall time:' log.lammps; then
+    _not_recorded="log.lammps has no 'Total wall time:' line, so LAMMPS did not end normally"
+fi
 _contrib_recorder="${CONTRIB_RECORDER:-}"
 for _c in "${_contrib_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
@@ -516,7 +529,9 @@ for _c in "${_contrib_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/apps/LAMMPS/dynamodb/record-benchmark.sh"; do
     if [ -n "${_c}" ] && [ -x "${_c}" ]; then _contrib_recorder="${_c}"; break; fi
 done
-if [ -n "${_contrib_recorder}" ] && [ -x "${_contrib_recorder}" ]; then
+if [ -n "${_not_recorded}" ]; then
+    echo "NOTE: not recorded: ${_not_recorded}" >&2
+elif [ -n "${_contrib_recorder}" ] && [ -x "${_contrib_recorder}" ]; then
     LAMMPS_VERSION="${LAMMPS_TAG:-}" BENCHMARK_CASE="${MODEL}" \
     TIME_TO_SOLUTION="${_lt}" TIMESTEPS_PER_SEC="${_tps}" ATOMS_MILLION="${_atoms_m}" \
     ANALYSIS_TYPE="md" RUN_DIR="${WORKDIR}" "${_contrib_recorder}" \

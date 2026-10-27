@@ -26,6 +26,9 @@ asks for, with `${name}` taken from `-var name`, as LAMMPS does. For each script
   its run line only, and the cached deck is unchanged; the results block gives the run length, the atom count and the
   scale; the job log says how the run length is set; the recorder gets the model, its scale and the run length;
   nothing is downloaded;
+- a run whose `log.lammps` has no `Loop time` line, reports fewer timesteps than asked for, or has no closing
+  `Total wall time` line (the stub `lmp`'s `STUB_LMP_LOG`) is not recorded: the recorder is not called, and a
+  `NOTE: not recorded:` line says why, while the job still ends with exit 0 and its results block;
 - `TIMESTEPS` and `SCALE` override the defaults, alone and together (the recorder gets the `TIMESTEPS` run), and
   `MODEL=rhodo` keeps its 32,000 atoms whatever `SCALE` is (`in.rhodo` has no `replicate` command);
 - a `TIMESTEPS` that is not a whole number from 1 to 10,000,000 (`0`, `-5`, `abc`, `1e4`, `10.5`, `1 000`, `007`,

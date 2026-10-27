@@ -157,7 +157,9 @@ EOF
 cat > "${STUBS}/lmp-bin/lmp" <<'EOF'
 #!/bin/bash
 # Stub lmp: -in <deck>, -var <name> <value>. Writes log.lammps (and stdout) the
-# way LAMMPS reports a run, with synthetic times.
+# way LAMMPS reports a run, with synthetic times. STUB_LMP_LOG writes the log
+# of a run that did not end as asked: no-loop (no "Loop time" line), short
+# (half the steps asked for) or no-total (no closing "Total wall time" line).
 echo "$*" >> "${LMP_LOG}"
 deck=""; declare -A var=()
 while [ $# -gt 0 ]; do
@@ -185,9 +187,11 @@ fi
       *)        steps="${arg}";;
     esac
     echo "Setting up Verlet run ..."
-    echo "Loop time of 12.5 on ${STUB_NP:-1} procs for ${steps} steps with ${atoms} atoms"
+    [ "${STUB_LMP_LOG:-}" = short ] && steps=$(( steps / 2 ))
+    [ "${STUB_LMP_LOG:-}" = no-loop ] \
+      || echo "Loop time of 12.5 on ${STUB_NP:-1} procs for ${steps} steps with ${atoms} atoms"
   done < "${deck}"
-  echo "Total wall time: 0:00:13"
+  [ "${STUB_LMP_LOG:-}" = no-total ] || echo "Total wall time: 0:00:13"
 } | tee log.lammps
 exit "${PIPESTATUS[0]}"
 EOF
@@ -315,6 +319,30 @@ for s in "${SCRIPTS[@]}"; do
       || bad "${model}: the recorder gets the run length" "--char timesteps=${steps}" "$(tr '\n' '|' < "${RECLOG}")"
     [ -s "${CURLLOG}" ] && bad "${model}: nothing downloaded" "no download" "$(head -1 "${CURLLOG}")" \
       || ok "${model}: nothing downloaded (the cache holds the files)"
+  done
+
+  # The success gate: a run that LAMMPS did not end normally after the timesteps
+  # asked for is not recorded, and a NOTE says why; the job's exit status and its
+  # results block are as before.
+  declare -A gate_note=(
+    [no-loop]="NOTE: not recorded: log.lammps has no 'Loop time of ...' line"
+    [short]="NOTE: not recorded: LAMMPS ran 7500 timesteps, not the 15000 requested"
+    [no-total]="NOTE: not recorded: log.lammps has no 'Total wall time:' line, so LAMMPS did not end normally"
+  )
+  for mode in no-loop short no-total; do
+    run_script "${s}" lj "" STUB_LMP_LOG="${mode}"
+    if [ ! -s "${RECLOG}" ] && grep -qxF -- "${gate_note[${mode}]}" <<<"${OUT}"; then
+      ok "lmp log ${mode}: not recorded, and a NOTE says why"
+    else
+      bad "lmp log ${mode}: not recorded, and a NOTE says why" "no recorder call; '${gate_note[${mode}]}'" \
+          "recorder calls $(grep -c '^ARGS' "${RECLOG}"); $(grep -E '^NOTE' <<<"${OUT}" | head -1)"
+    fi
+    if [ "${RC}" -eq 0 ] && grep -q 'LAMMPS benchmark results' <<<"${OUT}"; then
+      ok "lmp log ${mode}: the job still ends with exit 0 and its results block"
+    else
+      bad "lmp log ${mode}: the job still ends with exit 0 and its results block" "exit 0 and the results block" \
+          "exit ${RC}; $(tail -2 <<<"${OUT}" | tr '\n' '|')"
+    fi
   done
 
   # Explicit overrides
