@@ -90,6 +90,13 @@ the derived per-iteration time, and tags the row with `benchmark_method` and
 [../BENCHMARK-RECORDERS.md](../BENCHMARK-RECORDERS.md) for the full contribution
 workflow.
 
+The CPU script records a run only when the harness's transcript of the case
+and core count, `working/<tag>/transcript/<case>-<cores>.trn`, gives the
+case's rating: a positive number on its
+`Million Cell Iteration Per Wall Second =` line, which the recorder then gets
+as MIUPS. Otherwise the job output has a NOTE that names that transcript, and
+nothing is recorded.
+
 ## Classic method (pre-2026 R1)
 
 The classic `fluentbench.pl` harness (reported *Solver rating* / *Solver wall

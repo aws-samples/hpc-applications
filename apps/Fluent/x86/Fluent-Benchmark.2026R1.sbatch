@@ -124,16 +124,26 @@ echo "Run: ${FLUENT_PYTHON_PATH} ${APP_BIN_PATH} ${harness_args[*]}"
 "${FLUENT_PYTHON_PATH}" "${APP_BIN_PATH}" "${harness_args[@]}" | tee output.$SLURM_JOBID.out
 
 # --- Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal) ---
-# The recorder self-collects host info from the environment and parses the
-# Fluent benchmark transcript (<case>-<cores>.trn -> MIUPS) in this run dir, so
-# it needs no arguments and NEVER fails the job (the `|| echo` keeps it
-# non-fatal). We only record a SUCCESSFUL benchmark, detected by the presence
-# of a MIUPS result in a transcript, so failed solves don't pollute the data.
+# The recorder self-collects host info from the environment, reads the case
+# and data read times from the Fluent benchmark transcript in this run dir, and
+# NEVER fails the job (the `|| echo` keeps it non-fatal). We only record a
+# SUCCESSFUL benchmark: the harness's transcript of this case and core count,
+# working/<tag>/transcript/<case>-<cores>.trn, must give the case's rating, a
+# positive number on its "Million Cell Iteration Per Wall Second =" line, which
+# the recorder gets as MIUPS. A transcript with only the journal's command for
+# that line, or a rating in another case's or core count's transcript, in
+# Fluent's own transcript or in a .trn shipped with the dataset, does not
+# count, so failed solves don't pollute the data.
 # Override the recorder path with DYNAMODB_RECORDER; set SOURCE=<YourOrg> to tag
 # your contributions. See apps/Fluent/dynamodb/README.md and
 # apps/BENCHMARK-RECORDERS.md.
-_miups_hit="$(find "${workdir}" -name '*.trn' -exec grep -l 'Million Cell Iteration Per Wall Second' {} + 2>/dev/null)"
-if [ -n "${_miups_hit}" ]; then
+_case_trn="working/*/transcript/${benchmark_name}-${SLURM_NPROCS}.trn"
+_miups="$(cat "${workdir}"/working/*/transcript/"${benchmark_name}-${SLURM_NPROCS}.trn" 2>/dev/null \
+    | awk '/^Million Cell Iteration Per Wall Second[[:space:]]*=/ {
+               v = $0; sub(/^[^=]*=[[:space:]]*/, "", v); split(v, f, /[[:space:]]+/); m = f[1] }
+           END { print m }')"
+[[ "${_miups}" =~ ^[0-9]+([.][0-9]+)?$ && "${_miups}" =~ [1-9] ]] || _miups=""
+if [ -n "${_miups}" ]; then
     _recorder="${DYNAMODB_RECORDER:-}"
     for _c in "${_recorder}" \
               "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
@@ -142,7 +152,7 @@ if [ -n "${_miups_hit}" ]; then
         if [ -n "${_c}" ] && [ -x "${_c}" ]; then _recorder="${_c}"; break; fi
     done
     if [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
-        FLUENT_VERSION="${fluentversion}" RUN_DIR="${workdir}" \
+        FLUENT_VERSION="${fluentversion}" RUN_DIR="${workdir}" MIUPS="${_miups}" \
         BENCHMARK_CASE="${benchmark_name}" BENCHMARK_METHOD="fluent_benchmark_harness" \
         SOLVER_MODE="cpu" NUM_ITERATIONS="${iterations:-200}" "${_recorder}" \
             || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
@@ -150,5 +160,7 @@ if [ -n "${_miups_hit}" ]; then
         echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2
     fi
 else
+    echo "NOTE: ${_case_trn}, the harness's transcript of this case and core count, gives no positive" \
+         "MIUPS on a \"Million Cell Iteration Per Wall Second =\" line." >&2
     echo "NOTE: no MIUPS result found in transcripts; skipping benchmark recording." >&2
 fi
