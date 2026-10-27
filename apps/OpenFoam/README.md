@@ -146,6 +146,7 @@ All benchmark scripts:
 - Use EFA for inter-node communication (plus MULTIRAIL for Intel MPI)
 - Run `decomposePar` in the job, or copy a decomposition an earlier run saved (`DECOMP_CACHE`, see [Reusing a decomposition](#reusing-a-decomposition))
 - Report timings for `decomposePar`, `renumberMesh`, `potentialFoam`, and `simpleFoam` separately
+- Record the run (see [Contribute your results](#contribute-your-results)) only when `simpleFoam` completed every iteration on every rank: `log.solver` ends with `End` after its last iteration, which is `endTime`, its `nProcs` is the number of ranks of the job, and no log reports a `FOAM FATAL` error or a rank that ended on a signal. Otherwise they print a NOTE that says why, and the job's exit status and report are unchanged
 
 ### Overrides
 
@@ -301,4 +302,4 @@ The October runs under [Performance](#performance) were made that way: each layo
 
 ## Contribute your results
 
-The benchmark scripts in this folder call [`dynamodb/record-benchmark.sh`](dynamodb/record-benchmark.sh) after every successful run. The recorder saves the run as a small JSON record (`<record_id>.json`) and adds it to the shared AI-Powered HPC benchmark dataset when you have write access to it. That dataset trains a model that predicts HPC performance on AWS, so every result you share helps. Set `SOURCE=<YourOrg>` to tag your runs, and see [BENCHMARK-RECORDERS.md](../BENCHMARK-RECORDERS.md) for the options and how to send the record in.
+The benchmark scripts in this folder call [`dynamodb/record-benchmark.sh`](dynamodb/record-benchmark.sh) only after a run in which `simpleFoam` completed every iteration on every rank (see [Benchmark](#benchmark)). The recorder saves the run as a small JSON record (`<record_id>.json`) and adds it to the shared AI-Powered HPC benchmark dataset when you have write access to it. That dataset trains a model that predicts HPC performance on AWS, so every result you share helps. Set `SOURCE=<YourOrg>` to tag your runs, and see [BENCHMARK-RECORDERS.md](../BENCHMARK-RECORDERS.md) for the options and how to send the record in.

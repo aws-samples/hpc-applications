@@ -238,6 +238,41 @@ Total:            ${TOTAL_TIME}s
 REPORT
 
 # ---------------------------------------------------------------------------
+# Check before recording: the run is recorded only if simpleFoam completed
+# every iteration on every rank. log.solver must have an "End" line after its
+# last "Time =" line, that last time must be endTime in system/controlDict,
+# its nProcs must be the ranks of this job, and no log may report a FOAM FATAL
+# error or a rank that ended on a signal. A run that does not pass is not
+# recorded, and a NOTE says why; the job's exit status and the report above
+# are unchanged.
+# ---------------------------------------------------------------------------
+NOT_RECORDED=""
+_end_time="$(awk '/^[[:space:]]*endTime[[:space:]]/ {gsub(";", "", $2); print $2; exit}' system/controlDict 2>/dev/null || true)"
+_last_time="$(awk '/^Time = / {t = $3} END {print t}' log.solver 2>/dev/null || true)"
+_nprocs="$(awk '/^nProcs[[:space:]]*:/ {print $3; exit}' log.solver 2>/dev/null || true)"
+_end_after="$(awk '/^Time = / {e = 0} /^End[[:space:]]*$/ {e = 1} END {print e + 0}' log.solver 2>/dev/null || true)"
+if [ "${_end_after}" != 1 ]; then
+    NOT_RECORDED="${NOT_RECORDED}; log.solver has no End after its last Time ="
+fi
+if [ -z "${_last_time}" ] || [ -z "${_end_time}" ] \
+        || ! awk -v a="${_last_time}" -v b="${_end_time}" 'BEGIN {exit !(a + 0 == b + 0)}'; then
+    NOT_RECORDED="${NOT_RECORDED}; its last Time = is ${_last_time:-missing}, not endTime ${_end_time:-(none)}"
+fi
+if [ "${_nprocs}" != "${TOTAL_CORES}" ]; then
+    NOT_RECORDED="${NOT_RECORDED}; its nProcs is ${_nprocs:-missing}, not the ${TOTAL_CORES} ranks of this job"
+fi
+if grep -qs 'FOAM FATAL' log.*; then
+    NOT_RECORDED="${NOT_RECORDED}; a log reports a FOAM FATAL error"
+fi
+if grep -qszE 'exited on[[:space:]]+signal|KILLED BY SIGNAL' log.*; then
+    NOT_RECORDED="${NOT_RECORDED}; a log reports a rank that ended on a signal"
+fi
+if [ -n "${NOT_RECORDED}" ]; then
+    echo "NOTE: the run is not recorded: ${NOT_RECORDED#; }." >&2
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal).
 # The recorder self-collects host details from the environment and can also
 # parse the OpenFOAM solver log (log.solver) in this run dir, so no arguments
