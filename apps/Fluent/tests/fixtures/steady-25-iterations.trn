@@ -1,0 +1,41 @@
+Transcript Start Time:  12:00:00, 26 Oct 2026
+-------------------------------------------------------------------------------
+ID         Hostname  Core     O.S.      PID          CPU Model Name
+-------------------------------------------------------------------------------
+n192-383   node2     192/192  Linux-64  2000-2191    synthetic
+n0-191     node1     192/192  Linux-64  1000-1191    synthetic
+host       node1              Linux-64  999          synthetic
+MPI Option Selected: intel
+Selected system interconnect: AWS EFA
+-------------------------------------------------------------------------------
+  Average wall-clock time per case input:       1.234 sec
+Cell count = 4000000
+  Average wall-clock time per data input:       0.567 sec
+> ;; warm up
+ (if (rp-unsteady?)
+ (benchmark '(ti-menu-load-string (string-append "sol dti "  (getenv "FLUENT_BENCH_ITERATIONS_WARMUP") " ,")))
+(benchmark '(ti-menu-load-string (string-append "it " (getenv "FLUENT_BENCH_ITERATIONS_WARMUP"))))
+)
+it 10
+> /para time reset
+> (set! solve-time/n-iter (%iterate 0))
+solve-time/n-iter
+> ;; benchmark
+ (if (rp-unsteady?)
+ (benchmark '(ti-menu-load-string (string-append "sol dti "  (getenv "FLUENT_BENCH_ITERATIONS") " ,")))
+(benchmark '(ti-menu-load-string (string-append "it " (getenv "FLUENT_BENCH_ITERATIONS"))))
+)
+it 25
+> (format #t "~%~%Solve Times")
+Solve Times
+> 	  (format #t   "~%Number of Iterations                  = ~8d iter"
+		  solve-time/n-iter)
+Number of Iterations                  =       25 iter
+>       (format #t   "~%Million Cell Iteration Per CPU Second  = ~8.2f MIUPS"
+		  (* (/ number-of-cells 1000000.0) (/ solve-time/n-iter (/ solve-time/cpu (compute-node-count)))))
+Million Cell Iteration Per CPU Second  =    12.30 MIUPS
+>       (format #t   "~%Million Cell Iteration Per Wall Second = ~8.2f MIUPS"
+		  (* (/ number-of-cells 1000000.0) (/ solve-time/n-iter solve-time/wall )))
+Million Cell Iteration Per Wall Second =    12.34 MIUPS
+> exit yes
+Transcript Stop Time:  12:01:00, 26 Oct 2026
