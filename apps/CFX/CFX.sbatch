@@ -22,7 +22,7 @@ basedir=${basedir:-"/fsx"}
 
 CFX_DIR="/fsx/ansys_inc/${cfxversion}/CFX/bin"
 
-export ANSYSLMD_LICENSE_FILE=${ANSYSLMD_LICENSE_FILE:-"1055@172.31.89.151"}
+export ANSYSLMD_LICENSE_FILE=${ANSYSLMD_LICENSE_FILE:-"1055@<license-server>"}
 
 # ---------------------------------------------------------------------------
 # Cores per node on hpc8a.96xlarge and hpc7a.96xlarge: only the counts that

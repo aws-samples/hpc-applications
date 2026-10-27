@@ -29,6 +29,8 @@ CFX installation is relatively easy as it is part of the ANSYS `FLUIDSTRUCTURES`
 For running CFX on multiple nodes, it is required to install it in a shared directory, possibly a parallel file system.<br>
 We would strongly recommend to use [Amazon FSx for Lustre](https://aws.amazon.com/fsx/lustre/), more info in the official [documentation](https://docs.aws.amazon.com/fsx/latest/LustreGuide/what-is.html) .
 
+CFX checks out its licence from an Ansys licence server. The sbatch example in this directory takes the server from `ANSYSLMD_LICENSE_FILE`, as `<port>@<host>`: set it in the shell you submit from, for example `export ANSYSLMD_LICENSE_FILE=1055@<license-server>`, since sbatch passes that environment to the job. The script's own default is only that placeholder ([`tests/test-licence-default.sh`](tests/test-licence-default.sh) checks it).
+
 # Key settings & tips (performance related ones) :
 
   * CFX is a compute and memory bandwidth bound code. 
