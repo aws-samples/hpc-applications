@@ -172,8 +172,18 @@ On a cluster these are auto-detected. Off-cluster, pass `--instance-type`,
    - **You have write access** (or pass `--put` with valid credentials): the row
      is written straight to DynamoDB.
    - **You don't** (the usual case for external contributors): the write is
-     skipped gracefully — send the saved JSON to the dataset owner, or upload it
-     to their contribution inbox, and they load it for you.
+     skipped gracefully. Open a
+     [Benchmark results issue](https://github.com/aws-samples/hpc-applications/issues/new?template=benchmark-results.yml)
+     for each run, and attach the saved JSON or paste it into the form; the
+     dataset owner loads it for you. The issue is public, and so are the JSON
+     and its file's name: share only public benchmark cases (or rename a
+     confidential one first, in `benchmark_case`, in `record_id`, in any other
+     field that names it, such as ANSYS Mechanical's `model_name`, in the file's
+     name and in the issue's title), and no licence server, licence key or
+     customer name. If you attach or paste something you should not have,
+     editing the issue does not remove it: GitHub keeps the earlier text in the
+     issue's edit history, which anyone can open. Ask the maintainers in a
+     comment to remove it, without repeating what it was.
 
 Either way nothing fails and you keep the JSON.
 
