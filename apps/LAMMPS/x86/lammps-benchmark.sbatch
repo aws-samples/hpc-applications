@@ -15,22 +15,32 @@
 #   - lj    : 32k Lennard-Jones particles, pair potential only
 #   - rhodo : 32k atom rhodopsin protein in water (PPPM long-range, SHAKE)
 #   - eam   : 32k Cu atoms with EAM many-body potential
-# All three accept lattice replication via -var x N -var y N -var z N,
-# which scales the atom count by N^3 — useful for weak scaling.
+# in.lj and in.eam accept lattice replication via -var x N -var y N -var z N,
+# which scales the atom count by N^3 — useful for weak scaling. in.rhodo
+# has no replicate command; MODEL=rhodo_scaled (in.rhodo.scaled) is the
+# same model, replicated the same way.
+#
+# Every deck ends with "run 100". The run directory gets a copy of the deck
+# with that line made "run ${nsteps}", and LAMMPS gets -var nsteps, so the
+# run length is TIMESTEPS (the cached deck is never edited).
 #
 # Override via --export=ALL,...:
 #   LAMMPS_ENV         path to env script (default: latest x86_64 build)
-#   MODEL              lj (default) | rhodo | eam
-#   SCALE              lattice replication factor (default: 1)
+#   MODEL              lj (default) | rhodo | rhodo_scaled | eam
+#   SCALE              lattice replication factor (default per model:
+#                      lj 8, rhodo_scaled 4, eam 4; rhodo ignores it)
 #                      atom count scales as SCALE^3
-#   TIMESTEPS          override the deck's default number of timesteps
+#   TIMESTEPS          timesteps to run, 1 to 10000000 (default per model:
+#                      lj 15000, rhodo and rhodo_scaled 6000, eam 30000)
 #   THREADS_PER_RANK   OpenMP threads per MPI rank (default: 1 = pure MPI)
 #   BASE_DIR           run output root (default: /fsx/lammps)
 #
 # Usage:
 #   sbatch --nodes=1 lammps-benchmark.sbatch                    # LJ, 1N
-#   sbatch --nodes=4 --export=ALL,MODEL=rhodo lammps-benchmark.sbatch
-#   sbatch --nodes=8 --export=ALL,MODEL=eam,SCALE=2 lammps-benchmark.sbatch
+#   sbatch --nodes=4 --export=ALL,MODEL=rhodo_scaled lammps-benchmark.sbatch
+#   # EAM on 4 hpc7a nodes, 8x the default atoms and 1/8 of its timesteps:
+#   sbatch -p hpc7a --nodes=4 \
+#     --export=ALL,MODEL=eam,SCALE=8,TIMESTEPS=3750 lammps-benchmark.sbatch
 
 #SBATCH --job-name=lammps
 #SBATCH -p hpc8a
@@ -44,40 +54,48 @@ set -euo pipefail
 
 LAMMPS_ENV="${LAMMPS_ENV:-/fsx/lammps/x86_64/lammps-stable_2Aug2023_update3-env.sh}"
 MODEL="${MODEL:-lj}"
-SCALE="${SCALE:-1}"
 THREADS_PER_RANK="${THREADS_PER_RANK:-1}"
 BASE_DIR="${BASE_DIR:-/fsx/lammps}"
 
 # ---------------------------------------------------------------------------
-# Per-model config: input file, default timesteps, extra files needed.
-# All three input scripts come from the LAMMPS bench/ directory and are
+# Per-model config: input file, default scale and run length, extra files
+# needed. All input scripts come from the LAMMPS bench/ directory and are
 # tiny (~1 KB) — we cache them on FSx so a single download covers every
 # job submitted on either cluster.
+#
+# The defaults run long enough for the timestep loop to dominate LAMMPS's
+# own "Total wall time": on 1 to 8 full nodes of hpc8a.96xlarge and
+# hpc7a.96xlarge the loop was 97-100% of it for lj, rhodo_scaled and eam.
 # ---------------------------------------------------------------------------
 case "${MODEL}" in
     lj)
         DECK_FILE="in.lj"
-        DEFAULT_TIMESTEPS=100
+        DEFAULT_SCALE=8
+        DEFAULT_TIMESTEPS=15000
         EXTRA_FILES=()
         ;;
     rhodo)
+        # in.rhodo has no replicate command: 32,000 atoms whatever SCALE is.
         DECK_FILE="in.rhodo"
-        DEFAULT_TIMESTEPS=100
+        DEFAULT_SCALE=1
+        DEFAULT_TIMESTEPS=6000
         EXTRA_FILES=("data.rhodo")
         ;;
     rhodo_scaled)
         # in.rhodo.scaled is the same Rhodopsin protein in water as
         # in.rhodo, but the input deck replicates the box via -var x/y/z
         # so the atom count grows as 32000 * x*y*z instead of 32000 * x^3
-        # (LJ-style). Used by Murata-Manufacturing's published
-        # benchmark with -var x 16 -var y 16 -var z 16 -> ~131M atoms.
+        # (LJ-style). A published configuration ran it with
+        # -var x 16 -var y 16 -var z 16 -> ~131M atoms.
         DECK_FILE="in.rhodo.scaled"
-        DEFAULT_TIMESTEPS=100
+        DEFAULT_SCALE=4
+        DEFAULT_TIMESTEPS=6000
         EXTRA_FILES=("data.rhodo")
         ;;
     eam)
         DECK_FILE="in.eam"
-        DEFAULT_TIMESTEPS=100
+        DEFAULT_SCALE=4
+        DEFAULT_TIMESTEPS=30000
         EXTRA_FILES=("Cu_u3.eam")
         ;;
     *)
@@ -86,7 +104,13 @@ case "${MODEL}" in
         ;;
 esac
 
+SCALE="${SCALE:-${DEFAULT_SCALE}}"
 TIMESTEPS="${TIMESTEPS:-${DEFAULT_TIMESTEPS}}"
+# At most 8 digits before the arithmetic test, so a long value cannot overflow it.
+if ! [[ "${TIMESTEPS}" =~ ^[1-9][0-9]{0,7}$ ]] || (( TIMESTEPS > 10000000 )); then
+    echo "ERROR: TIMESTEPS must be a whole number from 1 to 10000000, such as 15000 (got '${TIMESTEPS}')" >&2
+    exit 1
+fi
 
 NPROC_TOTAL=$(( SLURM_JOB_NUM_NODES * SLURM_NTASKS_PER_NODE ))
 if (( THREADS_PER_RANK > 1 )); then
@@ -97,14 +121,79 @@ fi
 NRANK_PER_NODE=$(( SLURM_NTASKS_PER_NODE / THREADS_PER_RANK ))
 
 # ---------------------------------------------------------------------------
-# Workdir under BASE_DIR/Run/...
+# Instance metadata (IMDSv2), for the run directory's name and the
+# cores-per-node check below. Each call gives up after a few seconds, and an
+# answer that is not an instance type name (an error page, for example; the
+# name is tested in the C locale) counts as none: INSTANCE_TYPE is then empty,
+# and the job goes on.
 # ---------------------------------------------------------------------------
-TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-INSTANCE_TYPE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
+IMDS_CURL=(curl -fs --connect-timeout 2 --max-time 5)
+TOKEN=$("${IMDS_CURL[@]}" -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") || TOKEN=""
+INSTANCE_TYPE=$("${IMDS_CURL[@]}" -H "X-aws-ec2-metadata-token: ${TOKEN}" http://169.254.169.254/latest/meta-data/instance-type) || INSTANCE_TYPE=""
+( LC_ALL=C; [[ "${INSTANCE_TYPE}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || INSTANCE_TYPE=""
 # REGION is referenced by the optional DynamoDB recorder block at the
 # bottom of this file (commented out by default).
 # shellcheck disable=SC2034
-REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+REGION=$("${IMDS_CURL[@]}" -H "X-aws-ec2-metadata-token: ${TOKEN}" http://169.254.169.254/latest/meta-data/placement/region) || REGION=""
+
+# ---------------------------------------------------------------------------
+# Cores per node on hpc8a.96xlarge and hpc7a.96xlarge: 192 cores in 24 CCDs
+# of 8, one L3 per CCD. Only 24, 48, 72, 96, 120, 144, 168 or 192 cores per
+# node give every CCD the same number of cores (Utils/flexible-cores/), so
+# any other count stops the job here, before the run directory is made.
+# Other instance types and sizes get no flexible-cores list and no check.
+# When the instance type could not be read, a node whose CPU lscpu shows as
+# AMD with 192 cores (sockets x cores per socket) could be one of those two
+# types, so it gets their check and lists; any other node runs without
+# them, with a NOTE. lscpu is asked, and a NOTE printed, only where the type
+# would change what the job does: a count outside the list, or a pure-MPI
+# count below 192, which the lists pin. No run is refused only because IMDS
+# did not answer.
+# ---------------------------------------------------------------------------
+amd_192_cores() {
+    local info vendor sockets per_socket
+    info="$(LC_ALL=C lscpu 2>/dev/null)" || return 1
+    vendor="$(awk -F: '/^[[:space:]]*Vendor ID:/ { gsub(/[[:space:]]/, "", $2); print $2; exit }' <<< "${info}")"
+    sockets="$(awk -F: '/^[[:space:]]*Socket\(s\):/ { gsub(/[[:space:]]/, "", $2); print $2; exit }' <<< "${info}")"
+    per_socket="$(awk -F: '/^[[:space:]]*Core\(s\) per socket:/ { gsub(/[[:space:]]/, "", $2); print $2; exit }' <<< "${info}")"
+    [ "${vendor}" = AuthenticAMD ] && [[ "${sockets}" =~ ^[1-9][0-9]{0,2}$ ]] \
+        && [[ "${per_socket}" =~ ^[1-9][0-9]{0,3}$ ]] && (( sockets * per_socket == 192 ))
+}
+FLEX_CORES_TYPE=0
+FLEX_NODE="${INSTANCE_TYPE}"
+FLEX_ON="this type"
+case "${SLURM_NTASKS_PER_NODE}" in
+    192) TYPE_MATTERS=0 ;;   # a full node: no list on any type
+    24|48|72|96|120|144|168) TYPE_MATTERS=$(( THREADS_PER_RANK == 1 ? 1 : 0 )) ;;   # pinned with a list
+    *) TYPE_MATTERS=1 ;;     # refused on those two types
+esac
+case "${INSTANCE_TYPE}" in
+    hpc8a.96xlarge|hpc7a.96xlarge)
+        FLEX_CORES_TYPE=1 ;;
+    "")
+        if (( TYPE_MATTERS == 0 )); then
+            :
+        elif amd_192_cores; then
+            FLEX_CORES_TYPE=1
+            FLEX_NODE="this 192-core AMD node"
+            FLEX_ON="this node"
+            echo "NOTE: the instance type could not be read from the instance metadata, and lscpu shows a 192-core AMD CPU, as on hpc8a.96xlarge and hpc7a.96xlarge, so their flexible-cores check and lists apply" >&2
+        else
+            echo "NOTE: the instance type could not be read from the instance metadata and lscpu shows no 192-core AMD CPU, so the flexible-cores check for hpc8a.96xlarge and hpc7a.96xlarge is skipped" >&2
+        fi ;;
+esac
+if (( FLEX_CORES_TYPE == 1 )); then
+    case "${SLURM_NTASKS_PER_NODE}" in
+        24|48|72|96|120|144|168|192) ;;
+        *)
+            echo "ERROR: ${SLURM_NTASKS_PER_NODE} cores per node would load the 24 CCDs of ${FLEX_NODE} unevenly; on ${FLEX_ON} use 24, 48, 72, 96, 120, 144, 168 or 192 (--ntasks-per-node; see Utils/flexible-cores/)" >&2
+            exit 1 ;;
+    esac
+fi
+
+# ---------------------------------------------------------------------------
+# Workdir under BASE_DIR/Run/...
+# ---------------------------------------------------------------------------
 WORKDIR="${BASE_DIR}/Run/${SLURM_JOB_NAME}/${MODEL}/${SLURM_CLUSTER_NAME:-cluster}/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${INSTANCE_TYPE}-${NRANK_TOTAL}x${THREADS_PER_RANK}-s${SCALE}-$(date '+%d-%m-%Y-%H-%M')"
 
 mkdir -p "${WORKDIR}"
@@ -186,6 +275,30 @@ for extra in "${EXTRA_FILES[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
+# Run length. Each bench deck ends with one "run 100" line and reads no
+# step-count variable, so a -var alone cannot change it. The run directory's
+# copy of the deck gets that line as "run ${nsteps}", and LAMMPS gets
+# -var nsteps TIMESTEPS (below). A deck without exactly one plain
+# "run <steps>" line stops the job here, before any rank starts.
+# ---------------------------------------------------------------------------
+set_run_length() {
+    local deck="$1" runs
+    runs="$(grep -cE '^[[:space:]]*run[[:space:]]' "${deck}" || true)"
+    if [ "${runs}" != 1 ]; then
+        echo "ERROR: ${deck} has ${runs} run lines; exactly one plain 'run <steps>' line is needed to set the run length" >&2
+        return 1
+    fi
+    if ! grep -qE '^[[:space:]]*run[[:space:]]+[0-9]+[[:space:]]*$' "${deck}"; then
+        echo "ERROR: ${deck}: its run line is '$(grep -E '^[[:space:]]*run[[:space:]]' "${deck}")'; a plain 'run <steps>' line is needed to set the run length" >&2
+        return 1
+    fi
+    # shellcheck disable=SC2016  # ${nsteps} is LAMMPS's variable, not the shell's
+    sed -i -E 's/^([[:space:]]*run[[:space:]]+)[0-9]+([[:space:]]*)$/\1${nsteps}\2/' "${deck}"
+}
+set_run_length "${DECK_FILE}" || exit 1
+echo "Run length:    ${TIMESTEPS} timesteps (${DECK_FILE} runs \${nsteps})"
+
+# ---------------------------------------------------------------------------
 # Hostfile + system tuning
 # ---------------------------------------------------------------------------
 echo "=== Building hostfile and tuning nodes ==="
@@ -218,24 +331,26 @@ fi
 #
 # Three regimes:
 #   1. Hybrid MPI + OpenMP                  -> map-by ppr:rpn:node:PE=t
-#   2. Pure MPI, fewer ranks/node than cores
-#      ("flex-cores" subset benchmarking)   -> --bind-to cpu-list:ordered
+#   2. Pure MPI on hpc8a.96xlarge or hpc7a.96xlarge (or, when the type
+#      could not be read, a 192-core AMD node: see above) with fewer
+#      than 192 ranks/node ("flex-cores" subset
+#      benchmarking)                        -> --bind-to cpu-list:ordered
 #                                              with a hand-tuned list that
 #                                              spreads ranks symmetrically
 #                                              across all 24 CCDs and both
 #                                              sockets, exposing the full L3
 #                                              cache to a smaller rank set.
 #                                              See Utils/flexible-cores/.
-#   3. Pure MPI at full density (all 192 c) -> map-by slot
+#   3. Any other pure MPI run (a full node,
+#      or another instance type)            -> map-by slot
 #
-# Supported flex-cores rank-per-node values (mirroring
+# The flex-cores rank-per-node values (mirroring
 # Utils/flexible-cores/hello-cpu.openmpi.explicit.sbatch):
 #     24, 48, 72, 96, 120, 144, 168, 192
-# Any other rank count falls back to map-by slot.
+# are the only counts these two types accept (checked above).
 # ---------------------------------------------------------------------------
-TOTAL_CORES_PER_NODE="${SLURM_CPUS_ON_NODE:-${SLURM_NTASKS_PER_NODE}}"
 FLEX_CPU_LIST=""
-if (( THREADS_PER_RANK == 1 )) && (( NRANK_PER_NODE < TOTAL_CORES_PER_NODE )); then
+if (( THREADS_PER_RANK == 1 )) && (( FLEX_CORES_TYPE == 1 )); then
     case ${NRANK_PER_NODE} in
         24)
             FLEX_CPU_LIST="0,8,16,24,32,40,48,56,64,72,80,88,96,104,112,120,128,136,144,152,160,168,176,184" ;;
@@ -252,7 +367,7 @@ if (( THREADS_PER_RANK == 1 )) && (( NRANK_PER_NODE < TOTAL_CORES_PER_NODE )); t
         168)
             FLEX_CPU_LIST="0,1,2,3,4,5,6,8,9,10,11,12,13,14,16,17,18,19,20,21,22,24,25,26,27,28,29,30,32,33,34,35,36,37,38,40,41,42,43,44,45,46,48,49,50,51,52,53,54,56,57,58,59,60,61,62,64,65,66,67,68,69,70,72,73,74,75,76,77,78,80,81,82,83,84,85,86,88,89,90,91,92,93,94,96,97,98,99,100,101,102,104,105,106,107,108,109,110,112,113,114,115,116,117,118,120,121,122,123,124,125,126,128,129,130,131,132,133,134,136,137,138,139,140,141,142,144,145,146,147,148,149,150,152,153,154,155,156,157,158,160,161,162,163,164,165,166,168,169,170,171,172,173,174,176,177,178,179,180,181,182,184,185,186,187,188,189,190" ;;
         *)
-            : ;;  # fall through to map-by slot
+            : ;;  # 192: a full node, map-by slot
     esac
 fi
 
@@ -268,19 +383,12 @@ echo "BIND_FLAGS:    ${BIND_FLAGS}"
 X_ENV="-x OMP_NUM_THREADS -x OMP_PLACES -x OMP_PROC_BIND -x FI_PROVIDER -x FI_EFA_USE_DEVICE_RDMA -x RDMAV_FORK_SAFE -x PATH -x LD_LIBRARY_PATH"
 
 # ---------------------------------------------------------------------------
-# Build LAMMPS command line. The bench/ scripts use -var x/y/z to control
-# lattice replication, and the LJ deck supports -var t for an alternative
-# timestep override; here we set the run length via the universal
-# `-var t N` followed by `run $t`. Since not all decks have that pattern,
-# we use the safer LAMMPS `-var` and rely on the deck's existing $x/$y/$z
-# variables (defined in all three bench scripts).
+# Build LAMMPS command line. The bench/ decks read -var x/y/z for lattice
+# replication (in.rhodo reads none of them), and the run directory's copy of
+# the deck reads -var nsteps for its run length (set_run_length above).
 # ---------------------------------------------------------------------------
-LMP_ARGS=(-in "${DECK_FILE}" -var x "${SCALE}" -var y "${SCALE}" -var z "${SCALE}")
-
-# Some decks (in.rhodo) use -var t for timesteps; others (in.lj, in.eam)
-# don't. Pass it anyway — LAMMPS silently ignores unknown -var values
-# unless they're referenced.
-LMP_ARGS+=(-var t "${TIMESTEPS}")
+LMP_ARGS=(-in "${DECK_FILE}" -var x "${SCALE}" -var y "${SCALE}" -var z "${SCALE}"
+          -var nsteps "${TIMESTEPS}")
 
 # ---------------------------------------------------------------------------
 # Run
@@ -395,9 +503,24 @@ REPORT
 _lt="${LOOP_TIME:-}";           [ "${_lt}" != "0" ]  || _lt=""
 _tps="${TIMESTEPS_PER_SEC:-}";  [ "${_tps}" != "0" ] || _tps=""
 _asp="${ATOM_STEPS_PER_SEC:-}"; [ "${_asp}" != "0" ] || _asp=""
+# The run length, so that records of runs of different lengths stay apart.
+_steps="${LOOP_STEPS:-}";       [ "${_steps}" != "0" ] || _steps=""
 _atoms_m=""
 if [ -n "${ATOMS:-}" ] && [ "${ATOMS}" != "0" ]; then
     _atoms_m="$(awk -v x="${ATOMS}" 'BEGIN{if (x+0>0) printf "%.6g", x/1000000}' 2>/dev/null || true)"
+fi
+# The success gate: record only a run that LAMMPS ended normally (log.lammps
+# has its closing "Total wall time:" line) after the timesteps asked for (its
+# "Loop time of ..." line reports TIMESTEPS steps). mpirun exited 0 to get
+# here (set -e and pipefail). Otherwise a NOTE says why, and the job's exit
+# status and the results block above are as they were.
+_not_recorded=""
+if [ -z "${LOOP_LINE}" ]; then
+    _not_recorded="log.lammps has no 'Loop time of ...' line"
+elif [ "${LOOP_STEPS}" != "${TIMESTEPS}" ]; then
+    _not_recorded="LAMMPS ran ${LOOP_STEPS} timesteps, not the ${TIMESTEPS} requested"
+elif ! grep -qE '^Total wall time:' log.lammps; then
+    _not_recorded="log.lammps has no 'Total wall time:' line, so LAMMPS did not end normally"
 fi
 _contrib_recorder="${CONTRIB_RECORDER:-}"
 for _c in "${_contrib_recorder}" \
@@ -406,11 +529,13 @@ for _c in "${_contrib_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/apps/LAMMPS/dynamodb/record-benchmark.sh"; do
     if [ -n "${_c}" ] && [ -x "${_c}" ]; then _contrib_recorder="${_c}"; break; fi
 done
-if [ -n "${_contrib_recorder}" ] && [ -x "${_contrib_recorder}" ]; then
+if [ -n "${_not_recorded}" ]; then
+    echo "NOTE: not recorded: ${_not_recorded}" >&2
+elif [ -n "${_contrib_recorder}" ] && [ -x "${_contrib_recorder}" ]; then
     LAMMPS_VERSION="${LAMMPS_TAG:-}" BENCHMARK_CASE="${MODEL}" \
     TIME_TO_SOLUTION="${_lt}" TIMESTEPS_PER_SEC="${_tps}" ATOMS_MILLION="${_atoms_m}" \
     ANALYSIS_TYPE="md" RUN_DIR="${WORKDIR}" "${_contrib_recorder}" \
-        --char "scale=${SCALE}" --metric "atom_steps_per_sec=${_asp}" \
+        --char "scale=${SCALE}" --char "timesteps=${_steps}" --metric "atom_steps_per_sec=${_asp}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 else
     echo "NOTE: contribution recorder not found; set CONTRIB_RECORDER=/path/to/record-benchmark.sh to record." >&2

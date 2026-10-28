@@ -12,14 +12,25 @@
 # Graviton4 (m8g.48xlarge / r8g.48xlarge, 192 cores). Select the right
 # build by pointing LAMMPS_ENV at the appropriate env script.
 #
+# Every deck ends with "run 100". The run directory gets a copy of the deck
+# with that line made "run ${nsteps}", and LAMMPS gets -var nsteps, so the
+# run length is TIMESTEPS (the cached deck is never edited).
+#
 # Override via --export=ALL,...:
 #   LAMMPS_ENV         path to env script (choose Graviton3 / 4 build)
-#   MODEL              lj (default) | rhodo | eam
-#   SCALE              lattice replication factor (default: 1)
+#   MODEL              lj (default) | rhodo | rhodo_scaled | eam
+#   SCALE              lattice replication factor (default per model:
+#                      lj 8, rhodo_scaled 4, eam 4; rhodo ignores it)
 #                      atom count scales as SCALE^3
-#   TIMESTEPS          override the deck's default number of timesteps
+#   TIMESTEPS          timesteps to run, 1 to 10000000 (default per model:
+#                      lj 15000, rhodo and rhodo_scaled 6000, eam 30000)
 #   THREADS_PER_RANK   OpenMP threads per MPI rank (default: 1 = pure MPI)
 #   BASE_DIR           run output root (default: /fsx/lammps)
+#
+# The defaults were sized on 192-core x86 nodes (hpc8a.96xlarge and
+# hpc7a.96xlarge) and not measured on Graviton. A run's time grows with
+# TIMESTEPS: for a quick check, on the 64-core hpc7g for example, set a
+# smaller one.
 #
 # Usage:
 #   # Graviton3E (hpc7g)
@@ -44,34 +55,41 @@ set -euo pipefail
 
 LAMMPS_ENV="${LAMMPS_ENV:-/fsx/lammps/aarch64-graviton3/lammps-stable_2Aug2023_update3-env.sh}"
 MODEL="${MODEL:-lj}"
-SCALE="${SCALE:-1}"
 THREADS_PER_RANK="${THREADS_PER_RANK:-1}"
 BASE_DIR="${BASE_DIR:-/fsx/lammps}"
 
+# Per model: input file, default scale and run length, extra files. The
+# defaults are the x86 launcher's (see x86/lammps-benchmark.sbatch and the
+# note above).
 case "${MODEL}" in
     lj)
         DECK_FILE="in.lj"
-        DEFAULT_TIMESTEPS=100
+        DEFAULT_SCALE=8
+        DEFAULT_TIMESTEPS=15000
         EXTRA_FILES=()
         ;;
     rhodo)
+        # in.rhodo has no replicate command: 32,000 atoms whatever SCALE is.
         DECK_FILE="in.rhodo"
-        DEFAULT_TIMESTEPS=100
+        DEFAULT_SCALE=1
+        DEFAULT_TIMESTEPS=6000
         EXTRA_FILES=("data.rhodo")
         ;;
     rhodo_scaled)
         # in.rhodo.scaled is the same Rhodopsin protein in water as
         # in.rhodo, but the input deck replicates the box via -var x/y/z
         # so the atom count grows as 32000 * x*y*z instead of 32000 * x^3
-        # (LJ-style). Used by Murata-Manufacturing's published
-        # benchmark with -var x 16 -var y 16 -var z 16 -> ~131M atoms.
+        # (LJ-style). A published configuration ran it with
+        # -var x 16 -var y 16 -var z 16 -> ~131M atoms.
         DECK_FILE="in.rhodo.scaled"
-        DEFAULT_TIMESTEPS=100
+        DEFAULT_SCALE=4
+        DEFAULT_TIMESTEPS=6000
         EXTRA_FILES=("data.rhodo")
         ;;
     eam)
         DECK_FILE="in.eam"
-        DEFAULT_TIMESTEPS=100
+        DEFAULT_SCALE=4
+        DEFAULT_TIMESTEPS=30000
         EXTRA_FILES=("Cu_u3.eam")
         ;;
     *)
@@ -80,7 +98,13 @@ case "${MODEL}" in
         ;;
 esac
 
+SCALE="${SCALE:-${DEFAULT_SCALE}}"
 TIMESTEPS="${TIMESTEPS:-${DEFAULT_TIMESTEPS}}"
+# At most 8 digits before the arithmetic test, so a long value cannot overflow it.
+if ! [[ "${TIMESTEPS}" =~ ^[1-9][0-9]{0,7}$ ]] || (( TIMESTEPS > 10000000 )); then
+    echo "ERROR: TIMESTEPS must be a whole number from 1 to 10000000, such as 15000 (got '${TIMESTEPS}')" >&2
+    exit 1
+fi
 
 NPROC_TOTAL=$(( SLURM_JOB_NUM_NODES * SLURM_NTASKS_PER_NODE ))
 if (( THREADS_PER_RANK > 1 )); then
@@ -170,6 +194,30 @@ for extra in "${EXTRA_FILES[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
+# Run length. Each bench deck ends with one "run 100" line and reads no
+# step-count variable, so a -var alone cannot change it. The run directory's
+# copy of the deck gets that line as "run ${nsteps}", and LAMMPS gets
+# -var nsteps TIMESTEPS (below). A deck without exactly one plain
+# "run <steps>" line stops the job here, before any rank starts.
+# ---------------------------------------------------------------------------
+set_run_length() {
+    local deck="$1" runs
+    runs="$(grep -cE '^[[:space:]]*run[[:space:]]' "${deck}" || true)"
+    if [ "${runs}" != 1 ]; then
+        echo "ERROR: ${deck} has ${runs} run lines; exactly one plain 'run <steps>' line is needed to set the run length" >&2
+        return 1
+    fi
+    if ! grep -qE '^[[:space:]]*run[[:space:]]+[0-9]+[[:space:]]*$' "${deck}"; then
+        echo "ERROR: ${deck}: its run line is '$(grep -E '^[[:space:]]*run[[:space:]]' "${deck}")'; a plain 'run <steps>' line is needed to set the run length" >&2
+        return 1
+    fi
+    # shellcheck disable=SC2016  # ${nsteps} is LAMMPS's variable, not the shell's
+    sed -i -E 's/^([[:space:]]*run[[:space:]]+)[0-9]+([[:space:]]*)$/\1${nsteps}\2/' "${deck}"
+}
+set_run_length "${DECK_FILE}" || exit 1
+echo "Run length:    ${TIMESTEPS} timesteps (${DECK_FILE} runs \${nsteps})"
+
+# ---------------------------------------------------------------------------
 # Hostfile + system tuning
 # ---------------------------------------------------------------------------
 echo "=== Building hostfile and tuning nodes ==="
@@ -205,7 +253,9 @@ else
 fi
 X_ENV="-x OMP_NUM_THREADS -x OMP_PLACES -x OMP_PROC_BIND -x FI_PROVIDER -x FI_EFA_USE_DEVICE_RDMA -x RDMAV_FORK_SAFE -x PATH -x LD_LIBRARY_PATH"
 
-LMP_ARGS=(-in "${DECK_FILE}" -var x "${SCALE}" -var y "${SCALE}" -var z "${SCALE}" -var t "${TIMESTEPS}")
+# -var x/y/z: lattice replication (in.rhodo reads none of them); -var nsteps:
+# the run length of the run directory's copy of the deck (set_run_length).
+LMP_ARGS=(-in "${DECK_FILE}" -var x "${SCALE}" -var y "${SCALE}" -var z "${SCALE}" -var nsteps "${TIMESTEPS}")
 
 echo ""
 echo "=== Running LAMMPS (${NRANK_TOTAL} ranks x ${THREADS_PER_RANK} threads) ==="
@@ -308,9 +358,24 @@ REPORT
 _lt="${LOOP_TIME:-}";           [ "${_lt}" != "0" ]  || _lt=""
 _tps="${TIMESTEPS_PER_SEC:-}";  [ "${_tps}" != "0" ] || _tps=""
 _asp="${ATOM_STEPS_PER_SEC:-}"; [ "${_asp}" != "0" ] || _asp=""
+# The run length, so that records of runs of different lengths stay apart.
+_steps="${LOOP_STEPS:-}";       [ "${_steps}" != "0" ] || _steps=""
 _atoms_m=""
 if [ -n "${ATOMS:-}" ] && [ "${ATOMS}" != "0" ]; then
     _atoms_m="$(awk -v x="${ATOMS}" 'BEGIN{if (x+0>0) printf "%.6g", x/1000000}' 2>/dev/null || true)"
+fi
+# The success gate: record only a run that LAMMPS ended normally (log.lammps
+# has its closing "Total wall time:" line) after the timesteps asked for (its
+# "Loop time of ..." line reports TIMESTEPS steps). mpirun exited 0 to get
+# here (set -e and pipefail). Otherwise a NOTE says why, and the job's exit
+# status and the results block above are as they were.
+_not_recorded=""
+if [ -z "${LOOP_LINE}" ]; then
+    _not_recorded="log.lammps has no 'Loop time of ...' line"
+elif [ "${LOOP_STEPS}" != "${TIMESTEPS}" ]; then
+    _not_recorded="LAMMPS ran ${LOOP_STEPS} timesteps, not the ${TIMESTEPS} requested"
+elif ! grep -qE '^Total wall time:' log.lammps; then
+    _not_recorded="log.lammps has no 'Total wall time:' line, so LAMMPS did not end normally"
 fi
 _contrib_recorder="${CONTRIB_RECORDER:-}"
 for _c in "${_contrib_recorder}" \
@@ -319,11 +384,13 @@ for _c in "${_contrib_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/apps/LAMMPS/dynamodb/record-benchmark.sh"; do
     if [ -n "${_c}" ] && [ -x "${_c}" ]; then _contrib_recorder="${_c}"; break; fi
 done
-if [ -n "${_contrib_recorder}" ] && [ -x "${_contrib_recorder}" ]; then
+if [ -n "${_not_recorded}" ]; then
+    echo "NOTE: not recorded: ${_not_recorded}" >&2
+elif [ -n "${_contrib_recorder}" ] && [ -x "${_contrib_recorder}" ]; then
     LAMMPS_VERSION="${LAMMPS_TAG:-}" BENCHMARK_CASE="${MODEL}" \
     TIME_TO_SOLUTION="${_lt}" TIMESTEPS_PER_SEC="${_tps}" ATOMS_MILLION="${_atoms_m}" \
     ANALYSIS_TYPE="md" RUN_DIR="${WORKDIR}" "${_contrib_recorder}" \
-        --char "scale=${SCALE}" --metric "atom_steps_per_sec=${_asp}" \
+        --char "scale=${SCALE}" --char "timesteps=${_steps}" --metric "atom_steps_per_sec=${_asp}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 else
     echo "NOTE: contribution recorder not found; set CONTRIB_RECORDER=/path/to/record-benchmark.sh to record." >&2
