@@ -39,14 +39,14 @@
 #   # On a SLURM compute node, right after the solve (auto-detects most fields):
 #   ./record-benchmark.sh \
 #       --case occDrivAer-236M --solver simpleFoam \
-#       --mesh-cells-million 236 --time-to-solution 742 \
+#       --mesh-cells-million 236 --time-to-solution <seconds> \
 #       --source AcmeCorp
 #
 #   # Off-cluster / replaying a result (pass everything explicitly):
 #   ./record-benchmark.sh --case occDrivAer-65M --solver simpleFoam \
 #       --instance-type hpc7g.16xlarge --os "Amazon Linux 2" \
 #       --num-cores 256 --num-nodes 4 --mpi openmpi-5 \
-#       --mesh-cells-million 65 --time-to-solution 1180 \
+#       --mesh-cells-million 65 --time-to-solution <seconds> \
 #       --source AcmeCorp --dry-run
 #
 # Run  ./record-benchmark.sh --help  for the full option list.
