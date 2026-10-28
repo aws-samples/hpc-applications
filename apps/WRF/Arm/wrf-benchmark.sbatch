@@ -5,7 +5,7 @@
 #
 # The env script pointed to by WRF_ENV knows which OpenMPI to load — this
 # script is MPI-version agnostic. For Graviton4 use the -ompi5 env script
-# (OpenMPI 4.1.7 hits the EFA endpoint limit at 192 ranks/node).
+# (Graviton4 at 192 ranks per node needs OpenMPI 5).
 #
 # Examples:
 #   # Graviton3E, CONUS 12km (default), OpenMPI 4
@@ -80,17 +80,16 @@ export RDMAV_FORK_SAFE=1
 
 # WRF was built as dm+sm (hybrid MPI+OpenMP). We run it pure-MPI here — one
 # MPI rank per core with OMP_NUM_THREADS=1 — which is the configuration that
-# gets the best performance on Graviton and avoids an OpenMP/pinning
-# interaction that causes the first timestep to hang on hpc7g (Graviton3E).
+# gets the best performance on Graviton, and the one the README's Graviton
+# results used.
 export OMP_NUM_THREADS=1
 
-# Use SSH bootstrap for OpenMPI rather than Slurm/prterun. Slurm-integrated
-# prterun has shown intermittent init deadlocks on Graviton at multi-node
-# scale; plain ssh launching avoids that path and matches how the Fluent Arm
-# launcher works on this cluster.
-# NOTE: no `--bind-to core` — combined with pure-MPI OMP=1 on hpc7g it deadlocks
-# on the first collective. Let OpenMPI pick a default binding policy.
-#        OMPI5 also rejects duplicate --map-by flags — put --map-by only on
+# Use SSH bootstrap for OpenMPI rather than Slurm/prterun: mpirun starts the
+# ranks over ssh on the hosts of the hostfile below, as the Fluent Arm launcher
+# does.
+# NOTE: no `--bind-to core`: for hpc7g (Graviton3E), and on Graviton4 too,
+# OpenMPI's default binding policy places the ranks.
+#        OMPI5 rejects duplicate --map-by flags — put --map-by only on
 # solver mpirun calls, not on MPI_FLAGS (so ppr:1:node prep calls can override).
 MPI_FLAGS="--mca plm_rsh_agent ssh --mca pml cm --mca mtl ofi --mca btl ^tcp,openib"
 MPI_FLAGS="$MPI_FLAGS -x PATH -x LD_LIBRARY_PATH -x WRF_DIR -x OMP_NUM_THREADS"
@@ -177,11 +176,14 @@ if [ -f rsl.error.0000 ]; then
         echo "WARNING: WRF may not have completed successfully"
     fi
     grep "Timing for main" rsl.error.0000 | tail -5
-    AVG_STEP=$(grep "Timing for main" rsl.error.0000 | awk '{sum+=$9; n++} END {if(n>0) printf "%.2f", sum/n; else print "N/A"}')
+    # Each step's time is the number before "elapsed seconds", $(NF-2). It is $9
+    # only with a fixed time step: an adaptive one labels the step "main (dt= ...)".
+    AVG_STEP=$(grep "Timing for main" rsl.error.0000 | awk '{sum+=$(NF-2); n++} END {if(n>0) printf "%.2f", sum/n; else print "N/A"}')
     # WRF counts each output write and boundary read in the step that makes it,
-    # so the average includes I/O that does not get faster with more nodes. To
-    # compare node counts, use the median or the steady step instead, from
-    # lib/wrf-step-timing.sh (its header gives the rule).
+    # so the average includes I/O that does not get faster in proportion to the
+    # node count. To see how the time steps scale with the node count, use the
+    # median or the steady step instead, from lib/wrf-step-timing.sh (its header
+    # gives the rule).
     _step_lib="${WRF_STEP_TIMING_LIB:-}"
     for _c in "${_step_lib}" \
               "${SLURM_SUBMIT_DIR:-.}/../lib/wrf-step-timing.sh" \
@@ -230,7 +232,49 @@ REPORT
 # automatically, and set SOURCE=<YourOrg> to tag your contributions.
 # See apps/WRF/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
 # ---------------------------------------------------------------------------
+# Record only a run that completed and wrote its output: lib/wrf-run-check.sh
+# checks that rsl.error.0000 says SUCCESS COMPLETE WRF and that every history
+# and restart file WRF wrote is in the run directory and not empty. Point
+# WRF_RUN_CHECK_LIB at it if it isn't found automatically.
+_check_lib="${WRF_RUN_CHECK_LIB:-}"
+for _c in "${_check_lib}" \
+          "${SLURM_SUBMIT_DIR:-.}/../lib/wrf-run-check.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/lib/wrf-run-check.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/apps/WRF/lib/wrf-run-check.sh"; do
+    if [ -n "${_c}" ] && [ -r "${_c}" ]; then _check_lib="${_c}"; break; fi
+done
+_run_ok=0
+_run_problems="lib/wrf-run-check.sh not found; set WRF_RUN_CHECK_LIB=/path/to/apps/WRF/lib/wrf-run-check.sh"
+# shellcheck source=../lib/wrf-run-check.sh
+if [ -n "${_check_lib}" ] && [ -r "${_check_lib}" ] && . "${_check_lib}" \
+        && declare -F wrf_run_check > /dev/null; then
+    if _run_problems="$(wrf_run_check "${workdir}")"; then _run_ok=1; fi
+fi
 _wrf_version="$(basename "${WRF_ENV}" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
+# What makes runs comparable goes into the record too: the grid size, the
+# simulated minutes, the number of time steps and the history output's io_form,
+# which lib/wrf-run-info.sh reads from this run's namelist.input and
+# rsl.error.0000. Point WRF_RUN_INFO_LIB at it if it isn't found automatically.
+_info_lib="${WRF_RUN_INFO_LIB:-}"
+for _c in "${_info_lib}" \
+          "${SLURM_SUBMIT_DIR:-.}/../lib/wrf-run-info.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/lib/wrf-run-info.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/apps/WRF/lib/wrf-run-info.sh"; do
+    if [ -n "${_c}" ] && [ -r "${_c}" ]; then _info_lib="${_c}"; break; fi
+done
+_run_info=()
+# shellcheck source=../lib/wrf-run-info.sh
+if [ -n "${_info_lib}" ] && [ -r "${_info_lib}" ] && . "${_info_lib}" \
+        && declare -F wrf_run_info > /dev/null; then
+    while IFS='=' read -r _k _v; do
+        case "${_k}" in
+            num_cells_million) _run_info+=(--num-cells-million "${_v}") ;;
+            simulated_minutes|num_timesteps|io_form) _run_info+=(--char "${_k}=${_v}") ;;
+        esac
+    done < <(wrf_run_info "${workdir}")
+else
+    echo "NOTE: lib/wrf-run-info.sh not found, so the record has no grid size, run length or io_form; set WRF_RUN_INFO_LIB=/path/to/apps/WRF/lib/wrf-run-info.sh." >&2
+fi
 _recorder="${DYNAMODB_RECORDER:-}"
 for _c in "${_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
@@ -238,12 +282,15 @@ for _c in "${_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/apps/WRF/dynamodb/record-benchmark.sh"; do
     if [ -n "${_c}" ] && [ -x "${_c}" ]; then _recorder="${_c}"; break; fi
 done
-if [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
+if [ "${_run_ok}" -ne 1 ]; then
+    echo "NOTE: not recording this run: ${_run_problems//$'\n'/; }" >&2
+elif [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
     WRF_VERSION="${_wrf_version}" BENCHMARK_CASE="CONUS-${BENCHMARK}" ANALYSIS_TYPE="forecast" \
     TIME_TO_SOLUTION="${WRF_TIME}" RUN_DIR="${workdir}" "${_recorder}" \
         --metric "avg_timestep_seconds=${AVG_STEP}" \
         --metric "median_timestep_seconds=${MEDIAN_STEP}" \
         --metric "steady_timestep_seconds=${STEADY_STEP}" \
+        ${_run_info[@]+"${_run_info[@]}"} \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 else
     echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2

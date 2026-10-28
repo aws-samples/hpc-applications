@@ -15,14 +15,63 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 WRF_ENV="${WRF_ENV:-/fsx/wrf/wrf-4.6.1-env.sh}"
 CONUS_DIR="${CONUS_DIR:-/fsx/wrf/conus_2.5km}"
+# History and restart output: pnetcdf, the default, writes them through PnetCDF
+# (io_form 11), as the README's whole-run results did; namelist runs
+# namelist.input as CONUS_DIR has it (the case ships serial netCDF, io_form 2).
+WRF_OUTPUT_FORMAT="${WRF_OUTPUT_FORMAT:-pnetcdf}"
+case "${WRF_OUTPUT_FORMAT}" in
+    pnetcdf|namelist) ;;
+    *) echo "ERROR: WRF_OUTPUT_FORMAT must be pnetcdf or namelist (got: ${WRF_OUTPUT_FORMAT})" >&2; exit 1 ;;
+esac
 basedir="${BASE_DIR:-/fsx/wrf}"
 TOTAL_CORES=$(( SLURM_JOB_NUM_NODES * SLURM_NTASKS_PER_NODE ))
 
 # ---------------------------------------------------------------------------
 # Working directory
 # ---------------------------------------------------------------------------
-TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-instanceType=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
+# The instance type, from the instance metadata (IMDSv2). Each request gives up
+# after 5 seconds (2 to connect), and -f turns an HTTP error into no answer. An
+# answer that is not an instance type name (tested in the C locale: in some
+# locales [a-z] leaves out i) counts as none, so it never names the run directory.
+TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") || TOKEN=""
+instanceType=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type) || instanceType=""
+( LC_ALL=C; [[ "${instanceType}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || instanceType=""
+# Ranks per node on hpc8a.96xlarge and hpc7a.96xlarge: their 192 cores sit in
+# 24 CCDs of 8, one L3 cache each, and only 24, 48, 72, 96, 120, 144, 168 or
+# 192 ranks per node put the same number of ranks on every CCD
+# (Utils/flexible-cores). On those two types any other count stops the job
+# here, before the run directory and mpirun. Other instance types and sizes are
+# not checked. When the instance metadata gives no instance type (no answer in
+# time, an HTTP error, or an answer that is not an instance type name), such a
+# count stops the job on a node with 192 AMD cores (lscpu, read in the C
+# locale: sockets x cores per socket), which could be one of the two; any other
+# node runs it, with a NOTE that the check was skipped, so no run stops only
+# because the instance metadata did not answer. A supported count below 192
+# keeps the pinning below, which the README's results used on full nodes; the
+# README says how to pin it with that count's flexible-cores list instead.
+case "${SLURM_NTASKS_PER_NODE}" in
+    24|48|72|96|120|144|168|192) ;;
+    *)  _counts="run 24, 48, 72, 96, 120, 144, 168 or 192 ranks per node there (Utils/flexible-cores), and below 192 also replace this script's pinning with that count's list (README, Fewer ranks per node). Not starting WRF."
+        case "${instanceType}" in
+            hpc8a.96xlarge|hpc7a.96xlarge)
+                echo "ERROR: ${SLURM_NTASKS_PER_NODE} ranks per node load the 24 CCDs of ${instanceType} unevenly; ${_counts}" >&2
+                exit 1 ;;
+        esac
+        if [ -z "${instanceType}" ]; then
+            _amd_192="$(LC_ALL=C lscpu 2>/dev/null | LC_ALL=C awk -F: '
+                { k = $1; sub(/^[[:space:]]+/, "", k); v = $2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", v) }
+                k == "Vendor ID" { vendor = v }
+                k == "Socket(s)" { sockets = v }
+                k == "Core(s) per socket" { cores = v }
+                END { if (vendor == "AuthenticAMD" && sockets ~ /^[0-9]+$/ && cores ~ /^[0-9]+$/ &&
+                          sockets * cores == 192) print "yes" }')" || _amd_192=""
+            if [ "${_amd_192}" = yes ]; then
+                echo "ERROR: ${SLURM_NTASKS_PER_NODE} ranks per node load the 24 CCDs of hpc8a.96xlarge and hpc7a.96xlarge unevenly, and this node could be either (the instance metadata gave no instance type, and lscpu shows 192 AMD cores); ${_counts}" >&2
+                exit 1
+            fi
+            echo "NOTE: the instance metadata gave no instance type, and lscpu does not show the 192 AMD cores of hpc8a.96xlarge and hpc7a.96xlarge, so the ranks-per-node check (Utils/flexible-cores) is skipped: running ${SLURM_NTASKS_PER_NODE} ranks per node." >&2
+        fi ;;
+esac
 workdir="${basedir}/Run/${SLURM_JOB_NAME%.*}/${SLURM_CLUSTER_NAME}/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${instanceType}-${TOTAL_CORES}-$(date "+%d-%m-%Y-%H-%M")"
 
 echo "=== WRF CONUS 2.5km Benchmark (OpenMPI) ==="
@@ -57,6 +106,24 @@ fi
 ln -sf "$CONUS_DIR"/wrfinput_d01 .
 ln -sf "$CONUS_DIR"/wrfbdy_d01 .
 cp "$CONUS_DIR"/namelist.input .
+# PnetCDF output (README, Output format): io_form_history and io_form_restart
+# from 2 to 11 in this run's copy, with the README's sed. The job stops here,
+# before wrf.exe, unless that changes exactly those two lines.
+if [ "${WRF_OUTPUT_FORMAT}" = pnetcdf ]; then
+    sed -i -E 's/^([[:space:]]*io_form_(history|restart)[[:space:]]*=[[:space:]]*)2([[:space:]]*,?[[:space:]]*)$/\111\3/' namelist.input
+    _changed="$(diff "$CONUS_DIR"/namelist.input namelist.input | grep -E '^[<>]' \
+        | sed -E 's/[[:space:]]+//g; s/,$//' | LC_ALL=C sort || true)"
+    if [ "${_changed}" != "$(printf '%s\n' '<io_form_history=2' '<io_form_restart=2' '>io_form_history=11' '>io_form_restart=11')" ]; then
+        echo "ERROR: setting io_form_history and io_form_restart from 2 to 11 (PnetCDF output) did not change" >&2
+        echo "       exactly those two lines of namelist.input: ${CONUS_DIR}/namelist.input must set both" >&2
+        echo "       to 2, each on a line of its own, as the case ships it. Set WRF_OUTPUT_FORMAT=namelist" >&2
+        echo "       to run that namelist as it is. Not starting WRF." >&2
+        exit 1
+    fi
+    echo "Output: PnetCDF (io_form_history = io_form_restart = 11 in this run's namelist.input)"
+else
+    echo "Output: as ${CONUS_DIR}/namelist.input sets it (WRF_OUTPUT_FORMAT=namelist)"
+fi
 
 # Link WRF run files
 ln -sf "$WRF_DIR"/test/em_real/RRTMG_* . 2>/dev/null || true
@@ -118,12 +185,15 @@ if [ -f rsl.error.0000 ]; then
     fi
     echo "=== Timing from rsl.error.0000 ==="
     grep "Timing for main" rsl.error.0000 | tail -5
-    AVG_STEP=$(grep "Timing for main" rsl.error.0000 | awk '{sum+=$9; n++} END {if(n>0) printf "%.2f", sum/n; else print "N/A"}')
+    # Each step's time is the number before "elapsed seconds", $(NF-2). It is $9
+    # only with a fixed time step: an adaptive one labels the step "main (dt= ...)".
+    AVG_STEP=$(grep "Timing for main" rsl.error.0000 | awk '{sum+=$(NF-2); n++} END {if(n>0) printf "%.2f", sum/n; else print "N/A"}')
     echo "Average time per timestep: ${AVG_STEP}s"
     # WRF counts each output write and boundary read in the step that makes it,
-    # so the average includes I/O that does not get faster with more nodes. To
-    # compare node counts, use the median or the steady step instead, from
-    # lib/wrf-step-timing.sh (its header gives the rule).
+    # so the average includes I/O that does not get faster in proportion to the
+    # node count. To see how the time steps scale with the node count, use the
+    # median or the steady step instead, from lib/wrf-step-timing.sh (its header
+    # gives the rule).
     _step_lib="${WRF_STEP_TIMING_LIB:-}"
     for _c in "${_step_lib}" \
               "${SLURM_SUBMIT_DIR:-.}/../lib/wrf-step-timing.sh" \
@@ -180,7 +250,49 @@ REPORT
 # automatically, and set SOURCE=<YourOrg> to tag your contributions.
 # See apps/WRF/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
 # ---------------------------------------------------------------------------
+# Record only a run that completed and wrote its output: lib/wrf-run-check.sh
+# checks that rsl.error.0000 says SUCCESS COMPLETE WRF and that every history
+# and restart file WRF wrote is in the run directory and not empty. Point
+# WRF_RUN_CHECK_LIB at it if it isn't found automatically.
+_check_lib="${WRF_RUN_CHECK_LIB:-}"
+for _c in "${_check_lib}" \
+          "${SLURM_SUBMIT_DIR:-.}/../lib/wrf-run-check.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/lib/wrf-run-check.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/apps/WRF/lib/wrf-run-check.sh"; do
+    if [ -n "${_c}" ] && [ -r "${_c}" ]; then _check_lib="${_c}"; break; fi
+done
+_run_ok=0
+_run_problems="lib/wrf-run-check.sh not found; set WRF_RUN_CHECK_LIB=/path/to/apps/WRF/lib/wrf-run-check.sh"
+# shellcheck source=../lib/wrf-run-check.sh
+if [ -n "${_check_lib}" ] && [ -r "${_check_lib}" ] && . "${_check_lib}" \
+        && declare -F wrf_run_check > /dev/null; then
+    if _run_problems="$(wrf_run_check "${workdir}")"; then _run_ok=1; fi
+fi
 _wrf_version="$(basename "${WRF_ENV}" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
+# What makes runs comparable goes into the record too: the grid size, the
+# simulated minutes, the number of time steps and the history output's io_form,
+# which lib/wrf-run-info.sh reads from this run's namelist.input and
+# rsl.error.0000. Point WRF_RUN_INFO_LIB at it if it isn't found automatically.
+_info_lib="${WRF_RUN_INFO_LIB:-}"
+for _c in "${_info_lib}" \
+          "${SLURM_SUBMIT_DIR:-.}/../lib/wrf-run-info.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/lib/wrf-run-info.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/apps/WRF/lib/wrf-run-info.sh"; do
+    if [ -n "${_c}" ] && [ -r "${_c}" ]; then _info_lib="${_c}"; break; fi
+done
+_run_info=()
+# shellcheck source=../lib/wrf-run-info.sh
+if [ -n "${_info_lib}" ] && [ -r "${_info_lib}" ] && . "${_info_lib}" \
+        && declare -F wrf_run_info > /dev/null; then
+    while IFS='=' read -r _k _v; do
+        case "${_k}" in
+            num_cells_million) _run_info+=(--num-cells-million "${_v}") ;;
+            simulated_minutes|num_timesteps|io_form) _run_info+=(--char "${_k}=${_v}") ;;
+        esac
+    done < <(wrf_run_info "${workdir}")
+else
+    echo "NOTE: lib/wrf-run-info.sh not found, so the record has no grid size, run length or io_form; set WRF_RUN_INFO_LIB=/path/to/apps/WRF/lib/wrf-run-info.sh." >&2
+fi
 _recorder="${DYNAMODB_RECORDER:-}"
 for _c in "${_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
@@ -188,12 +300,15 @@ for _c in "${_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/apps/WRF/dynamodb/record-benchmark.sh"; do
     if [ -n "${_c}" ] && [ -x "${_c}" ]; then _recorder="${_c}"; break; fi
 done
-if [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
+if [ "${_run_ok}" -ne 1 ]; then
+    echo "NOTE: not recording this run: ${_run_problems//$'\n'/; }" >&2
+elif [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
     WRF_VERSION="${_wrf_version}" BENCHMARK_CASE="CONUS-2.5km" ANALYSIS_TYPE="forecast" \
     TIME_TO_SOLUTION="${WRF_TIME}" RUN_DIR="${workdir}" "${_recorder}" \
         --metric "avg_timestep_seconds=${AVG_STEP}" \
         --metric "median_timestep_seconds=${MEDIAN_STEP}" \
         --metric "steady_timestep_seconds=${STEADY_STEP}" \
+        ${_run_info[@]+"${_run_info[@]}"} \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 else
     echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2

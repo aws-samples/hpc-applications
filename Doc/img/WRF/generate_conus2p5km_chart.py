@@ -10,8 +10,10 @@ but the first and those that write output or read boundaries (WRF counts each
 history or restart write in the step that makes it, and the writes do not get
 faster with more nodes). Per configuration (instance type, node count) the
 median over its runs is taken; relative performance = the 1 x hpc7a.96xlarge
-median / the configuration's median. Only relative values and run counts are
-embedded here.
+median / the configuration's median. An instance type that ran in two AWS
+Regions (hpc7a.96xlarge, hpc6a.48xlarge) is taken from its eu-north-1 runs
+only, so that each type is measured on one software stack. Only relative
+values and run counts are embedded here.
 
 Usage (from this directory):
     python3 generate_conus2p5km_chart.py
@@ -27,33 +29,25 @@ from matplotlib.ticker import FixedLocator, FuncFormatter, NullLocator
 # ---------------------------------------------------------------------------
 # Measured data: relative performance (1 x hpc7a.96xlarge = 1.00) and run count
 # per node count. WRF 4.6.1, CONUS 2.5km (1501 x 1201 x 50), the 6-hour forecast
-# with hourly history output, AWS runs of October 2026 (read 2026-10-09). Every
+# with hourly history output, AWS runs of October 2026 (read 2026-10-28): m8a
+# and m8g in us-east-2 (ParallelCluster 3.15.0, EFA installer 1.47.0), the
+# others in eu-north-1 (ParallelCluster 3.16.0, EFA installer 1.49.0). Every
 # node fully populated, one MPI rank per core (OMP_NUM_THREADS=1), EFA:
-#   x86        the GCC 11 + Intel MPI build (dmpar), Intel MPI 2021.17 or
+#   x86        the GCC 11 + Intel MPI build (dmpar), Intel MPI 2021.17 (m8a) or
 #              2021.18 with the settings of x86/wrf-benchmark-conus2.5km-intel.sbatch
 #   Graviton4  the Spack GCC build (dm+sm, run pure MPI) with OpenMPI 5.0.9,
 #              launched as Arm/wrf-benchmark.sbatch does
 # ---------------------------------------------------------------------------
 DATA = {
     # type             {nodes: (relative performance, runs)}
-    "hpc8a.96xlarge": {1: (1.379, 3), 2: (2.851, 3), 4: (5.915, 3), 8: (12.679, 3)},
-    "c8i.96xlarge":   {1: (1.376, 3), 2: (2.755, 3)},
-    "m8a.48xlarge":   {1: (1.261, 1), 2: (2.583, 1)},
-    "m8g.48xlarge":   {1: (1.134, 3), 2: (2.191, 3), 4: (4.327, 3), 8: (8.697, 2)},
-    "hpc7a.96xlarge": {1: (1.000, 3), 2: (2.071, 3), 4: (4.308, 3), 8: (9.299, 3)},
-    "hpc6a.48xlarge": {1: (0.408, 3), 2: (0.798, 3), 4: (1.657, 3), 8: (3.464, 3),
-                       16: (7.102, 4)},
+    "hpc8a.96xlarge": {1: (1.3791, 3), 2: (2.8517, 3), 4: (5.9165, 3), 8: (12.6810, 3)},
+    "c8i.96xlarge":   {1: (1.3765, 3), 2: (2.7555, 3)},
+    "m8a.48xlarge":   {1: (1.2613, 1), 2: (2.5834, 1)},
+    "m8g.48xlarge":   {1: (1.1345, 3), 2: (2.1916, 3), 4: (4.3276, 3), 8: (8.6986, 2)},
+    "hpc7a.96xlarge": {1: (1.0000, 3), 2: (2.0757, 2), 4: (4.3035, 2), 8: (9.1995, 2)},
+    "hpc6a.48xlarge": {1: (0.4073, 2), 2: (0.7978, 2), 4: (1.6568, 2), 8: (3.4619, 2),
+                       16: (7.3030, 2)},
 }
-
-# Points whose runs come from two AWS Regions with a visible gap: marked "†".
-REGION_NOTES = {
-    ("hpc6a.48xlarge", 16): "hpc6a.48xlarge on 16 nodes: median of 4 runs. Both us-east-2 "
-                            "runs, on separately launched nodes, were about 5% slower than "
-                            "both eu-north-1 runs (median step slower in every hour): this "
-                            "points to the Regions' software.",
-}
-# The note is written for these 4 runs: re-check its text when a run is added there.
-assert DATA["hpc6a.48xlarge"][16][1] == 4, "re-check REGION_NOTES"
 
 # type: (legend label, colour, marker,
 #        end-label offset in points (dx, dy), left panel and right panel)
@@ -92,12 +86,10 @@ def plot_series(ax, itype, nodes, values, runs, colour, marker, label):
                 zorder=4 if itype in MARKERS_ON_TOP else 3)
 
 
-def end_label(ax, itype, x, y, text, offset, colour):
+def end_label(ax, x, y, text, offset, colour):
     """Value label at a series' last point (8 or 16 nodes only, where there is room)."""
     if offset is None:
         return
-    if (itype, x) in REGION_NOTES:
-        text += "†"
     ax.annotate(text, (x, y), xytext=offset, textcoords="offset points",
                 ha="left", va="center", fontsize=9, fontweight="bold", color=colour)
 
@@ -120,7 +112,7 @@ for itype, points in DATA.items():
     nodes = sorted(points)
     rel = [points[n][0] for n in nodes]
     plot_series(ax1, itype, nodes, rel, [points[n][1] for n in nodes], colour, marker, label)
-    end_label(ax1, itype, nodes[-1], rel[-1], f"{rel[-1]:.2f}", offset, colour)
+    end_label(ax1, nodes[-1], rel[-1], f"{rel[-1]:.2f}", offset, colour)
 
 node_axis(ax1)
 ax1.set_yscale("log", base=2)
@@ -139,7 +131,7 @@ for itype, points in DATA.items():
     nodes = sorted(eff)
     pct = [100 * eff[n] for n in nodes]
     plot_series(ax2, itype, nodes, pct, [points[n][1] for n in nodes], colour, marker, label)
-    end_label(ax2, itype, nodes[-1], pct[-1], f"{pct[-1]:.0f}%", offset, colour)
+    end_label(ax2, nodes[-1], pct[-1], f"{pct[-1]:.0f}%", offset, colour)
 
 node_axis(ax2)
 ax2.axhline(100, color="gray", linestyle=":", linewidth=1.2, zorder=1)
@@ -147,7 +139,7 @@ ax2.set_ylim(90, 120)
 ax2.set_ylabel("Parallel efficiency (%)")
 ax2.set_title("Parallel efficiency: speed-up over 1 node of the same type / nodes")
 
-# --- Notes: the metric, the run counts, the marked points ----------------------------
+# --- Notes: the metric, the run counts, the Regions ---------------------------------
 single = {}
 for itype, points in DATA.items():
     ones = [n for n, (_, runs) in sorted(points.items()) if runs == 1]
@@ -177,10 +169,11 @@ markers_text = "; ".join(marker_notes)
 
 notes = [
     "Steady step: every step but the first and those that write output or read boundaries "
-    "(WRF counts each hourly history write and the restart write in the step that makes it).",
-    markers_text[:1].upper() + markers_text[1:]
-    + ". Every node fully populated, one MPI rank per core, EFA; AWS runs of October 2026.",
-] + [f"† {text}" for text in REGION_NOTES.values()]
+    + "(WRF counts each hourly history write and the restart write in the step that makes it).",
+    markers_text[:1].upper() + markers_text[1:] + ".",
+    "Every node fully populated, one MPI rank per core, EFA; AWS runs of October 2026: m8a and m8g in "
+    + "us-east-2, the others in eu-north-1.",
+]
 fig.text(0.01, 0.005, "\n".join(notes), fontsize=9, style="italic", color="dimgray",
          ha="left", va="bottom")
 fig.suptitle("WRF 4.6.1 CONUS 2.5km, full 6-hour forecast: scaling of the steady step",

@@ -13,9 +13,11 @@ or one the test writes itself. Every time in them is synthetic.
 ## What is covered and why
 
 The benchmark scripts report `AVG_STEP`, the mean of every `Timing for main`
-line of `rsl.error.0000`. WRF counts each history or restart write, and each
-lateral-boundary read, in the `Timing for main` line of the step that makes it,
-so the average includes I/O that does not get faster with more nodes.
+line of `rsl.error.0000`, each step's time being the number before
+`elapsed seconds` on its line. WRF counts each history or restart write, and
+each lateral-boundary read, in the `Timing for main` line of the step that
+makes it, so the average includes I/O that does not get faster in proportion to
+the node count.
 `lib/wrf-step-timing.sh` computes two values that leave it out: the median of
 every step, and the steady step, the mean of every step but the first and
 those that follow a `Timing for Writing` line (history, restart) or a
@@ -28,6 +30,7 @@ a single domain, and WRF prints no timing line for auxiliary input streams
 | `hourly-history.rsl` | 12 steps, a history write before the first step of every synthetic hour and one after the last step | 1.15000 | 1.11111 |
 | `restart-write.rsl` | a restart write alone, then a history and a restart write before the same step (8 steps: an even count) | 2.10000 | 2.00000 |
 | `lateral-boundary.rsl` | a lateral-boundary read in the middle of the run | 3.05000 | 3.00000 |
+| `adaptive-dt.rsl` | 8 steps labelled `main (dt= ...)`, as with an adaptive time step (one of them `(dt=100.00)`), and a history write in the middle; average 2.10 | 1.20000 | 1.13333 |
 | `no-steps.rsl` | a run that stopped before its first step | N/A | N/A |
 
 `test-step-timing.sh` asserts those values, with the arithmetic in its
@@ -42,34 +45,129 @@ locale is installed). Finally it pins the contract the scripts rely on: under
 `set -euo pipefail` both functions print one value and never stop the caller,
 and sourcing the library defines its two functions and changes no shell option.
 
+`tests/test_wrf_step_timing.py`, at the repository root (`pytest tests`), adds
+property tests with Hypothesis: the helper against a reference on generated
+logs, and every benchmark script's own `AVG_STEP` pipeline on generated steps
+with a fixed and an adaptive time step. It also runs this suite.
+
 `test-sbatch-e2e.sh` runs **every benchmark script itself**
-(`x86/wrf-benchmark*.sbatch` and `Arm/wrf-benchmark.sbatch`), with `curl`,
+(`x86/wrf-benchmark*.sbatch` and `Arm/wrf-benchmark.sbatch`), with `curl`, `lscpu`,
 `scontrol`, `srun`, `mpirun`, `sudo`, `aws` and `wrf.exe` replaced by stubs, so
 the assembled script really executes. The stubs touch nothing on the host: the
 cache drops and THP settings are swallowed, and the `aws` stub refuses every
-call. For each script it asserts:
+call. The `wrf.exe` stub leaves a fixture as `rsl.error.0000`, and the output
+files its log says WRF wrote, under the names WRF writes (with an `_` for each
+`:` when the run's `namelist.input` sets `io_form_history = 11`), or none,
+empty ones, or no restart file, as a case asks. For each script it asserts:
 
+  * on `hpc8a.96xlarge` and `hpc7a.96xlarge` the x86 scripts run each of the
+    eight supported ranks per node, 24 to 192, and stop 25, 32, 64, 100 and
+    191 before the run directory and `mpirun`, with an ERROR on stderr that
+    names the supported counts; other types and sizes the instance metadata
+    names run 64, with no NOTE and no `lscpu` call: `hpc7a.48xlarge`,
+    `c8i.96xlarge`, `c7a.48xlarge` and `m8a.48xlarge` (192 AMD cores), and
+    `hpc6id.32xlarge` and `c8i.96xlarge` under `LANG=tr_TR.UTF-8`, where
+    `[a-z]` leaves out `i` unless the type name is tested in the C locale. Both
+    instance-metadata requests carry `-f`, `--connect-timeout 2` and
+    `--max-time 5` (the `curl` stub logs them);
+  * when the instance metadata gives no instance type (no answer, an HTTP
+    error, an empty answer, an error page, a page that names a host, a type
+    after other text or before a second line, a type in capitals), 64 ranks per
+    node stop on a node whose `lscpu` (a stub) shows 192 AMD cores, 2 × 96 or
+    1 × 192, with an ERROR on stderr that names both types and no NOTE, and 24
+    and 192 run; 64 runs, with a NOTE on stderr that the check is skipped, on 96
+    AMD cores with 2 threads each (192 CPUs), on 96 or 256 AMD cores, on 192
+    Intel cores and when `lscpu` fails. `lscpu` is asked in the C locale (under
+    `LC_ALL=de_DE.UTF-8` its German keys would hide the cores), and, with `-f`,
+    an HTTP error leaves the run directory's name without an instance type
+    rather than with the error page, as does a proxy's page that is not a type
+    name. These cases are 125 checks for each x86 script;
   * the average step is unchanged, and the report gives `Median timestep:` and
     `Steady timestep:` right after `Avg timestep:` (the x86 scripts also print
     both next to their average in the checking section);
+  * with an adaptive time step (`adaptive-dt.rsl`), the average reads each
+    step's time before `elapsed seconds`, which is not the 9th field there, in
+    the report, the x86 checking section and the recorder's arguments;
   * the recorder gets `median_timestep_seconds` and `steady_timestep_seconds`
     next to `avg_timestep_seconds`, and this repository's recorder, run in
     `--dry-run`, would store them as two new numeric attributes of a valid
     item; an N/A value is skipped with a warning, as the average already is;
+  * the recorder gets the run's grid size (`--num-cells-million`) and its
+    simulated minutes, history `io_form` and number of time steps (`--char`),
+    read from the run directory by `lib/wrf-run-info.sh`, and this
+    repository's recorder, in `--dry-run`, would store them; without the
+    library the run is recorded without them and a NOTE says how to point at
+    it, and `WRF_RUN_INFO_LIB` takes precedence over a copy in the submit
+    directory. `test-run-info.sh` tests the library on the namelists and logs it
+    writes (the forms it reads and those it leaves out, keys in capitals in a
+    Turkish locale, the run length from `run_*` or from the dates, a missing
+    file), and
+    `tests/test_wrf_run_info.py` (`pytest tests`) against a reference on
+    generated ones;
   * the library is found when the job is submitted from the script's
     directory, from `apps/WRF` or from the repository root, and through
     `WRF_STEP_TIMING_LIB` from anywhere else; the variable takes precedence
     over a copy in the submit directory;
+  * the CONUS 2.5km scripts give WRF `CONUS_DIR`'s `namelist.input` with
+    `io_form_history` and `io_form_restart` changed from 2 to 11 and nothing
+    else, and leave `CONUS_DIR` as it is, or the namelist as it is with
+    `WRF_OUTPUT_FORMAT=namelist`; a namelist that does not take exactly that
+    change (no `io_form` lines, both at 11 already, `io_form_history` alone at
+    2, `io_form_restart` at 102, or `io_form_history` set twice) stops the job
+    before `wrf.exe`, an unknown value of the variable stops it before the run
+    directory, and neither is recorded; the other scripts give WRF the namelist
+    as it is;
   * without the library the job still completes, prints a NOTE saying how to
     point at it, and gives N/A for both;
   * without `rsl.error.0000` all three values are N/A and the job completes,
-    as before;
+    as before, but the run is not recorded and a NOTE says why;
   * with no step line the job stops where it did before (the existing
     `grep "Timing for main" | tail -5` under `pipefail`), with no report and
-    no benchmark row.
+    no benchmark row;
+  * a run is recorded only when the run check passes: without
+    `SUCCESS COMPLETE WRF` (`no-success.rsl`, a run that stopped before the end
+    of its forecast), with a history file missing or empty, or with fewer
+    restart files than restart writes, the job completes as before, prints a
+    NOTE that names the problem and records nothing; with two problems, one
+    NOTE names both, joined with `; `. The check is found like the step-timing
+    library (a run submitted from the script's directory, from `apps/WRF` or
+    from the repository root is recorded), `WRF_RUN_CHECK_LIB` takes
+    precedence, and without it nothing is recorded and a NOTE says how to point
+    at it.
+
+`test-run-check.sh` tests `lib/wrf-run-check.sh`, the check the benchmark
+scripts run before they record a run, on run directories it writes itself. A
+complete run passes, silently, and so does a run that writes no output. It is
+refused when `rsl.error.0000` is missing, unreadable or does not say
+`SUCCESS COMPLETE WRF`; when a history file WRF wrote is missing, empty or a
+directory; when there are fewer restart files than restart writes, or an empty
+one; when history was written but there is no `namelist.input`, or its
+`frames_per_outfile` cannot be read: not a positive number, set on two lines,
+or named in a form the check does not read (after another setting on its line,
+with a subscript, with its value on the next line, or a null value for domain 1,
+`3* 1`), none of which is taken for WRF's default; `io_form_history` is read,
+and refused, the same way (also in capitals in a Turkish locale). The tests
+check which files `frames_per_outfile` puts the writes in (WRF's default of 10
+only when no line names the key; the domain-1 value when the key is in
+capitals and the line has a value per domain, also in a Turkish locale,
+`tr_TR.UTF-8`, where awk lowercases `I` to a dotless `ı` outside the C locale
+(skipped when that locale is not installed), when a comment follows the value
+with no comma, when a blank separates the values, and in a repeat count,
+`3*1`; a commented-out line is not read), the names those files are looked for
+under (with `io_form_history = 11`, PnetCDF, the log's names with an `_` for
+each `:`; with 2 or no line, the log's names as they are; a file under the
+other name counts as missing; with `nocolons = .true.` the log's names have the
+`_` already), that domain 2 is ignored, that every problem is listed, one per
+line, and the contract the scripts rely on: called in an `if` under
+`set -euo pipefail` it never stops the caller, and sourcing it defines one
+function, changes no shell option and leaves no variable behind.
+`tests/test_wrf_run_check.py` (`pytest tests`) checks it against a reference on
+run directories generated by Hypothesis, with `frames_per_outfile` and
+`io_form_history` in forms it reads and forms it refuses, with and without
+`nocolons = .true.`, and with files under either name.
 
 ## Adding a case
 
 Drop an `.rsl` fixture in `fixtures/` and add an assertion to the relevant
 `test-*.sh`. `run-tests.sh` picks up any `test-*.sh` automatically and also runs
-`bash -n` over the WRF scripts, the library, the recorder and the tests.
+`bash -n` over the WRF scripts, the libraries, the recorder and the tests.
