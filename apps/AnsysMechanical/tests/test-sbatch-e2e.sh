@@ -269,6 +269,64 @@ grep -q 'total 128 cores over 2 node' <<<"${OUT}" \
     && ok "placement total matches SLURM_NPROCS" \
     || bad "placement total" "128 cores over 2 nodes" "$(grep -o 'total .* node(s)' <<<"${OUT}")"
 
+echo "== the licence server comes from ANSYSLMD_LICENSE_FILE, with no address in the script =="
+
+# licence_case [<ANSYSLMD_LICENSE_FILE>]: a clean solve, with the variable unset or
+# set, at submission, to the value given. Sets RC and LICENCE: the value MAPDL found
+# in its environment.
+licence_case() {
+    local base; base="$(mktemp -d)"
+    local vdir="${base}/ansys_inc/v261/ansys/bin"
+    mkdir -p "${vdir}" "${base}/inputs"
+    cat > "${vdir}/mapdl" <<EOF
+#!/bin/bash
+outfile=""; prev=""
+for a in "\$@"; do [ "\$prev" = "-o" ] && outfile="\$a"; prev="\$a"; done
+[ -n "\${outfile}" ] && cp "${FIX}/normal-success.log" "\${outfile}"
+printf '%s' "\${ANSYSLMD_LICENSE_FILE-(unset)}" > "${base}/licence"
+exit 0
+EOF
+    chmod +x "${vdir}/mapdl"
+    : > "${base}/inputs/V26direct-5.dat"
+    local licence_env=( -u ANSYSLMD_LICENSE_FILE )
+    [ "$#" -gt 0 ] && licence_env=( ANSYSLMD_LICENSE_FILE="$1" )
+    OUT="$(
+      env "${licence_env[@]}" PATH="${STUBS}/bin:${PATH}" RECORDER_LOG="${base}/recorder.log" \
+      DYNAMODB_RECORDER="${STUBS}/bin/recorder-stub.sh" \
+      MAPDL_VERDICT_LIB="${HERE}/../lib/mapdl-verdict.sh" \
+      BASE_DIR="${base}" SCRATCH_MODE="shared" \
+      SLURM_JOB_ID=95000 SLURM_JOB_NAME="AnsysMechanical.sbatch" \
+      SLURM_JOB_NUM_NODES=2 SLURM_NPROCS=128 SLURM_NTASKS=128 \
+      SLURM_JOB_NODELIST="node1,node2" SLURM_TASKS_PER_NODE="64(x2)" \
+      SLURM_SUBMIT_DIR="${HERE}/.." \
+      bash "${SBATCH}" v261 "${base}/inputs/V26direct-5.dat" 2>&1
+    )"
+    RC=$?
+    LICENCE="$(cat "${base}/licence" 2>/dev/null)"
+    rm -rf "${base}"
+}
+
+licence_case
+if [ "${RC}" -eq 0 ] && [ "${LICENCE}" = "1055@<license-server>" ]; then
+    ok "ANSYSLMD_LICENSE_FILE not set: MAPDL gets the placeholder 1055@<license-server>"
+else
+    bad "licence server, variable not set" "exit 0, MAPDL gets 1055@<license-server>" \
+        "exit ${RC}, MAPDL got ${LICENCE:-nothing}"
+fi
+licence_case "2325@licence-host.example"
+if [ "${RC}" -eq 0 ] && [ "${LICENCE}" = "2325@licence-host.example" ]; then
+    ok "ANSYSLMD_LICENSE_FILE set at submission: MAPDL gets it as it is"
+else
+    bad "licence server, variable set" "exit 0, MAPDL gets 2325@licence-host.example" \
+        "exit ${RC}, MAPDL got ${LICENCE:-nothing}"
+fi
+addr="$(grep -nE '[0-9]+@([0-9]{1,3}\.){3}[0-9]{1,3}' "${SBATCH}" | cut -d: -f1 | tr '\n' ' ')"
+if [ -z "${addr}" ]; then
+    ok "no <port>@<IPv4 address> anywhere in the sbatch, comments included"
+else
+    bad "no <port>@<IPv4 address> in the sbatch" "none" "on line(s) ${addr}"
+fi
+
 echo "== recorder receives the right metadata =="
 
 run_case "${FIX}/normal-success.log" 0
@@ -282,6 +340,54 @@ grep -q 'cores-per-node 64'             "${RECLOG}" && ok "cores-per-node passed
     || bad "cores-per-node" "64" "$(grep ARGS "${RECLOG}")"
 grep -q 'memory_mode=InCore'            "${RECLOG}" && ok "memory mode read from MAPDL's Memory Option line (InCore)" \
     || bad "memory_mode" "InCore" "$(grep ARGS "${RECLOG}")"
+
+echo "== the run's time is MAPDL's Elapsed Time, with the wall clock beside it =="
+
+# The job log's "Time to solution:" line(s) of the last run.
+tts() { grep '^Time to solution:' <<<"${OUT}"; }
+# none_line <final_rc>: the log's only Time to solution line says the run has none.
+none_line() {
+    [ "$(tts | grep -c .)" = "1" ] && tts | grep -qE \
+        "^Time to solution: none \(run not accepted, final_rc=$1\); wall clock around mapdl: [0-9]+ s\$"
+}
+
+run_case "${FIX}/normal-success.log" 0
+grep -qx 'TIME_TO_SOLUTION=600.000' "${RECLOG}" \
+    && ok "the recorder gets MAPDL's Elapsed Time (600.000) as the time to solution" \
+    || bad "time to solution is MAPDL's" "TIME_TO_SOLUTION=600.000" "$(grep TIME_TO_SOLUTION "${RECLOG}")"
+grep -qE 'wall_clock_seconds=[0-9]+( |$)' "${RECLOG}" \
+    && ok "the wall clock around mapdl goes beside it as wall_clock_seconds" \
+    || bad "wall_clock_seconds metric" "wall_clock_seconds=<seconds>" "$(grep ARGS "${RECLOG}")"
+if [ "$(tts | grep -c .)" = "1" ] && tts | grep -qE \
+       '^Time to solution: 600\.000 s \(MAPDL Elapsed Time\); wall clock around mapdl: [0-9]+ s$'; then
+    ok "an accepted run's log gives MAPDL's time as its time to solution, the wall clock beside it"
+else
+    bad "Time to solution line, accepted run" "one line: Time to solution: 600.000 s (MAPDL Elapsed Time); ..." \
+        "$(tts)"
+fi
+
+run_case "${FIX}/benign-iteration-stop.log" 1
+grep -qx 'TIME_TO_SOLUTION=1200.000' "${RECLOG}" \
+    && ok "fixed-iteration deck: the time to solution is its Elapsed Time (1200.000)" \
+    || bad "benign stop time to solution" "TIME_TO_SOLUTION=1200.000" "$(grep TIME_TO_SOLUTION "${RECLOG}")"
+
+# A run the launcher does not accept gets no time, even when MAPDL printed a
+# positive Elapsed Time: a disk-full abort does (with RUN COMPLETED and rc=255), and
+# so does clean output that exits with an unrelated rc=42.
+run_case "${FIX}/disk-full-abort.log" 255
+none_line 255 && ok "disk-full abort (positive Elapsed Time, rc=255): no time to solution in its log" \
+    || bad "Time to solution line, disk-full abort" \
+           "one line: Time to solution: none (run not accepted, final_rc=255); ..." "$(tts)"
+
+run_case "${FIX}/normal-success.log" 42
+none_line 42 && ok "clean output with rc=42: no time to solution in its log" \
+    || bad "Time to solution line, rc=42" "one line: Time to solution: none (run not accepted, final_rc=42); ..." \
+           "$(tts)"
+
+run_case "${FIX}/truncated-no-completion.log" 0
+none_line 3 && ok "truncated output with rc=0 (final status 3): no time to solution in its log" \
+    || bad "Time to solution line, truncated run" \
+           "one line: Time to solution: none (run not accepted, final_rc=3); ..." "$(tts)"
 
 echo "== NVMe mode: a failed stage-out must retain scratch and fail the job =="
 
@@ -353,6 +459,9 @@ else
     fi
     [ -s "${RECLOG}" ] && bad "failed stage-out records nothing" "recorder not called" "recorder called" \
         || ok "failed stage-out records NO benchmark row"
+    none_line 4 && ok "failed stage-out (final status 4): no time to solution in its log" \
+        || bad "Time to solution line, failed stage-out" \
+               "one line: Time to solution: none (run not accepted, final_rc=4); ..." "$(tts)"
     rm -rf "${BASEDIR}"
 
     # Control: same path, working shared filesystem -> success and cleanup runs.
@@ -365,6 +474,9 @@ else
     grep -q 'TIME_TO_SOLUTION=' "${RECLOG}" \
         && ok "control: healthy nvme run records a row" \
         || bad "control records" "recorder called" "not called"
+    tts | grep -qE '^Time to solution: 600\.000 s \(MAPDL Elapsed Time\); ' \
+        && ok "control: the healthy nvme run's log gives MAPDL's time as its time to solution" \
+        || bad "control Time to solution line" "Time to solution: 600.000 s (MAPDL Elapsed Time); ..." "$(tts)"
     rm -rf "${BASEDIR}"
 fi
 
@@ -405,16 +517,19 @@ fi
 
 echo "== heterogeneous placement is not recorded as a uniform cores_per_node =="
 
-run_case_het() {   # <recorder path>
-    local recorder="$1"
+run_case_het() {   # <recorder path> [SOLVER_TYPE given at submission] [MDOFS given at submission]
+    local recorder="$1" solver_type="${2:-}" mdofs="${3:-}"
     local base; base="$(mktemp -d)"
     local vdir="${base}/ansys_inc/v261/ansys/bin"
     mkdir -p "${vdir}" "${base}/inputs"
+    # The solve takes a second, so the wall clock around it (1 s or more) cannot be
+    # mistaken for the fixture's MAPDL Elapsed Time (600.000) in the stored item.
     cat > "${vdir}/mapdl" <<EOF
 #!/bin/bash
 outfile=""; prev=""
 for a in "\$@"; do [ "\$prev" = "-o" ] && outfile="\$a"; prev="\$a"; done
 [ -n "\${outfile}" ] && cp "${FIX}/normal-success.log" "\${outfile}"
+sleep 1
 exit 0
 EOF
     chmod +x "${vdir}/mapdl"
@@ -423,7 +538,7 @@ EOF
     RECJSON="${base}/recorder-item.json"; : > "${RECJSON}"
     OUT="$(
       PATH="${STUBS}/bin:${PATH}" RECORDER_LOG="${RECLOG}" RECORDER_JSON="${RECJSON}" \
-      DYNAMODB_RECORDER="${recorder}" \
+      DYNAMODB_RECORDER="${recorder}" SOLVER_TYPE="${solver_type}" MDOFS="${mdofs}" \
       MAPDL_VERDICT_LIB="${HERE}/../lib/mapdl-verdict.sh" \
       BASE_DIR="${base}" SCRATCH_MODE="shared" \
       SLURM_JOB_ID=93000 SLURM_JOB_NAME="AnsysMechanical.sbatch" \
@@ -458,7 +573,7 @@ echo "== the PRODUCTION recorder's final JSON, not just the launcher's arguments
 # own, and previously re-derived a bogus uniform cores_per_node = ceil(85/2) = 43
 # even though the launcher deliberately omitted it. Only the emitted item proves
 # what would actually be stored.
-run_case_het "${STUBS}/bin/real-recorder.sh"
+run_case_het "${STUBS}/bin/real-recorder.sh" sparse-direct-symmetric 20.7
 [ "${RC}" -eq 0 ] && ok "heterogeneous run with the real recorder exits 0" \
     || bad "real-recorder het run" "0" "${RC}"
 
@@ -474,9 +589,23 @@ else
     grep -q '"task_placement": {"S": "node1:43:node2:42"}' "${RECJSON}" \
         && ok "stored item carries the real task_placement" \
         || bad "task_placement in stored item" 'node1:43:node2:42' "$(grep -o '"task_placement".*' "${RECJSON}")"
+    grep -q '"solver_type": {"S": "sparse-direct-symmetric"}' "${RECJSON}" \
+        && ok "SOLVER_TYPE given at submission reaches the stored item as solver_type" \
+        || bad "solver_type in stored item" 'sparse-direct-symmetric' "$(grep -o '"solver_type".*' "${RECJSON}")"
+    grep -q '"mdofs": {"N": "20.7"}' "${RECJSON}" \
+        && ok "MDOFS given at submission reaches the stored item as mdofs" \
+        || bad "mdofs in stored item" '20.7' "$(grep -o '"mdofs".*' "${RECJSON}")"
     grep -q '"num_cores": {"N": "85"}' "${RECJSON}" \
         && ok "stored item keeps the true total core count (85)" \
         || bad "num_cores in stored item" "85" "$(grep -o '"num_cores".*' "${RECJSON}")"
+    grep -q '"time_to_solution_seconds": {"N": "600.000"}' "${RECJSON}" \
+        && ok "stored item's time_to_solution_seconds is MAPDL's Elapsed Time (600.000)" \
+        || bad "time_to_solution_seconds in stored item" "600.000" \
+               "$(grep -o '"time_to_solution_seconds".*' "${RECJSON}")"
+    grep -qE '"wall_clock_seconds": \{"N": "[1-9][0-9]*"\}' "${RECJSON}" \
+        && ok "stored item carries the wall clock around mapdl as wall_clock_seconds" \
+        || bad "wall_clock_seconds in stored item" "a whole number of seconds >= 1" \
+               "$(grep -o '"wall_clock_seconds".*' "${RECJSON}")"
     if command -v python3 >/dev/null 2>&1; then
         python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "${RECJSON}" 2>/dev/null \
             && ok "the stored item is valid JSON" \
@@ -496,6 +625,93 @@ if [ "${rc}" -ne 0 ] && grep -q 'cannot find lib/mapdl-verdict.sh' <<<"${out}"; 
     ok "a missing verdict library aborts before the solve, with an actionable message"
 else
     bad "missing library aborts" "non-zero + actionable message" "rc=${rc}"
+fi
+
+echo "== MAPDL runs with -perf on unless MAPDL_PERF=off, so the memory mode is recorded =="
+
+# perf_case [<MAPDL_PERF>]: a clean solve, with MAPDL_PERF unset or set, at submission,
+# to the value given. Its mapdl stub stands for MAPDL 2026 R1 as it ran on hardware: it
+# writes the S O L V E R   S T A T I S T I C S section, and in it the Memory Option:
+# line, only when its arguments hold -perf on. Sets RC, OUT, ARGS (the stub's
+# arguments; empty when it did not run), REC (what the recorder stub logged) and
+# RUNDIR (1 when the run directory was created).
+perf_case() {
+    local base; base="$(mktemp -d)"
+    local vdir="${base}/ansys_inc/v261/ansys/bin"
+    mkdir -p "${vdir}" "${base}/inputs"
+    cat > "${vdir}/mapdl" <<EOF
+#!/bin/bash
+outfile=""; prev=""; perf=0
+for a in "\$@"; do
+  [ "\$prev" = "-o" ] && outfile="\$a"
+  [ "\$prev" = "-perf" ] && [ "\$a" = "on" ] && perf=1
+  prev="\$a"
+done
+printf '%s\n' "\$*" > "${base}/mapdl-args"
+if [ "\${perf}" -eq 1 ]; then
+  cp "${FIX}/normal-success.log" "\${outfile}"
+else
+  grep -v -E 'S O L V E R   S T A T I S T I C S|^Solver: |^Memory Option:' \\
+    "${FIX}/normal-success.log" > "\${outfile}"
+fi
+exit 0
+EOF
+    chmod +x "${vdir}/mapdl"
+    : > "${base}/inputs/V26direct-5.dat"
+    : > "${base}/recorder.log"
+    local perf_env=( -u MAPDL_PERF )
+    [ "$#" -gt 0 ] && perf_env=( MAPDL_PERF="$1" )
+    OUT="$(
+      env "${perf_env[@]}" PATH="${STUBS}/bin:${PATH}" RECORDER_LOG="${base}/recorder.log" \
+      DYNAMODB_RECORDER="${STUBS}/bin/recorder-stub.sh" \
+      MAPDL_VERDICT_LIB="${HERE}/../lib/mapdl-verdict.sh" \
+      BASE_DIR="${base}" SCRATCH_MODE="shared" \
+      SLURM_JOB_ID=97000 SLURM_JOB_NAME="AnsysMechanical.sbatch" \
+      SLURM_JOB_NUM_NODES=2 SLURM_NPROCS=128 SLURM_NTASKS=128 \
+      SLURM_JOB_NODELIST="node1,node2" SLURM_TASKS_PER_NODE="64(x2)" \
+      SLURM_SUBMIT_DIR="${HERE}/.." \
+      bash "${SBATCH}" v261 "${base}/inputs/V26direct-5.dat" 2>&1
+    )"
+    RC=$?
+    ARGS="$(cat "${base}/mapdl-args" 2>/dev/null)"
+    REC="$(cat "${base}/recorder.log")"
+    RUNDIR=0; [ -e "${base}/AnsysMechanical" ] && RUNDIR=1
+    rm -rf "${base}"
+}
+
+for perf in unset "" on; do
+    if [ "${perf}" = unset ]; then perf_case; what="MAPDL_PERF not set"
+    else perf_case "${perf}"; what="MAPDL_PERF='${perf}'"; fi
+    if [ "${RC}" -eq 0 ] && grep -qE '^-b -perf on -dis ' <<<"${ARGS}"; then
+        ok "${what}: mapdl runs with -perf on, right after -b"
+    else
+        bad "${what}: -perf on" "exit 0, mapdl arguments starting '-b -perf on -dis '" \
+            "exit ${RC}, mapdl arguments: ${ARGS:-none}"
+    fi
+    grep -q 'memory_mode=InCore' <<<"${REC}" \
+        && ok "${what}: the Memory Option: line's mode reaches the recorder (memory_mode=InCore)" \
+        || bad "${what}: memory_mode" "memory_mode=InCore" "$(grep ARGS <<<"${REC}")"
+done
+
+perf_case off
+if [ "${RC}" -eq 0 ] && [ -n "${ARGS}" ] && ! grep -q -- '-perf' <<<"${ARGS}"; then
+    ok "MAPDL_PERF=off: mapdl runs without -perf on"
+else
+    bad "MAPDL_PERF=off: no -perf" "exit 0, mapdl arguments without -perf" "exit ${RC}, mapdl arguments: ${ARGS:-none}"
+fi
+if grep -q 'memory_mode=unknown' <<<"${REC}" && grep -qx 'BENCHMARK_CASE=V26direct-5' <<<"${REC}"; then
+    ok "MAPDL_PERF=off: the run is still recorded, with memory_mode=unknown"
+else
+    bad "MAPDL_PERF=off: recorded" "memory_mode=unknown and BENCHMARK_CASE=V26direct-5" "${REC:-recorder not called}"
+fi
+
+perf_case yes
+if [ "${RC}" -eq 1 ] && grep -q "^ERROR: MAPDL_PERF='yes' is neither on nor off" <<<"${OUT}" \
+   && [ -z "${ARGS}" ] && [ "${RUNDIR}" -eq 0 ] && [ -z "${REC}" ]; then
+    ok "MAPDL_PERF=yes ends the job with exit 1 and an ERROR, before the run directory and the solve, recording nothing"
+else
+    bad "MAPDL_PERF=yes refused" "exit 1, the ERROR, no run directory, no solve, no row" \
+        "exit ${RC}; run directory ${RUNDIR}; mapdl arguments: ${ARGS:-none}; $(grep -m1 'MAPDL_PERF' <<<"${OUT}")"
 fi
 
 echo

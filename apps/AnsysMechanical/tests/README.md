@@ -70,7 +70,11 @@ accepting a run live that replay rejects.
 replay discovery of `output.log`, `output-<jobid>.log` and `*.out`; rejection of
 zero, negative and non-numeric timings whether explicit or derived; refusal to
 derive timing from an unverified solve; explicit values winning over derived ones;
-the emitted item being valid JSON carrying the canonical attributes; and the
+the emitted item being valid JSON carrying the canonical attributes; the solver
+family stored as a single `solver_type` whichever of `--solver-type`,
+`--char solver_type=` and `SOLVER_TYPE` give it (`--solver-type` wins over
+`--char`, either over the environment, with a NOTE when `--solver-type` sets a
+`--char` aside or a `--char` sets `SOLVER_TYPE` aside); and the
 **no-derive contract for `cores_per_node`** — it is omitted when `task_placement`
 is supplied and when the core count is not an exact multiple of the node count,
 derived only for a genuinely uniform layout, and never overridden when passed
@@ -83,11 +87,28 @@ really executes rather than only passing `bash -n`. It asserts:
 
   * the job's final exit status per fixture (a fixed-iteration deck exits 0; a
     truncated `rc=0` run exits non-zero; a disk-full abort keeps its 255);
+  * `mapdl` runs with `-perf on`, right after `-b`, when `MAPDL_PERF` is unset,
+    empty or `on`, and without it when `MAPDL_PERF=off`. Its stub writes the
+    `S O L V E R   S T A T I S T I C S` section, with its `Memory Option:` line,
+    only with `-perf on`, as MAPDL 2026 R1 does, so the recorder gets
+    `memory_mode=InCore` by default and `memory_mode=unknown` with
+    `MAPDL_PERF=off`, which still records the run. Any other value ends the job
+    with exit 1 before the run directory and the solve, and records nothing;
   * the memory mode handed to the recorder is the one on MAPDL's `Memory Option:`
     line;
+  * the run's time is MAPDL's `Elapsed Time (sec)`: the recorder gets it as the
+    time to solution, with the wall clock around `mapdl` beside it as
+    `wall_clock_seconds` (checked in the stored item too), and an accepted run's
+    job log prints both on its `Time to solution:` line; for a run the launcher
+    does not accept, the line reads `Time to solution: none`, including a
+    disk-full abort and clean output with `rc=42`, which both print a positive
+    Elapsed Time, and a failed NVMe stage-out;
   * **recorder eligibility** — a run that exits non-zero writes no benchmark row,
     including the subtle `clean output + rc=42` and `benign block + rc=42` cases;
   * `-machines` is built from `SLURM_TASKS_PER_NODE` and totals `SLURM_NPROCS`;
+  * MAPDL gets the licence server from `ANSYSLMD_LICENSE_FILE` as set at
+    submission, and the placeholder `1055@<license-server>` when it is not set;
+    no `<port>@<IPv4 address>` is written anywhere in the sbatch;
   * a placement Slurm cannot describe (unset or unparseable `SLURM_TASKS_PER_NODE`)
     aborts rather than being invented;
   * a heterogeneous `43,42` allocation records `task_placement`, not a uniform
@@ -95,6 +116,8 @@ really executes rather than only passing `bash -n`. It asserts:
     recorder stub, and once on the **production recorder's emitted JSON** (via a
     wrapper that runs the real script in `--dry-run`), because the recorder derives
     fields of its own and arguments alone do not prove what would be stored;
+  * `SOLVER_TYPE` and `MDOFS` given at submission reach that stored item as
+    `solver_type` and `mdofs`;
   * **NVMe stage-out failure at the integration boundary** — with the shared
     filesystem made read-only mid-solve, the job fails, the reclaim step does not
     run, the retained scratch path is printed, the log survives on scratch, and no
@@ -135,6 +158,44 @@ print on Amazon Linux 2023. It asserts:
     that fails warns, and the run's status, row and reclaim are unchanged; a node
     without error logs copies none and makes no directory; a run on the shared
     filesystem copies nothing.
+
+`test-flexible-cores.sh` runs the assembled sbatch with the instance metadata
+and `lscpu` stubbed, to pin its **cores-per-node check** (Utils/flexible-cores):
+on hpc8a.96xlarge and hpc7a.96xlarge every node must run 24, 48, 72, 96, 120,
+144, 168 or 192 ranks, as Slurm placed them (`SLURM_TASKS_PER_NODE`). It
+asserts:
+
+  * every one of those counts runs, on one node and on more, and so does a
+    heterogeneous placement whose counts are all among them;
+  * any other count (16, 32, 64, 128, 191, 216 or 384 on a node, or one node of
+    a heterogeneous placement) ends the job with exit 1 and an ERROR that names
+    the supported counts and an example layout that sets `--ntasks`, before the
+    scratch check, the run directory and the solve, and records nothing; for
+    216 and 384 the ERROR says the tasks exceed the node's 192 cores, and for
+    191 that they load the CCDs unevenly;
+  * a placement that is not a count (`abc`) is left to the sbatch's `-machines`
+    check, which ends the job with its own ERROR;
+  * both requests to the instance metadata use `curl -fs --connect-timeout 2
+    --max-time 5`;
+  * other instance types and sizes (hpc6id.32xlarge, also in a Turkish locale,
+    where `[a-z]` leaves out `i`, hpc7a.48xlarge, c8i.96xlarge, hpc6a.48xlarge,
+    and m7a.48xlarge on a node with 192 AMD cores) are not checked, and `lscpu`
+    is not asked;
+  * when the instance metadata gives no instance type (no answer, none within
+    `--max-time`, an HTTP error, a page that is not a type name, one that names
+    a host such as `proxy.example.com`, a type name followed by an HTML line, or
+    one in capitals), a node whose `lscpu` shows 192 AMD cores refuses an
+    off-list count as above, with an ERROR that names both types and says why
+    and no NOTE; any other node runs an off-list count, with the one-line NOTE
+    that the check was skipped: an Intel node, also one with 192 cores, an AMD
+    node with 96 cores and 2 threads per core (192 CPUs), one with 96 cores on
+    one socket, one with 2 x 128 cores, and a node without `lscpu`. A supported
+    count runs on every node with no NOTE, and `lscpu` is not asked. The 192 AMD
+    cores are read from `lscpu`'s indented layout too, and in a German locale;
+  * after an HTTP error the run directory names no instance type, rather than
+    the error page; after an answer that is not a type name (a proxy's page)
+    neither does the run directory, nor, at a supported count on local NVMe,
+    the scratch directory.
 
 ## Adding a case
 

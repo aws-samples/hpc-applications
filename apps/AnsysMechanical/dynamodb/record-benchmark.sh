@@ -22,8 +22,9 @@
 #   instance_type, operating_system, num_cores, num_instances, libraries
 # Strongly recommended (this is what makes the row USEFUL for training):
 #   benchmark_case            the dataset/case name (e.g. V24sp-1)
-#   time_to_solution_seconds  total solver wall-clock time (the model's target)
+#   time_to_solution_seconds  solve time: MAPDL's Elapsed Time (sec), the model's target
 #   analysis_type             static | modal | transient | thermal | ...
+#   solver_type               solver family: sparse-direct-* | pcg-iterative | jcg-iterative
 #   mdofs                     model size in millions of degrees of freedom
 # Optional but valuable:
 #   model_name, num_gpus, release, mechanical_version, core_solver_rating,
@@ -83,6 +84,8 @@ CORE_SOLVER_EFFICIENCY="${CORE_SOLVER_EFFICIENCY:-}"
 
 # Mechanical dataset characteristics (also env-overridable).
 ANALYSIS_TYPE="${ANALYSIS_TYPE:-}"
+SOLVER_TYPE="${SOLVER_TYPE:-}"
+_solver_type_flag=0   # 1 once --solver-type is given on the command line
 MODEL_NAME="${MODEL_NAME:-}"
 MDOFS="${MDOFS:-}"
 NUM_GPUS="${NUM_GPUS:-}"
@@ -96,7 +99,7 @@ declare -a EXTRA_METRICS=()
 declare -a EXTRA_CHARS=()
 
 usage() {
-    sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,56p' "$0" | sed 's/^# \{0,1\}//'
     cat <<'EOF'
 
 OPTIONS
@@ -118,8 +121,11 @@ OPTIONS
 
   Result + dataset description (recommended):
     --case NAME               Benchmark case / dataset id (e.g. V24sp-1).
-    --time-to-solution SEC    Total solver wall-clock seconds (the model target).
+    --time-to-solution SEC    Solve time: MAPDL's Elapsed Time (sec), the model target.
     --analysis-type T         static | modal | transient | thermal | harmonic.
+    --solver-type T           Solver family: sparse-direct-symmetric,
+                              sparse-direct-nonsymmetric, sparse-direct-complex,
+                              pcg-iterative or jcg-iterative.
     --mdofs X                 Model size in millions of degrees of freedom.
     --model-name NAME         Model description / name.
     --num-gpus N              GPUs used (0 for CPU-only).
@@ -157,6 +163,7 @@ while [ $# -gt 0 ]; do
         --case)                   BENCHMARK_CASE="$2"; shift 2;;
         --time-to-solution)       TIME_TO_SOLUTION="$2"; shift 2;;
         --analysis-type)          ANALYSIS_TYPE="$2"; shift 2;;
+        --solver-type)            SOLVER_TYPE="$2"; _solver_type_flag=1; shift 2;;
         --mdofs)                  MDOFS="$2"; shift 2;;
         --model-name)             MODEL_NAME="$2"; shift 2;;
         --num-gpus)               NUM_GPUS="$2"; shift 2;;
@@ -232,6 +239,26 @@ if [ -z "$CORES_PER_NODE" ] && is_number "${NUM_CORES:-}" && is_number "${NUM_IN
         echo "      Pass --char task_placement=<host:cores:...> to record the real layout." >&2
     else
         CORES_PER_NODE=$(( NUM_CORES / NUM_INSTANCES ))
+    fi
+fi
+
+# --- solver_type: one value per item ------------------------------------------
+# The family can come from --solver-type, from --char solver_type=..., or from
+# SOLVER_TYPE in the environment (how the sbatch passes it on). A value on the
+# command line beats the environment, as for every other field, and --solver-type
+# beats --char, so the item takes one source's value and a SOLVER_TYPE left in the
+# environment cannot replace the family a command line gives. A NOTE names a
+# --char set aside by --solver-type, or SOLVER_TYPE set aside by a --char.
+_char_solver_type=0
+for _pair in "${EXTRA_CHARS[@]:-}"; do
+    case "$_pair" in solver_type=*) _char_solver_type=1;; esac
+done
+if [ "$_char_solver_type" -eq 1 ] && [ -n "$SOLVER_TYPE" ]; then
+    if [ "$_solver_type_flag" -eq 1 ]; then
+        echo "NOTE: --solver-type given; ignoring --char solver_type." >&2
+    else
+        echo "NOTE: --char solver_type given; ignoring SOLVER_TYPE from the environment." >&2
+        SOLVER_TYPE=""
     fi
 fi
 if [ -z "$MPI_IMPLEMENTATION" ] && command -v mpirun >/dev/null 2>&1; then
@@ -311,7 +338,7 @@ if [ -z "$TIME_TO_SOLUTION" ]; then
             echo "      time from a run that did not finish cleanly." >&2
         else
             # Take the number immediately AFTER the '='. MAPDL's summary line ends
-            # with a Date field (`... = 1327.590   Date = 08/29/2026 |`), so taking
+            # with a Date field (`... = 600.000   Date = 08/29/2026 |`), so taking
             # the LAST number on the line records the YEAR as the solve time.
             _mln="$(grep -hiE 'Elapsed [Tt]ime *\(sec\)' "$_out" 2>/dev/null | tail -1)"
             if [ -n "$_mln" ]; then
@@ -381,11 +408,17 @@ add_n "core_solver_speedup"    "$CORE_SOLVER_SPEEDUP"
 add_n "core_solver_efficiency" "$CORE_SOLVER_EFFICIENCY"
 for pair in "${EXTRA_METRICS[@]:-}"; do [ -n "$pair" ] && add_kv add_n "$pair"; done
 add_s "analysis_type"        "$ANALYSIS_TYPE"
+add_s "solver_type"          "$SOLVER_TYPE"
 add_s "model_name"           "$MODEL_NAME"
 add_n "mdofs"                "$MDOFS"
 add_n "num_gpus"             "$NUM_GPUS"
 add_s "release"              "$RELEASE"
-for pair in "${EXTRA_CHARS[@]:-}"; do [ -n "$pair" ] && add_kv add_s "$pair"; done
+for pair in "${EXTRA_CHARS[@]:-}"; do
+    [ -n "$pair" ] || continue
+    # One value per attribute: the solver_type chosen above is already in the item.
+    if [ -n "$SOLVER_TYPE" ] && [ "${pair%%=*}" = "solver_type" ]; then continue; fi
+    add_kv add_s "$pair"
+done
 add_s "mechanical_version"   "$ENGINE_VERSION"
 add_s "provenance_origin"    "external"
 add_s "provenance_source_id" "$SOURCE"

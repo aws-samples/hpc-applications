@@ -108,6 +108,10 @@ echo "4bd4b5ce04ce634c281ae76174714fa02b053b573ac2181c985db06aa57e1e9e  libpng-1
 tar xzf libpng-1.2.59.tar.gz && cd libpng-1.2.59
 ./configure --prefix=/fsx/libpng12 --disable-static && make -j && make install
 ln -sf /fsx/libpng12/lib/libpng12.so.0 $COMPAT/libpng12.so.0
+
+# The bundled Motif needs libpng 1.2's versioned symbols: check the build has them.
+readelf -V /fsx/libpng12/lib/libpng12.so.0 | grep -q PNG12_0 && echo "libpng12: PNG12_0 present" \
+    || { echo "libpng12: PNG12_0 MISSING - do not use this build"; exit 1; }
 ```
 
 That digest matches the value published in SourceForge's file metadata for
@@ -164,7 +168,8 @@ machines=""
 for i in "${!hosts[@]}"; do machines="$machines:${hosts[$i]}:${tpn[$i]}"; done
 machines=${machines:1}
 
-mapdl -b -dis -mpi intelmpi -ssh -machines $machines -i input.dat -o output.log
+# -perf on: MAPDL's solver statistics, with the Memory Option: line (Key settings)
+mapdl -b -perf on -dis -mpi intelmpi -ssh -machines $machines -i input.dat -o output.log
 ```
 
 The recommended layouts further down are all homogeneous and divisible, so this
@@ -216,6 +221,12 @@ Two rules worth keeping whichever way you build the list:
   * On Amazon Linux 2023 use `dnf` rather than `yum` for the `mesa-libGLU`
     prerequisite. ParallelCluster compute nodes are ephemeral, so install it per
     job (or bake it into a post-install script / custom AMI).
+  * **Point the job at your licence server.** MAPDL checks out its licence from
+    an Ansys licence server, which the sbatch takes from `ANSYSLMD_LICENSE_FILE`
+    as `<port>@<host>`. Set it in the shell you submit from, for example
+    `export ANSYSLMD_LICENSE_FILE=1055@<license-server>`: sbatch passes that
+    environment to the job, and the script's own default is only that
+    placeholder.
 
 ## EFA settings
 
@@ -253,8 +264,10 @@ before trusting a timing.
 
   * **MAPDL is memory bound, and for the sparse direct solver memory capacity
     decides everything.** Each benchmark/model has a documented memory
-    requirement. If the *aggregate* RAM of the job is below it, MAPDL falls back
-    to an **out-of-core** mode that does heavy I/O, and runtime can more than
+    requirement. If the *aggregate* RAM of the job does not exceed it with room
+    to spare (for the V26 Cluster models, about 1.5 times: the instance memory
+    in GiB over the figure in GB that `JOBS.CONFIG` lists), MAPDL falls back to
+    an **out-of-core** mode that does heavy I/O, and runtime can more than
     double. Size the job to fit in memory first; only then optimise for cores.
   * **Check which memory mode you got.** MAPDL states it on the `Memory Option:`
     line of the solver statistics at the end of its output (`In-Core` or
@@ -264,63 +277,122 @@ before trusting a timing.
     out-of-core mode`, so a search for "out-of-core" labels in-core runs
     out-of-core. In the 94 sparse-direct V26 Cluster outputs we archived, MAPDL
     reported In-Core for 45, and a whole-file search labelled all 94 out-of-core.
-    The iterative solvers (PCG, JCG) print no `Memory Option:` line. The line is
-    verified on 2026 R1 only: on a release that does not print it, the sbatch
-    records the memory mode as `unknown`.
+    The iterative solvers (PCG, JCG) print no `Memory Option:` line, and MAPDL
+    2026 R1 prints the `S O L V E R   S T A T I S T I C S` section of its
+    closing statistics, which holds the line, only when it runs with
+    `-perf on`, as the command line `runBench.py` prints does (see
+    [Benchmarks](#benchmarks)). Without that section, the sparse solver still
+    names the mode before each factorisation: in-core, in a NOTE whose text
+    begins `The Distributed Sparse Matrix Solver is currently running in the`,
+    and out-of-core, in a WARNING whose text begins
+    `The Distributed Sparse Matrix Solver is running in out-of-core memory`.
+    Search for those words as quoted: MAPDL wraps both messages right after
+    them, and a search for `in-core memory mode` labels out-of-core runs in-core,
+    since their messages hold it too. In those 94 outputs, the NOTE or WARNING
+    always matched the `Memory Option:` line. The line is verified on 2026 R1
+    only: for an output without it, the sbatch records the memory mode as
+    `unknown`.
+  * **Size the memory from what MAPDL prints.** Before the factorisation, the
+    sparse solver prints a memory summary, out-of-core runs included:
+    `Equation solver memory required for in-core mode` for rank 0, for the
+    busiest node (on more than one node) and summed over all ranks (under
+    `Total memory summed across all MPI ranks`). An out-of-core run also says
+    so in a WARNING whose text begins
+    `The Distributed Sparse Matrix Solver is running in out-of-core memory`, so
+    the output of one run tells you what in-core needs. Each process needs
+    memory beyond the solver's: in our in-core runs the total allocated was 1.1
+    to 1.6 times the summed in-core figure, more with more ranks. Every
+    sparse-direct run of ours with at least 1.52 times that figure in physical
+    memory ran in-core (MAPDL's closing `Physical memory available`, on more
+    than one node its `Physical memory available on all compute nodes` line);
+    from 1.46 to 1.51 times, V26direct-5 did on one hpc6id.32xlarge and
+    V26direct-6 did not on two hpc8a.96xlarge. Plan for about twice it.
+    Where the V26 Cluster models ran in-core is in
+    [Memory mode and node count](#memory-mode-and-node-count).
   * Because DMP aggregates memory across nodes, **adding a node can be far more
     effective than adding cores**: it raises the memory ceiling as well as the
     core count. Moving a model that is out-of-core on one node onto two nodes
     (so it fits in aggregate RAM) can improve runtime by far more than the added
     parallelism alone would explain — the speedup is the memory mode changing,
     not parallel efficiency.
-  * **Once the model fits in memory, adding more memory stopped helping** in the
-    configurations we measured — memory bandwidth and clock speed dominate from
-    there. Size for the documented requirement plus headroom rather than buying
-    the largest memory footprint available.
+  * **Once the model fits in memory, choose the instance for speed, not for more
+    memory.** In the configurations we measured, with the same CPU and more
+    memory the results were mixed (see
+    [Intel instance types](#intel-instance-types)). Size for the documented
+    requirement plus headroom rather than buying the largest memory footprint
+    available.
   * **Instance selection.** The notes below reflect the V26 Cluster models on the
     configurations we tested; treat them as a starting point and verify against
-    your own models rather than as a general ranking. Quantitative comparisons
-    will land in [Performance](#performance).
-      * [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6id/) — 16 GB/core,
-        a cost-effective way to buy memory capacity, **plus 15.2 TB of local
-        NVMe** for solver scratch (see below). A good fit for the large
-        sparse-direct models, and the reference configuration in the sbatch.
+    your own models rather than as a general ranking. The measurements are in
+    [Instance types](#instance-types).
       * [Hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/) /
         [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) — 4 GB/core but
-        high memory bandwidth and core count; these were the quickest of the
-        instances we tried on models that already fit in memory.
+        high memory bandwidth and core count. Of the AMD types we tried, Hpc8a
+        was the quickest per node; Hpc7a took 1.15-1.59x as long at the same
+        layout. Their 768 GiB per node is what to plan around: V26direct-5 needs
+        two nodes to run in-core.
+      * [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6id/) — 16 GB/core,
+        a cost-effective way to buy memory capacity, **plus 15.2 TB of local
+        NVMe** for solver scratch (see below), and the reference configuration in
+        the sbatch. One node holds V26direct-5 in-core, where one c8i.96xlarge
+        (768 GiB) does not, which pays off when the job stays on one node.
       * R-family ([r7i](https://aws.amazon.com/ec2/instance-types/r7i/) /
         [r8i](https://aws.amazon.com/ec2/instance-types/r8i/), or
-        [r7id](https://aws.amazon.com/ec2/instance-types/r7id/) /
         [r8id](https://aws.amazon.com/ec2/instance-types/r8id/) /
         [i7ie](https://aws.amazon.com/ec2/instance-types/i7ie/) for local
-        NVMe) — worth it mainly when a single node must hold a very large model.
-        Per-unit cost is comparatively high, and in our runs they were not faster
-        than the HPC instances once the model already fit in memory.
+        NVMe) — worth it mainly when a single node must hold a very large model:
+        one r8i.96xlarge ran V26direct-6 in-core, while two Hpc6id nodes ran it
+        faster, in-core as well. Per core, r7i and r8i cost the most of the
+        Intel types we ran, and in our runs they were not faster than
+        c8i.96xlarge once the model already fit in memory.
   * **Under-population raises memory per core.** Running fewer cores per node
     gives each rank more memory *and* more bandwidth, which is often a better
     trade than filling the node. See
     [Utils/flexible-cores](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores)
-    for the pinning lists — and note that lowering `--ntasks-per-node` alone is
-    not enough: without explicit pinning the ranks pack onto the first socket and
-    you lose half the cache and memory controllers.
+    for the pinning lists — and note that lowering `--ntasks-per-node` alone does
+    not guarantee an even spread over the CCDs: pin with the lists, and check the
+    placement in Intel MPI's pinning table (`I_MPI_DEBUG=5`, which the sbatch
+    sets).
 
 ## Scratch space and concurrency
 
 Out-of-core solves write a large amount of scratch to the working directory —
 **about 0.5-1.2 TB per job** for the V26 Cluster sparse-direct models, against
-0.01-0.23 TB when the same models run in-core. MAPDL reports it as
-`Sum of disk space used on all processes` in its I/O statistics (`Sum Scratch
-Used(All)` in the closing box is scratch *memory*, and it is largest for in-core
-runs). On a shared filesystem this is a hard planning constraint:
+0.01-0.23 TB when the same models run in-core. MAPDL reports it in its closing
+statistics as `Sum of disk space used on all processes`, and on more than one
+node the busiest node's as `Maximum disk space used on any compute node`
+(`Sum Scratch Used(All)` in the closing box is scratch *memory*, and it is
+largest for in-core runs). Every accepted V26 Cluster run we archived, in
+MAPDL's GB (GiB):
+
+| Model | MAPDL memory mode | Runs | Whole job | Busiest node, on two nodes |
+|---|---|--:|--:|--:|
+| V26direct-4 | In-Core | 18 | 10.8-12.0 GB | 6.3-7.2 GB |
+| V26direct-4 | Optimal Out-of-Core | 4 | 502.6-530.4 GB | |
+| V26direct-5 | In-Core | 20 | 50.6-55.0 GB | 36.5-37.5 GB |
+| V26direct-5 | Optimal Out-of-Core | 23 | 700.5-724.5 GB | |
+| V26direct-6 | In-Core | 7 | 229.8-231.3 GB | 169.5 GB |
+| V26direct-6 | Optimal Out-of-Core | 19 | 749.2-1,210.6 GB | 579.7-651.7 GB |
+| V26iter-4 | none (JCG) | 23 | 36.4-44.9 GB | 31.1-31.2 GB |
+| V26iter-5 | none (PCG) | 37 | 196.2-203.0 GB | |
+| V26iter-6 | none (PCG) | 26 | 192.0-196.5 GB | 110.8-112.1 GB |
+
+On one node the memory mode set the size, not the rank count: V26direct-6 wrote
+1,199.5-1,210.6 GB out-of-core at every count we ran, 16 to 96 ranks. On two
+hpc8a.96xlarge nodes it wrote 1,201.1 GB at 48 cores per node and 1,153.2 GB at
+96, one run each; the table's 749.2 GB (579.7 GB on the busiest node) is one run
+at 64 cores per node, not one of the balanced counts (see
+[Benchmarks](#benchmarks)). On two nodes the busiest node held 51-86% of the
+whole job's. On a shared filesystem the whole job's scratch is a hard planning
+constraint:
 
   * Size the filesystem for `concurrent_jobs x per_job_scratch`, not for the
     input data.
   * **Cap how many out-of-core jobs run at once.** Running many out-of-core
     solves concurrently can exhaust even a multi-terabyte shared filesystem in
-    hours. When that happens the jobs typically do **not** fail cleanly — they
-    hang on I/O and have to be cancelled, leaving their scratch behind to be
-    reclaimed manually.
+    hours, and MAPDL does not stop cleanly when its scratch disk is full (see
+    [Exit codes](#exit-codes-do-not-use-them-to-decide-success)): size for the
+    jobs you run together, and remove the scratch a job leaves behind.
   * Heavy sharing distorts timings. Watch **`MetadataOperations`** and burst
     throughput in CloudWatch rather than average throughput: a filesystem can
     look nearly idle on average bandwidth while elevated metadata rates and
@@ -329,7 +401,7 @@ runs). On a shared filesystem this is a hard planning constraint:
     any surprising result with an isolated re-run before acting on it.
   * **Prefer local NVMe instance store for the solver scratch when the instance
     has it.** [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6id/)
-    (15.2 TB per node), r7id/r8id and the i-family carry instance-store NVMe
+    (15.2 TB per node), r8id and the i-family carry instance-store NVMe
     that is both faster (local, no network round-trip) and effectively free
     compared to shared-filesystem capacity and throughput. AWS ParallelCluster
     formats and mounts the instance store at **`/scratch`** automatically (the
@@ -365,6 +437,9 @@ runs). On a shared filesystem this is a hard planning constraint:
     is ephemeral: anything not copied back is lost when the node scales down.
     The [AnsysMechanical.sbatch](https://github.com/aws-samples/hpc-applications/blob/main/apps/AnsysMechanical/AnsysMechanical.sbatch)
     in this directory implements all of this (`SCRATCH_MODE=auto|nvme|shared`).
+    It is a benchmark launcher: before the reclaim it copies back MAPDL's output
+    and error logs, not its results files (`file*.rst`) or database (`file.db`),
+    so for a production solve copy those as well, or use `SCRATCH_MODE=shared`.
   * **Check that `/scratch` is local instance store, with room, before using
     it.** A writable `/scratch` proves neither: on an instance type without
     instance store it can be a plain directory on the root EBS volume, and the
@@ -384,7 +459,9 @@ runs). On a shared filesystem this is a hard planning constraint:
     out of scratch space fails the run, so for an out-of-core model set
     `SCRATCH_MIN_FREE_GIB` to what the model writes on a node. MAPDL reports the
     whole job's as `Sum of disk space used on all processes`, which is also the
-    most any one node can need.
+    most any one node can need, and on more than one node the busiest node's as
+    `Maximum disk space used on any compute node` (the last column of the table
+    at the top of this section).
 
 ## Exit codes: do not use them to decide success
 
@@ -411,13 +488,13 @@ run. A robust success test is therefore: `RUN COMPLETED` present, a final
 `Elapsed Time (sec)` present **and positive**, **and** no `*** ERROR ***` block
 other than the expected iteration-limit termination.
 
-A full disk shows why the error blocks are the test that matters. When the shared
-filesystem holding the scratch filled up during our V26 Cluster runs, MAPDL
-stopped the sparse factorisation with "An input/output error has occurred ...
-Please check to see if the disk containing the working directory ... is full",
-then still printed `RUN COMPLETED` and a positive `Elapsed Time (sec)`, and
-exited 1 (one node) or 255 (two nodes): the statuses the fixed-iteration stop
-also returns. Only the error block says that the solve never finished
+A full disk shows why the error blocks are the test that matters. When the
+filesystem holding the scratch is full, MAPDL 2026 R1 stops the sparse
+factorisation with "An input/output error has occurred ... Please check to see
+if the disk containing the working directory ... is full", then still prints
+`RUN COMPLETED` and a positive `Elapsed Time (sec)`, and exits 1 (one node) or
+255 (two nodes): the statuses the fixed-iteration stop also returns. Only the
+error block says that the solve never finished
 ([tests/fixtures/disk-full-abort.log](https://github.com/aws-samples/hpc-applications/blob/main/apps/AnsysMechanical/tests/fixtures/disk-full-abort.log)).
 
 Getting that test right is fiddlier than it looks, and the failure modes are
@@ -475,7 +552,7 @@ silent in both directions. Four traps we hit:
 When parsing that timing line, note the format —
 
 ```
-|   Elapsed Time (sec) =    1327.590    Date  =  08/29/2026   |
+|   Elapsed Time (sec) =     600.000    Date  =  08/29/2026   |
 ```
 
 take the number immediately after the `=`; a trailing regex match will pick the
@@ -521,6 +598,28 @@ cache carrying the same number of ranks — prefer increments of
 **24, 48, 96, 192** (1, 2, 4, 8 cores per CCD), set via the `INCREMENT LIST`
 line in `DMPJOBS.DAT`, combined with the explicit pinning from
 [Utils/flexible-cores](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores).
+Any multiple of 24 up to 192 loads the CCDs evenly (72, 120, 144 and 168 cores
+per node as well); the flexible-cores page lists all eight counts.
+On hpc8a.96xlarge and hpc7a.96xlarge,
+[AnsysMechanical.sbatch](https://github.com/aws-samples/hpc-applications/blob/main/apps/AnsysMechanical/AnsysMechanical.sbatch)
+refuses any other count per node before the solve, with a message that names
+these eight. It reads the type from the instance metadata and checks no other
+type or size. When the instance metadata gives no instance type (no answer
+within a few seconds, an error, or an answer that is not an instance type
+name), the sbatch refuses such a count only on a node whose `lscpu` shows 192
+AMD cores (sockets x cores per socket), which could be one of those two types,
+with a message that names both and says why. Any other node runs such a
+count, with a one-line NOTE in the job log that the check was skipped, and a
+supported count runs on every node with no NOTE: no run is refused only
+because the instance metadata did not answer
+([tests/test-flexible-cores.sh](tests/test-flexible-cores.sh) checks each
+case). The sbatch's header asks for 128 tasks on 2 nodes, 64 per node for
+hpc6id.32xlarge, so to run it on one of those two types, change `--ntasks`
+with the partition and the constraint, for example
+`--nodes=2 --ntasks=192 --ntasks-per-node=96` for 96 per node. A
+`--ntasks-per-node` alone does not replace the header's `--ntasks`: Slurm
+gives `--ntasks` precedence and takes `--ntasks-per-node` only as a maximum,
+so the 128 tasks would still land at 64 per node.
 
 Note that the bundled `runBench.py` is explicitly *not* intended for scheduler
 environments. Run the models under your scheduler using the command line it
@@ -534,16 +633,50 @@ ansys261 -b nolist -perf on -dis -machines <host:cores:...> -nt 1 -mpi intelmpi 
 Each `.dat` resumes a matching `<job>geom.db`, so both files (and `checkver.mac`)
 must be present in the run directory.
 
+To run one of them with
+[AnsysMechanical.sbatch](https://github.com/aws-samples/hpc-applications/blob/main/apps/AnsysMechanical/AnsysMechanical.sbatch),
+give it the `.dat` from the unpacked package
+(`sbatch AnsysMechanical.sbatch v261 /fsx/V26/V26direct-5.dat`): it links every
+`.db` next to the input, and `checkver.mac`, into the working directory, and
+builds `-machines` from the allocation. It launches
+`mapdl -b -perf on -dis -mpi intelmpi -ssh -machines <host:cores:...>`.
+`-perf on`, as in the command line above and in every run in
+[Performance](#performance), makes MAPDL print the
+`S O L V E R   S T A T I S T I C S` section of its closing statistics, which
+holds the `Memory Option:` line the sbatch records the memory mode from; MAPDL
+reports the option at the top of its output as
+`PERFORMANCE STATS TRACKING REQUESTED`. Set `MAPDL_PERF=off` on the submission
+to leave it out: the sbatch then records the memory mode as `unknown`. The
+command line above also passes `nolist` and `-nt 1`, which MAPDL reports as
+`BATCH MODE REQUESTED (-b) = NOLIST` and
+`... WITH SINGLE THREAD PER PROCESS (FORCED)`.
+
 # Recording results
 
 [dynamodb/record-benchmark.sh](https://github.com/aws-samples/hpc-applications/blob/main/apps/AnsysMechanical/dynamodb/record-benchmark.sh)
 records a run into the shared AI-Powered HPC dataset. Beyond the auto-detected
 fields, `--mdofs` (model size) is the key size driver and worth always passing.
-There is no dedicated flag for the solver family, so record it as a
-characteristic — for example
-`--char solver_type=sparse-direct-symmetric` or `--char solver_type=pcg-iterative`,
-and `--char memory_mode=InCore|OutOfCore` — since those two attributes explain
-most of the runtime variation between otherwise identical configurations.
+Give the solver family with `--solver-type` (for the V26 Cluster models,
+`sparse-direct-nonsymmetric` for V26direct-4, `sparse-direct-symmetric` for
+V26direct-5, `sparse-direct-complex` for V26direct-6, `jcg-iterative` for
+V26iter-4 and `pcg-iterative` for V26iter-5 and V26iter-6) and the memory mode
+with `--char memory_mode=InCore|OutOfCore`: those two attributes explain most of
+the runtime variation between otherwise identical configurations. The sbatch
+reads the memory mode from MAPDL's `Memory Option:` line, which MAPDL prints only
+with `-perf on` (see [Benchmarks](#benchmarks)), and records `unknown` for an
+output without the line. With the sbatch, set `SOLVER_TYPE` on the submission
+rather than exporting it, so that it does not carry over to the next model:
+
+```bash
+SOLVER_TYPE=pcg-iterative sbatch AnsysMechanical.sbatch v261 /fsx/V26/V26iter-5.dat
+```
+
+The recorder reads `SOLVER_TYPE` from its environment, and a value on its
+command line wins: `--solver-type` over `--char solver_type=`, and either over
+the environment. It reads the model size from `MDOFS` the same way, so
+`MDOFS=<x> SOLVER_TYPE=<family> sbatch AnsysMechanical.sbatch ...` records both
+the size and the solver family (for the V26 Cluster models, `<x>` is the MDOF
+column of the table in [Benchmarks](#benchmarks)).
 
 # Performance
 
@@ -553,22 +686,36 @@ MPI over EFA, in eu-north-1. Scratch is the working directory on FSx for Lustre
 unless stated. Under-populated Hpc8a/Hpc7a nodes were pinned with the lists from
 [Utils/flexible-cores](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores)
 (`I_MPI_PIN_PROCESSOR_LIST`, checked in Intel MPI's pinning table with
-`I_MPI_DEBUG=5`). Treat the numbers as measurements of these models on these
+`I_MPI_DEBUG=5`), and those of the other types with an even stride over all
+their cores. On hpc6a.48xlarge that stride does not balance the 16 and 32 cores
+per node of the tables below: its 96 cores share 12 L3 caches, so balanced
+counts there are multiples of 12 (the flexible-cores page, "Other AMD instance
+types"). The runs are from 2026-08-29 to 2026-10-04, each with at most three
+other MAPDL solves of the campaign running at the same time
+([Shared-filesystem contention](#shared-filesystem-contention) shows what more
+did). Treat the numbers as measurements of these models on these
 configurations, not as a general ranking.
 
 > Every figure below is relative performance, computed from MAPDL's own
-> `Elapsed Time (sec)`, one run per cell: the reference run's time divided by
-> each run's time, so the reference is 1.00 and higher is faster. These models
-> ran at most 96 cores per node, so the instance comparison uses one
-> hpc7a.96xlarge node at 96 cores as its reference, not a fully populated node.
+> `Elapsed Time (sec)`: the reference's time divided by each configuration's, so
+> the reference is 1.00 and higher is faster. A cell is one run unless it gives a
+> run count, and then the median of those runs. Each instance table holds one
+> CPU vendor's instance types, against a reference of the same vendor. These
+> models ran at most 96 cores per node, so the first AMD instance table uses one
+> hpc7a.96xlarge node at 96 cores as its reference, not a fully populated node,
+> and the core-count table and the second AMD table one hpc8a.96xlarge node at
+> 96 cores. The first Intel table uses one c8i.96xlarge node at 32 cores, a
+> layout every Intel type ran, and the second one hpc6id.32xlarge node at 64
+> cores. The NVMe and contention tables state their own reference below them,
+> and the contention table lists each shared run.
 
-## Balanced core counts on Hpc8a and Hpc7a
+## Balanced core counts on Hpc8a
 
 Every layout below gives each of the 24 CCDs the same number of ranks. The runs
 are from 2026-10-04, with at most two other MAPDL solves running at the same time.
-The 1 x 96 cells marked * are earlier runs: V26iter-5 and V26iter-6 ran alone
-(2026-08-31), V26iter-4 with at most two other solves (2026-08-31), and
-V26direct-5 on Hpc7a with at most three (2026-08-30).
+The 1 x 96 cells marked * are earlier runs (2026-08-31): V26iter-5 ran alone,
+V26iter-4 with at most two other solves, and V26iter-6 is the median of two
+runs, one alone and one with at most two others.
 
 Core counts and nodes on hpc8a.96xlarge, each model against one node at 96 cores
 = 1.00:
@@ -580,35 +727,149 @@ Core counts and nodes on hpc8a.96xlarge, each model against one node at 96 cores
 | V26direct-6 | 0.52 | 0.80 | 1.00 | 1.47 | 1.97 |
 | V26iter-4 | 0.76 | 0.97 | 1.00* | 1.22 | 1.23 |
 | V26iter-5 | 0.80 | 0.94 | 1.00* | | |
-| V26iter-6 | 0.66 | 0.85 | 1.00* | 1.22 | 1.20 |
-
-Hpc8a against Hpc7a, each model against one hpc7a.96xlarge node at 96 cores =
-1.00:
-
-| Model | Instance | 1 x 24 | 1 x 48 | 1 x 96 |
-|---|---|--:|--:|--:|
-| V26direct-5 | hpc7a.96xlarge | 0.47 | 0.76 | 1.00* |
-| V26direct-5 | hpc8a.96xlarge | 0.75 | 1.04 | 1.15 |
-| V26iter-5 | hpc7a.96xlarge | 0.83 | 0.95 | 1.00* |
-| V26iter-5 | hpc8a.96xlarge | 0.99 | 1.17 | 1.24* |
+| V26iter-6 | 0.66 | 0.86 | 1.00* (2 runs) | 1.23 | 1.21 |
 
 Nodes x cores per node; relative performance, higher is faster.
 
   * On one node, 96 cores was the fastest of the three counts for every model.
   * On two nodes, the iterative models ran as fast at 48 cores per node as at 96
-    (V26iter-6: 1.22 and 1.20; V26iter-4: 1.22 and 1.23), while the sparse-direct
+    (V26iter-6: 1.23 and 1.21; V26iter-4: 1.22 and 1.23), while the sparse-direct
     models still gained from 96 (V26direct-6: 1.47 to 1.97).
-  * The memory mode explains the largest steps. V26direct-5 (710 GB) ran
-    Optimal Out-of-Core on one hpc8a.96xlarge (768 GB) and In-Core on two, so
-    2 x 48 was 2.9x faster than 1 x 96 on the same 96 cores. V26direct-6
-    (1,100 GB) stayed out-of-core on two hpc8a nodes, and V26direct-4 (510 GB)
-    was in-core throughout. The figure in brackets is the requirement
-    `JOBS.CONFIG` lists, and both out-of-core cases had more RAM than it, so
-    read it as a floor: V26direct-6 did not run in-core on the 1,536 GB of two
-    hpc8a nodes, and did on two hpc6id.32xlarge (2,048 GB, see the NVMe table
-    below).
-  * At the same layout, hpc8a.96xlarge was 1.15-1.59x as fast as
-    hpc7a.96xlarge (13-37% less time).
+  * The memory mode explains the largest steps. V26direct-5 ran Optimal
+    Out-of-Core on one hpc8a.96xlarge and In-Core on two, so 2 x 48 was 2.9x
+    faster than 1 x 96 on the same 96 cores. V26direct-6 stayed out-of-core on
+    two hpc8a nodes, and V26direct-4 was in-core throughout (see
+    [Memory mode and node count](#memory-mode-and-node-count)).
+  * **Where a second node pays.** At 96 cores per node, a second node ran
+    V26direct-6 1.97x as fast (98% parallel efficiency), and V26direct-5, which
+    it brought in-core, 3.65x (182%). For V26direct-4, V26iter-4 and V26iter-6,
+    which already fit on one node, it bought 20-23%, at 60-62% efficiency.
+
+## Instance types
+
+The tables below give every instance type we ran the V26 Cluster models on, each
+CPU vendor's types against a reference of the same vendor. "in" and "out" give
+MAPDL's memory mode (In-Core, Optimal Out-of-Core), and "NVMe" marks scratch on
+local instance store.
+
+### AMD instance types
+
+V26direct-5, which fits in memory on only some of these configurations, and
+V26iter-5, which fits on all of them, each against one hpc7a.96xlarge node at 96
+cores = 1.00:
+
+| Instance | Nodes x cores per node | V26direct-5 | V26iter-5 (PCG) |
+|---|---|--:|--:|
+| hpc7a.96xlarge | 1 x 24 | 0.47 out | 0.83 |
+| hpc7a.96xlarge | 1 x 48 | 0.76 out | 0.96 |
+| hpc7a.96xlarge | 1 x 96 | 1.00 out | 1.00 (2 runs) |
+| hpc8a.96xlarge | 1 x 24 | 0.75 out | 0.99 |
+| hpc8a.96xlarge | 1 x 48 | 1.04 out | 1.17 |
+| hpc8a.96xlarge | 1 x 96 | 1.15 out | 1.24 |
+| hpc8a.96xlarge | 2 x 48 | 3.35 in | |
+| hpc8a.96xlarge | 2 x 96 | 4.19 in | |
+| hpc6a.48xlarge | 1 x 32 | | 0.74 |
+
+V26direct-4, V26iter-4 and V26iter-6 on hpc6a.48xlarge, each against one
+hpc8a.96xlarge node at 96 cores = 1.00 (their hpc8a layouts are in
+[Balanced core counts on Hpc8a](#balanced-core-counts-on-hpc8a); V26direct-6 ran
+on no other AMD type):
+
+| Instance | Nodes x cores per node | V26direct-4 | V26iter-4 | V26iter-6 |
+|---|---|--:|--:|--:|
+| hpc6a.48xlarge | 1 x 16 | 0.10 out | 0.36 | |
+| hpc6a.48xlarge | 1 x 32 | 0.13 out | 0.50 | |
+| hpc6a.48xlarge | 2 x 32 | 0.35 in (2 runs) | | 0.69 |
+
+Nodes x cores per node; relative performance, higher is faster.
+
+  * **Hpc8a was the fastest per node of the AMD types.** At the same layout it
+    was 1.15-1.59x as fast as hpc7a.96xlarge (13-37% less time), and one
+    hpc8a.96xlarge at 24 cores ran V26iter-5 faster than one hpc6a.48xlarge at
+    32 (0.99 against 0.74).
+  * **Two hpc8a nodes hold V26direct-5 in-core.** One hpc8a.96xlarge or
+    hpc7a.96xlarge (768 GiB) ran it out-of-core, and two hpc8a.96xlarge in-core
+    (4.19 against 1.15 at 96 cores per node).
+  * **Hpc6a was slower per core.** With the model in-core, two hpc6a.48xlarge at
+    32 cores per node ran V26direct-4 at about the speed of one hpc8a.96xlarge at
+    24 (0.35 against 0.37), a count that loads hpc6a's L3 caches unevenly (see
+    [Performance](#performance)).
+
+### Intel instance types
+
+V26direct-5 and V26iter-5, each against one c8i.96xlarge node at 32 cores =
+1.00:
+
+| Instance | Nodes x cores per node | V26direct-5 | V26iter-5 (PCG) |
+|---|---|--:|--:|
+| c8i.96xlarge | 1 x 32 | 1.00 out | 1.00 |
+| c8i.96xlarge | 1 x 96 | 1.29 out | 1.24 |
+| hpc6id.32xlarge | 1 x 16 | 0.84 in | 0.70 |
+| hpc6id.32xlarge | 1 x 32 | 1.29 in | 0.91 |
+| hpc6id.32xlarge | 1 x 64 | 1.97 in, NVMe | 1.00 |
+| hpc6id.32xlarge | 2 x 64 | 3.02 in | |
+| c7i.48xlarge | 1 x 32 | | 0.89 |
+| m7i.48xlarge | 1 x 32 | | 0.93 |
+| r7i.48xlarge | 1 x 32 | | 0.98 |
+| r8i.96xlarge | 1 x 32 | | 0.93 |
+
+V26direct-6, against one hpc6id.32xlarge node at 64 cores = 1.00:
+
+| Instance | Nodes x cores per node | V26direct-6 |
+|---|---|--:|
+| hpc6id.32xlarge | 1 x 16 | 0.33 out |
+| hpc6id.32xlarge | 1 x 32 | 0.55 out |
+| hpc6id.32xlarge | 1 x 64 | 1.00 out, NVMe (2 runs) |
+| hpc6id.32xlarge | 2 x 64 | 2.12 in, NVMe (2 runs) |
+| r8i.96xlarge | 1 x 64 | 1.39 in |
+
+Nodes x cores per node; relative performance, higher is faster. V26direct-4,
+V26iter-4 and V26iter-6 ran on one Intel configuration each, one hpc6id.32xlarge
+node at 64 cores, so these tables leave them out; V26direct-4 ran in-core there
+(see [Memory mode and node count](#memory-mode-and-node-count)).
+
+  * **Memory per node sets the node count of a sparse-direct model.** One
+    hpc6id.32xlarge (1,024 GiB) holds V26direct-5 in-core, where one
+    c8i.96xlarge (768 GiB) does not: at 64 cores it ran V26direct-5 1.53x as
+    fast as one c8i.96xlarge at 96 cores (1.97 against 1.29). One r8i.96xlarge
+    (3,072 GiB) holds V26direct-6 in-core, where one hpc6id.32xlarge does not
+    (1.39 against 1.00, at 64 cores each), and two hpc6id.32xlarge, in-core as
+    well, ran it 1.53x as fast as the r8i.96xlarge node (2.12 against 1.39).
+  * **No Intel type with more memory per core beat c8i.96xlarge on a model that
+    fit.** On V26iter-5, which fits on every one of these nodes, one
+    c8i.96xlarge at 32 cores (1.00) was faster than every other Intel type at 32
+    cores (0.89-0.98), the large-memory r7i.48xlarge and r8i.96xlarge included.
+    With the same CPU and more memory the results were mixed, one run each: at
+    32 cores, c7i, m7i and r7i.48xlarge (1, 2 and 4 times the memory) ran at
+    0.89, 0.93 and 0.98, and c8i.96xlarge and r8i.96xlarge (1 and 4 times) at
+    1.00 and 0.93.
+  * **Hpc6id was slower per core than c8i.96xlarge on a model that fit.** On
+    V26iter-5, one hpc6id.32xlarge at 32 cores ran at 0.91, and with all 64 of
+    its cores at about the speed of one c8i.96xlarge at 32 (1.00).
+
+## Memory mode and node count
+
+MAPDL's memory mode for the three sparse-direct models in every run we archived,
+from its `Memory Option:` line, against the job's memory (the instance's memory
+in GiB, as EC2 lists it, times the nodes) and that memory over the figure in GB
+that `JOBS.CONFIG` lists:
+
+| Model (`JOBS.CONFIG`) | In-Core | Optimal Out-of-Core |
+|---|---|---|
+| V26direct-4 (510 GB) | 1 x hpc8a.96xlarge or 2 x hpc6a.48xlarge, 768 GiB (1.51x); 1 x hpc6id.32xlarge, 1,024 GiB (2.01x); 2 x hpc8a.96xlarge, 1,536 GiB (3.01x) | 1 x hpc6a.48xlarge, 384 GiB (0.75x) |
+| V26direct-5 (710 GB) | 1 x hpc6id.32xlarge, 1,024 GiB (1.44x); 2 x hpc8a.96xlarge, 1,536 GiB (2.16x); 2 x hpc6id.32xlarge, 2,048 GiB (2.88x) | 1 x hpc8a.96xlarge, hpc7a.96xlarge or c8i.96xlarge, 768 GiB (1.08x) |
+| V26direct-6 (1,100 GB) | 2 x hpc6id.32xlarge, 2,048 GiB (1.86x); 1 x r8i.96xlarge, 3,072 GiB (2.79x) | 1 x hpc8a.96xlarge, 768 GiB (0.70x); 1 x hpc6id.32xlarge, 1,024 GiB (0.93x); 2 x hpc8a.96xlarge, 1,536 GiB (1.40x) |
+
+Every configuration with at least 1.44 times the `JOBS.CONFIG` figure ran
+in-core, and every one with 1.40 times or less out-of-core, at every rank count
+we ran (16 to 192): the memory mode followed the job's memory, not its ranks. So
+read that figure as a floor, plan for about 1.5 times it, and add nodes to get
+there. The ratios divide the instance's GiB by `JOBS.CONFIG`'s GB, each as its
+source lists it, and the advice holds in those units. This rule of thumb, and
+the one for MAPDL's printed in-core figure under
+[Key settings](#key-settings--tips-performance-related-ones) (about twice it),
+rest on these three models and the nine combinations of instance type and node
+count in the table: check your own model's memory mode on its first run.
 
 ## Scratch on local NVMe vs FSx for Lustre
 
@@ -654,13 +915,19 @@ concurrent solves and to re-run a surprising result alone.
 
 ## Which time to compare
 
-The sbatch records two times: the wall clock around the `mapdl` command
-(`time_to_solution_seconds`) and MAPDL's own `Elapsed Time (sec)`
-(`mapdl_elapsed_seconds`). Compare runs on MAPDL's. The difference is the time
+For a run it accepts, the sbatch takes MAPDL's own `Elapsed Time (sec)` as the
+run's time: it prints it first on its `Time to solution:` line and records it as
+`time_to_solution_seconds` (and as `mapdl_elapsed_seconds`), with the wall clock
+around the `mapdl` command beside it (`wall_clock_seconds`). For a run it does
+not accept, the line reads `Time to solution: none`, even when MAPDL printed a
+positive Elapsed Time, as a disk-full abort does (see
+[Exit codes](#exit-codes-do-not-use-them-to-decide-success)). Compare runs on
+MAPDL's time. The difference is the time
 spent outside MAPDL's own clock, and it is not constant: for V26direct-5 on
 2 x hpc6id.32xlarge the wall clock was 9% longer than MAPDL's time when the solve
 ran alone, and 8% to 137% longer on the shared file system above (2.4x MAPDL's
-time at worst).
+time at worst). Over the 66 runs of the core-count and instance tables above,
+it was 0.5% to 16% longer, 2% at the median.
 
 ## Contribute your results
 
