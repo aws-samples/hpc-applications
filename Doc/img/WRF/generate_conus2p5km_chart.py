@@ -29,7 +29,7 @@ from matplotlib.ticker import FixedLocator, FuncFormatter, NullLocator
 # ---------------------------------------------------------------------------
 # Measured data: relative performance (1 x hpc7a.96xlarge = 1.00) and run count
 # per node count. WRF 4.6.1, CONUS 2.5km (1501 x 1201 x 50), the 6-hour forecast
-# with hourly history output, AWS runs of October 2026 (read 2026-10-27): m8a
+# with hourly history output, AWS runs of October 2026 (read 2026-10-28): m8a
 # and m8g in us-east-2 (ParallelCluster 3.15.0, EFA installer 1.47.0), the
 # others in eu-north-1 (ParallelCluster 3.16.0, EFA installer 1.49.0). Every
 # node fully populated, one MPI rank per core (OMP_NUM_THREADS=1), EFA:
@@ -40,13 +40,13 @@ from matplotlib.ticker import FixedLocator, FuncFormatter, NullLocator
 # ---------------------------------------------------------------------------
 DATA = {
     # type             {nodes: (relative performance, runs)}
-    "hpc8a.96xlarge": {1: (1.379, 3), 2: (2.851, 3), 4: (5.915, 3), 8: (12.679, 3)},
-    "c8i.96xlarge":   {1: (1.376, 3), 2: (2.755, 3)},
-    "m8a.48xlarge":   {1: (1.261, 1), 2: (2.583, 1)},
-    "m8g.48xlarge":   {1: (1.134, 3), 2: (2.191, 3), 4: (4.327, 3), 8: (8.697, 2)},
-    "hpc7a.96xlarge": {1: (1.000, 1), 2: (2.075, 2), 4: (4.303, 2), 8: (9.198, 2)},
-    "hpc6a.48xlarge": {1: (0.407, 2), 2: (0.798, 2), 4: (1.657, 2), 8: (3.461, 2),
-                       16: (7.302, 2)},
+    "hpc8a.96xlarge": {1: (1.3791, 3), 2: (2.8517, 3), 4: (5.9165, 3), 8: (12.6810, 3)},
+    "c8i.96xlarge":   {1: (1.3765, 3), 2: (2.7555, 3)},
+    "m8a.48xlarge":   {1: (1.2613, 1), 2: (2.5834, 1)},
+    "m8g.48xlarge":   {1: (1.1345, 3), 2: (2.1916, 3), 4: (4.3276, 3), 8: (8.6986, 2)},
+    "hpc7a.96xlarge": {1: (1.0000, 3), 2: (2.0757, 2), 4: (4.3035, 2), 8: (9.1995, 2)},
+    "hpc6a.48xlarge": {1: (0.4073, 2), 2: (0.7978, 2), 4: (1.6568, 2), 8: (3.4619, 2),
+                       16: (7.3030, 2)},
 }
 
 # type: (legend label, colour, marker,

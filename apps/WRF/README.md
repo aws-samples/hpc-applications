@@ -261,8 +261,8 @@ Relative performance (1 node `hpc7a.96xlarge` = 1.00×):
 
 | Nodes | hpc8a.96xlarge | c8i.96xlarge | m8a.48xlarge | m8g.48xlarge | hpc7a.96xlarge | hpc6a.48xlarge |
 |------:|---------------:|-------------:|-------------:|-------------:|---------------:|---------------:|
-| 1 | 1.38× | 1.38× | 1.26× (1 run) | 1.13× | 1.00× (1 run) | 0.41× |
-| 2 | 2.85× | 2.75× | 2.58× (1 run) | 2.19× | 2.08× | 0.80× |
+| 1 | 1.38× | 1.38× | 1.26× (1 run) | 1.13× | 1.00× (3 runs) | 0.41× |
+| 2 | 2.85× | 2.76× | 2.58× (1 run) | 2.19× | 2.08× | 0.80× |
 | 4 | 5.92× | — | — | 4.33× | 4.30× | 1.66× |
 | 8 | 12.68× | — | — | 8.70× (2 runs) | 9.20× | 3.46× |
 | 16 | — | — | — | — | — | 7.30× |
@@ -273,9 +273,9 @@ Key takeaways:
 
 - The steady step keeps scaling to 1,536 cores: hpc7a and hpc8a both reach **115%** parallel efficiency on 8 nodes, and hpc6a **112%** on 16. Efficiency above 100% means the steady step shrank more than in proportion to the node count; each rank's smaller part of the grid fitting better in cache would explain it, but that was not measured here.
 - A single hpc8a node delivers **1.38×** the performance of a single hpc7a node, and hpc8a stays at 1.37–1.38× hpc7a at every node count from 1 to 8.
-- On 1 and 2 nodes, c8i is within 4% of hpc8a (1.38× and 2.75× against 1.38× and 2.85×); m8a reaches 1.26× and 2.58× (one run each).
+- On 1 and 2 nodes, c8i is within 4% of hpc8a (1.38× and 2.76× against 1.38× and 2.85×); m8a reaches 1.26× and 2.58× (one run each).
 - m8g (Graviton4, OpenMPI 5) starts ahead of hpc7a (1.13× on one node) but scales at 95–97%, so the two are level at 4 nodes and hpc7a leads at 8 (9.20× against 8.70×).
-- On the total wall time instead, the same runs reach only 3.53× (hpc7a) and 4.69× (hpc8a) on 8 nodes: the hourly history writes and the restart write do not get faster with more nodes, and as these x86 runs wrote them (serial, compressed netCDF-4) they take 15–16% of a one-node hpc7a or hpc8a run but 64–66% of an 8-node one. [Whole run with PnetCDF output](#conus-25km--whole-run-with-pnetcdf-output-6-hour-forecast) gives the whole run's scaling with the output written as [Output format](#output-format) recommends, and the next section what the output format changes.
+- On the total wall time instead, the same runs reach only 3.52× (hpc7a) and 4.68× (hpc8a) on 8 nodes: the hourly history writes and the restart write do not get faster with more nodes, and as these x86 runs wrote them (serial, compressed netCDF-4) they take 15–16% of a one-node hpc7a or hpc8a run but 64–66% of an 8-node one. [Whole run with PnetCDF output](#conus-25km--whole-run-with-pnetcdf-output-6-hour-forecast) gives the whole run's scaling with the output written as [Output format](#output-format) recommends, and the next section what the output format changes.
 
 ### CONUS 2.5km — output format (6-hour forecast)
 
@@ -300,13 +300,13 @@ Every configuration of [Whole run with PnetCDF output](#conus-25km--whole-run-wi
 
 | Nodes | hpc8a.96xlarge | c8i.96xlarge | hpc7a.96xlarge | hpc6a.48xlarge |
 |------:|---------------:|-------------:|---------------:|---------------:|
-| 1 | 1.15× | 1.21× | 1.14× (1 serial run) | 1.07× |
+| 1 | 1.15× | 1.21× | 1.14× (3 serial runs) | 1.07× |
 | 2 | 1.30× | 1.46× | 1.32× | 1.13× |
 | 4 | 1.61× | — | 1.62× | 1.28× |
 | 8 | 2.38× | — | 2.35× | 1.57× |
 | 16 | — | — | — | 2.19× |
 
-Each value compares the medians of the two sections' runs, all made in eu-north-1: 2 with PnetCDF, and with serial output 3 on `hpc8a.96xlarge` and `c8i.96xlarge` and 2 on `hpc7a.96xlarge` and `hpc6a.48xlarge`, or 1 where marked. The gain grows with the node count, because the time steps get faster with more nodes while the serial output does not, so the output takes a growing share of the serial run. It is smallest on `hpc6a.48xlarge`, whose time steps take longest, so that the output is a smaller share of its runs. How much of the gain comes from not compressing was measured on `hpc8a.96xlarge` only, in the first table of this section.
+Each value compares the medians of the two sections' runs, all made in eu-north-1: 2 with PnetCDF, and with serial output 3 on `hpc8a.96xlarge` and `c8i.96xlarge` and 2 on `hpc7a.96xlarge` and `hpc6a.48xlarge`, or 3 where marked. The gain grows with the node count, because the time steps get faster with more nodes while the serial output does not, so the output takes a growing share of the serial run. It is smallest on `hpc6a.48xlarge`, whose time steps take longest, so that the output is a smaller share of its runs. How much of the gain comes from not compressing was measured on `hpc8a.96xlarge` only, in the first table of this section.
 
 ### Arm — Graviton3E (hpc7g) vs Graviton4 (m8g)
 
