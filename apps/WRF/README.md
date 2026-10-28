@@ -15,7 +15,7 @@ For the CONUS 2.5km forecast, as measured under [Performance](#performance):
 - **Ranks and threads:** pure MPI, one rank per core (`OMP_NUM_THREADS=1`), every node fully populated: 192 ranks per node on `hpc8a.96xlarge`, `hpc7a.96xlarge`, `c8i.96xlarge`, `m8a.48xlarge` and `m8g.48xlarge`, 96 on `hpc6a.48xlarge`. `c8i.96xlarge` ran with SMT disabled (in ParallelCluster, `DisableSimultaneousMultithreading: true`), so each of its 192 ranks had a physical core to itself. The Intel MPI scripts pin one rank to each core in order (`I_MPI_PIN_DOMAIN=core`, `I_MPI_PIN_ORDER=compact`), and the x86 OpenMPI scripts bind with `--bind-to core --map-by slot`.
 - **Fewer ranks per node:** every WRF result in this README was measured on full nodes, and the scripts' pinning is for full nodes. To run fewer ranks per node on `hpc8a.96xlarge` or `hpc7a.96xlarge`, submit with one of the core counts of [flexible cores](https://github.com/aws-samples/hpc-applications/tree/main/Utils/flexible-cores) as `--ntasks-per-node`, and replace the scripts' pinning with its list for that count: in the Intel MPI scripts, `I_MPI_PIN_PROCESSOR_LIST` instead of the `I_MPI_PIN_DOMAIN` and `I_MPI_PIN_ORDER` exports (Intel MPI ignores the list while `I_MPI_PIN_DOMAIN` is set); in the x86 OpenMPI scripts, `--bind-to cpu-list:ordered --cpu-list <list>` instead of `--bind-to core --map-by slot`.
 - **Output:** the history and restart files through PnetCDF ([Output format](#output-format)), on a parallel file system such as FSx for Lustre (measured on `hpc8a`, `c8i`, `hpc7a` and `hpc6a`; `m8a` and `m8g` were run with serial output only). The x86 CONUS 2.5km scripts write their output through PnetCDF by default.
-- **Instance type and node count:** from [Whole run with PnetCDF output](#conus-25km--whole-run-with-pnetcdf-output-6-hour-forecast). `hpc8a.96xlarge` is the fastest node measured (1.34–1.39× `hpc7a.96xlarge` from 1 to 8 nodes), and the whole run keeps 88–97% parallel efficiency on 8 nodes.
+- **Instance type and node count:** from [Whole run with PnetCDF output](#conus-25km--whole-run-with-pnetcdf-output-6-hour-forecast). Of the AMD types measured, `hpc8a.96xlarge` is the fastest node (1.34–1.39× `hpc7a.96xlarge` from 1 to 8 nodes), and on 8 nodes of each the whole run keeps 88–97% parallel efficiency.
 - **Timing:** run the full 6-hour forecast, not a shortened one. Compare configurations on the total wall time with the output settings you will use, and the scaling of the time steps on the median or the steady step ([Key Metrics](#key-metrics)).
 
 ## x86 builds
@@ -215,66 +215,70 @@ grep -E '^[[:space:]]*io_form_(history|restart)' namelist.input   # both now 11
 
 The CONUS 2.5km results are three views of the same benchmark: WRF 4.6.1 on the CONUS 2.5km case (1501×1201 grid, 50 levels, 15s timestep), running the full 6-hour forecast it ships with (1,440 steps, a history write every hour and a restart write at 5 hours).
 
-- [Whole run with PnetCDF output](#conus-25km--whole-run-with-pnetcdf-output-6-hour-forecast): the total wall time, with the output written as [Output format](#output-format) recommends, on four instance types. This is the time a run takes: use it to choose an instance type and a node count.
-- [Compute scaling](#conus-25km--compute-scaling-on-six-instance-types-6-hour-forecast): the steady step, which leaves the first step, the output and the input reads out, on six instance types. It shows how the time steps themselves scale.
+- [Whole run with PnetCDF output](#conus-25km--whole-run-with-pnetcdf-output-6-hour-forecast): the total wall time, with the output written as [Output format](#output-format) recommends, on `hpc8a`, `hpc7a` and `hpc6a` (AMD) and `c8i` (Intel). This is the time a run takes: use it to choose an instance type and a node count.
+- [Compute scaling](#conus-25km--compute-scaling-6-hour-forecast): the steady step, which leaves the first step, the output and the input reads out, on `hpc8a`, `m8a`, `hpc7a` and `hpc6a` (AMD) and `c8i` (Intel), and on `m8g` (Graviton4) under [Arm](#arm--graviton3e-hpc7g-vs-graviton4-m8g). It shows how the time steps themselves scale.
 - [Output format](#conus-25km--output-format-6-hour-forecast): what writing the output uncompressed, or in parallel through PnetCDF, changes.
 
 The runs behind these views were made in October 2026: on `hpc8a`, `c8i`, `hpc7a` and `hpc6a` in eu-north-1 (ParallelCluster 3.16.0, EFA installer 1.49.0, Intel MPI 2021.18), and on `m8a` and `m8g` in us-east-2 (ParallelCluster 3.15.0, EFA installer 1.47.0; Intel MPI 2021.17 on `m8a`). `hpc7a` and `hpc6a` also ran the forecast with serial output in us-east-2; this README's tables and charts take their eu-north-1 runs only, so that each instance type is measured on one software stack. On the configurations run in both Regions, the two stacks' steady steps agree within 2%, but on 16 `hpc6a.48xlarge` nodes the two us-east-2 runs were both about 5% slower than the two eu-north-1 runs.
 
+Each CPU vendor's results are given against a reference of the same vendor: one `hpc7a.96xlarge` node for the AMD types, and for `c8i.96xlarge` (Intel) and `m8g.48xlarge` (Graviton4), the only types of their vendors in these runs, one node of the same type.
+
 ### CONUS 2.5km — whole run with PnetCDF output (6-hour forecast)
 
-This chart shows the scaling of the whole forecast with its history and restart files written through PnetCDF (`io_form_history = io_form_restart = 11`) to FSx for Lustre, on 1 to 16 nodes of AWS EC2 [hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/), [c8i](https://aws.amazon.com/ec2/instance-types/c8i/), [hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) and [hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) instances.
+This chart shows the scaling of the whole forecast with its history and restart files written through PnetCDF (`io_form_history = io_form_restart = 11`) to FSx for Lustre, on 1 to 16 nodes of the AMD-based AWS EC2 [hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/), [hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) and [hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) instances. The Intel-based [c8i](https://aws.amazon.com/ec2/instance-types/c8i/) follows the table, against one node of its own type.
 
 Every node is fully populated with one MPI rank per core (96 on `hpc6a.48xlarge`, 192 on the others), over EFA, with the GCC + Intel MPI build (Option 2) and the Intel MPI settings of `x86/wrf-benchmark-conus2.5km-intel.sbatch` (Intel MPI 2021.18, MULTIRAIL enabled). Performance is the whole run: the wall time of `wrf.exe` from the start of `mpirun` to its exit, output included (the scripts' `Total WRF time`), the median over each configuration's runs, normalized to a single `hpc7a.96xlarge` node — higher is better. The right panel shows each instance type's parallel efficiency against its own single node.
 
-![WRF CONUS 2.5km 6-hour forecast with PnetCDF output: scaling of the whole run](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/WRF/WRF-CONUS2.5km-6h-PnetCDF-Scaling.png?raw=true)
+![WRF CONUS 2.5km 6-hour forecast with PnetCDF output: scaling of the whole run on AMD instance types](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/WRF/WRF-CONUS2.5km-6h-PnetCDF-Scaling.png?raw=true)
 
 Relative performance with PnetCDF output (1 node `hpc7a.96xlarge` = 1.00×), and in brackets the parallel efficiency against one node of the same type:
 
-| Nodes | hpc8a.96xlarge | c8i.96xlarge | hpc7a.96xlarge | hpc6a.48xlarge |
-|------:|---------------:|-------------:|---------------:|---------------:|
-| 1 | 1.39× | 1.37× | 1.00× | 0.42× |
-| 2 | 2.78× (100%) | 2.60× (95%) | 2.04× (102%) | 0.81× (96%) |
-| 4 | 5.40× (97%) | — | 3.94× (98%) | 1.64× (98%) |
-| 8 | 9.75× (88%) | — | 7.25× (91%) | 3.25× (97%) |
-| 16 | — | — | — | 6.15× (92%) |
+| Nodes | hpc8a.96xlarge | hpc7a.96xlarge | hpc6a.48xlarge |
+|------:|---------------:|---------------:|---------------:|
+| 1 | 1.39× | 1.00× | 0.42× |
+| 2 | 2.78× (100%) | 2.04× (102%) | 0.81× (96%) |
+| 4 | 5.40× (97%) | 3.94× (98%) | 1.64× (98%) |
+| 8 | 9.75× (88%) | 7.25× (91%) | 3.25× (97%) |
+| 16 | — | — | 6.15× (92%) |
 
 Every value is the median of 2 runs, and the two runs of each configuration agree within 1%. The runs were made in eu-north-1 in October 2026, with up to 3 other benchmark jobs sharing their FSx for Lustre file system.
+
+`c8i.96xlarge` (Intel) ran the same forecast with PnetCDF output on 1 and 2 nodes, 2 runs each: against one `c8i.96xlarge` node = 1.00×, two nodes ran 1.90×, a parallel efficiency of 95%.
 
 Key takeaways:
 
 - The whole run keeps scaling to 1,536 cores: on 8 nodes, parallel efficiency is **88%** on `hpc8a.96xlarge`, **91%** on `hpc7a.96xlarge` and 97% on `hpc6a.48xlarge`, and 92% on 16 `hpc6a.48xlarge` nodes. With serial output instead (compressed netCDF-4, the default of a build with netCDF-4 support), the same forecast reached 42% on 8 `hpc8a.96xlarge` nodes (see [CONUS 2.5km — output format](#conus-25km--output-format-6-hour-forecast)).
 - A single hpc8a node runs the whole forecast **1.39×** as fast as a single hpc7a node, and hpc8a stays at 1.34–1.39× hpc7a at every node count from 1 to 8.
-- c8i is within 2% of hpc8a on one node (1.37× against 1.39×) and 6% behind it on two (2.60× against 2.78×).
 - One `hpc6a.48xlarge` node (96 cores) delivers 0.42× of one `hpc7a.96xlarge` node (192 cores).
 - The time outside the steady step (the output, the input reads and the first step) shrinks far less than the time steps as nodes are added, so its share of the run grows from 3–7% on one node to 21–28% on 1,536 cores. The steady step itself keeps 98–118% parallel efficiency in the same runs: that share is what brings the whole-run efficiency down.
 
-### CONUS 2.5km — compute scaling on six instance types (6-hour forecast)
+### CONUS 2.5km — compute scaling (6-hour forecast)
 
-This chart shows how the time steps of the same forecast scale, leaving the first step, the output and the input reads out, on 1 to 16 nodes of AWS EC2 [hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/), [c8i](https://aws.amazon.com/ec2/instance-types/c8i/), [m8a](https://aws.amazon.com/ec2/instance-types/m8a/), [m8g](https://aws.amazon.com/ec2/instance-types/m8g/), [hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) and [hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) instances. These runs wrote the serial output the case ships with (`io_form_history = io_form_restart = 2`); m8a and m8g were run with that output only. On the 15 configurations also run with PnetCDF, the steady step of the PnetCDF runs is within 2.5% of that of the serial runs: the steady step does not depend on the output format.
+This chart shows how the time steps of the same forecast scale, leaving the first step, the output and the input reads out, on 1 to 16 nodes of the AMD-based AWS EC2 [hpc8a](https://aws.amazon.com/ec2/instance-types/hpc8a/), [m8a](https://aws.amazon.com/ec2/instance-types/m8a/), [hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) and [hpc6a](https://aws.amazon.com/ec2/instance-types/hpc6a/) instances. The Intel-based [c8i](https://aws.amazon.com/ec2/instance-types/c8i/) follows the table, and the Graviton4-based [m8g](https://aws.amazon.com/ec2/instance-types/m8g/) is under [Arm](#arm--graviton3e-hpc7g-vs-graviton4-m8g), each against one node of its own type. These runs wrote the serial output the case ships with (`io_form_history = io_form_restart = 2`); m8a and m8g were run with that output only. On the 15 configurations also run with PnetCDF, the steady step of the PnetCDF runs is within 2.5% of that of the serial runs: the steady step does not depend on the output format.
 
-Every node is fully populated with one MPI rank per core (96 on `hpc6a.48xlarge`, 192 on the others), over EFA. The x86 instances run the GCC + Intel MPI build (Option 2) with the Intel MPI settings of `x86/wrf-benchmark-conus2.5km-intel.sbatch` (Intel MPI 2021.17 or 2021.18, MULTIRAIL enabled); `m8g.48xlarge` runs the Graviton4 build with OpenMPI 5.0.9, launched as `Arm/wrf-benchmark.sbatch` does. Performance is the steady step (see [Key Metrics](#key-metrics)), the median over each configuration's runs, normalized to a single `hpc7a.96xlarge` node — higher is better. The right panel shows each instance type's parallel efficiency against its own single node.
+Every node is fully populated with one MPI rank per core (96 on `hpc6a.48xlarge`, 192 on the others), over EFA. The x86 instances run the GCC + Intel MPI build (Option 2) with the Intel MPI settings of `x86/wrf-benchmark-conus2.5km-intel.sbatch` (Intel MPI 2021.17 or 2021.18, MULTIRAIL enabled). Performance is the steady step (see [Key Metrics](#key-metrics)), the median over each configuration's runs, normalized to a single `hpc7a.96xlarge` node — higher is better. The right panel shows each instance type's parallel efficiency against its own single node.
 
-![WRF CONUS 2.5km 6-hour forecast: scaling of the steady step on six instance types](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/WRF/WRF-CONUS2.5km-6h-Scaling.png?raw=true)
+![WRF CONUS 2.5km 6-hour forecast: scaling of the steady step on four AMD instance types](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/WRF/WRF-CONUS2.5km-6h-Scaling.png?raw=true)
 
 Relative performance (1 node `hpc7a.96xlarge` = 1.00×):
 
-| Nodes | hpc8a.96xlarge | c8i.96xlarge | m8a.48xlarge | m8g.48xlarge | hpc7a.96xlarge | hpc6a.48xlarge |
-|------:|---------------:|-------------:|-------------:|-------------:|---------------:|---------------:|
-| 1 | 1.38× | 1.38× | 1.26× (1 run) | 1.13× | 1.00× (3 runs) | 0.41× |
-| 2 | 2.85× | 2.76× | 2.58× (1 run) | 2.19× | 2.08× | 0.80× |
-| 4 | 5.92× | — | — | 4.33× | 4.30× | 1.66× |
-| 8 | 12.68× | — | — | 8.70× (2 runs) | 9.20× | 3.46× |
-| 16 | — | — | — | — | — | 7.30× |
+| Nodes | hpc8a.96xlarge | m8a.48xlarge | hpc7a.96xlarge | hpc6a.48xlarge |
+|------:|---------------:|-------------:|---------------:|---------------:|
+| 1 | 1.38× | 1.26× (1 run) | 1.00× (3 runs) | 0.41× |
+| 2 | 2.85× | 2.58× (1 run) | 2.08× | 0.80× |
+| 4 | 5.92× | — | 4.30× | 1.66× |
+| 8 | 12.68× | — | 9.20× | 3.46× |
+| 16 | — | — | — | 7.30× |
 
-The other values are medians of 3 runs on `hpc8a.96xlarge`, `c8i.96xlarge` and `m8g.48xlarge`, and of 2 on `hpc7a.96xlarge` and `hpc6a.48xlarge`. The runs were made in October 2026, with 0 to 8 other benchmark jobs sharing their FSx for Lustre file system (the steady step leaves file I/O out), and the runs of each configuration agree within 3%.
+The other values are medians of 3 runs on `hpc8a.96xlarge`, and of 2 on `hpc7a.96xlarge` and `hpc6a.48xlarge`. The runs were made in October 2026, with 0 to 8 other benchmark jobs sharing their FSx for Lustre file system (the steady step leaves file I/O out), and the runs of each configuration agree within 3%.
+
+`c8i.96xlarge` (Intel) ran the same forecast on 1 and 2 nodes, 3 runs each: against one `c8i.96xlarge` node = 1.00×, the steady step ran 2.00× as fast on two nodes, a parallel efficiency of 100%.
 
 Key takeaways:
 
 - The steady step keeps scaling to 1,536 cores: hpc7a and hpc8a both reach **115%** parallel efficiency on 8 nodes, and hpc6a **112%** on 16. Efficiency above 100% means the steady step shrank more than in proportion to the node count; each rank's smaller part of the grid fitting better in cache would explain it, but that was not measured here.
 - A single hpc8a node delivers **1.38×** the performance of a single hpc7a node, and hpc8a stays at 1.37–1.38× hpc7a at every node count from 1 to 8.
-- On 1 and 2 nodes, c8i is within 4% of hpc8a (1.38× and 2.76× against 1.38× and 2.85×); m8a reaches 1.26× and 2.58× (one run each).
-- m8g (Graviton4, OpenMPI 5) starts ahead of hpc7a (1.13× on one node) but scales at 95–97%, so the two are level at 4 nodes and hpc7a leads at 8 (9.20× against 8.70×).
+- m8a reaches 1.26× and 2.58× on 1 and 2 nodes (one run each).
 - On the total wall time instead, the same runs reach only 3.52× (hpc7a) and 4.68× (hpc8a) on 8 nodes: the hourly history writes and the restart write do not get faster with more nodes, and as these x86 runs wrote them (serial, compressed netCDF-4) they take 15–16% of a one-node hpc7a or hpc8a run but 64–66% of an 8-node one. [Whole run with PnetCDF output](#conus-25km--whole-run-with-pnetcdf-output-6-hour-forecast) gives the whole run's scaling with the output written as [Output format](#output-format) recommends, and the next section what the output format changes.
 
 ### CONUS 2.5km — output format (6-hour forecast)
@@ -296,17 +300,19 @@ Key takeaways:
 - The time outside the steady step (the output, the input reads and the first step) is 70% of the compressed run on 8 nodes, 45% of the uncompressed serial run and 27% of the PnetCDF run; on 1 node, 18%, 8.5% and 4.8%.
 - Whole-run parallel efficiency on 8 nodes against 1 goes from 42% (compressed) to 69% (uncompressed serial) and 88% (PnetCDF).
 
-Every configuration of [Whole run with PnetCDF output](#conus-25km--whole-run-with-pnetcdf-output-6-hour-forecast) also has serial, compressed runs, under [Compute scaling](#conus-25km--compute-scaling-on-six-instance-types-6-hour-forecast). PnetCDF against serial, compressed output on the same configuration (whole run, the serial runs = 1.00×, higher is better):
+Every configuration of [Whole run with PnetCDF output](#conus-25km--whole-run-with-pnetcdf-output-6-hour-forecast) also has serial, compressed runs, under [Compute scaling](#conus-25km--compute-scaling-6-hour-forecast). PnetCDF against serial, compressed output on the same configuration of the AMD types (whole run, the serial runs = 1.00×, higher is better):
 
-| Nodes | hpc8a.96xlarge | c8i.96xlarge | hpc7a.96xlarge | hpc6a.48xlarge |
-|------:|---------------:|-------------:|---------------:|---------------:|
-| 1 | 1.15× | 1.21× | 1.14× (3 serial runs) | 1.07× |
-| 2 | 1.30× | 1.46× | 1.32× | 1.13× |
-| 4 | 1.61× | — | 1.62× | 1.28× |
-| 8 | 2.38× | — | 2.35× | 1.57× |
-| 16 | — | — | — | 2.19× |
+| Nodes | hpc8a.96xlarge | hpc7a.96xlarge | hpc6a.48xlarge |
+|------:|---------------:|---------------:|---------------:|
+| 1 | 1.15× | 1.14× (3 serial runs) | 1.07× |
+| 2 | 1.30× | 1.32× | 1.13× |
+| 4 | 1.61× | 1.62× | 1.28× |
+| 8 | 2.38× | 2.35× | 1.57× |
+| 16 | — | — | 2.19× |
 
-Each value compares the medians of the two sections' runs, all made in eu-north-1: 2 with PnetCDF, and with serial output 3 on `hpc8a.96xlarge` and `c8i.96xlarge` and 2 on `hpc7a.96xlarge` and `hpc6a.48xlarge`, or 3 where marked. The gain grows with the node count, because the time steps get faster with more nodes while the serial output does not, so the output takes a growing share of the serial run. It is smallest on `hpc6a.48xlarge`, whose time steps take longest, so that the output is a smaller share of its runs. How much of the gain comes from not compressing was measured on `hpc8a.96xlarge` only, in the first table of this section.
+Each value compares the medians of the two sections' runs, all made in eu-north-1: 2 with PnetCDF, and with serial output 3 on `hpc8a.96xlarge` and 2 on `hpc7a.96xlarge` and `hpc6a.48xlarge`, or 3 where marked. The gain grows with the node count, because the time steps get faster with more nodes while the serial output does not, so the output takes a growing share of the serial run. It is smallest on `hpc6a.48xlarge`, whose time steps take longest, so that the output is a smaller share of its runs. How much of the gain comes from not compressing was measured on `hpc8a.96xlarge` only, in the first table of this section.
+
+On `c8i.96xlarge` (Intel), against its own serial, compressed runs (3 on each node count, 2 with PnetCDF), PnetCDF ran 1.21× as fast on 1 node and 1.46× on 2.
 
 ### Arm — Graviton3E (hpc7g) vs Graviton4 (m8g)
 
@@ -339,6 +345,17 @@ Key takeaways:
 - The **CONUS 12km grid (425×300) does not decompose past ~500 ranks** — 4N m8g at 768 ranks triggers a decomposition error. For that level of parallelism, use CONUS 2.5km (1501×1201), which supports 1500+ ranks cleanly.
 - The 1N hpc7g 2.5km point is *estimated* at 2 × the 2N time; running it directly on a single 64-core node is expensive and a pessimistic baseline for a grid of 1501 × 1201 points
 - A single m8g node is about as fast as **4 hpc7g nodes** for this workload: 99% of their speed on CONUS 12km (2.52× against 2.55×) and 93% on CONUS 2.5km (3.08× against 3.30×)
+
+**CONUS 2.5km, October 2026 runs** — the steady step of the 6-hour forecast (serial output, as under [Compute scaling](#conus-25km--compute-scaling-6-hour-forecast)) on `m8g.48xlarge`, with the Graviton4 build and OpenMPI 5.0.9 launched as `Arm/wrf-benchmark.sbatch` does. Speedup against one `m8g.48xlarge` node, and in brackets the parallel efficiency:
+
+| Nodes | m8g.48xlarge (192 c/n) |
+|------:|-----------------------:|
+| 1 | 1.00× |
+| 2 | 1.93× (97%) |
+| 4 | 3.81× (95%) |
+| 8 | 7.67× (96%, 2 runs) |
+
+The other values are medians of 3 runs. The steady step keeps 95–97% parallel efficiency from 2 to 8 nodes of `m8g.48xlarge`.
 
 ## Key Metrics
 

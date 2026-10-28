@@ -2,14 +2,19 @@
 """
 Generate the WRF CONUS 2.5km whole-run chart: the full 6-hour forecast (1,440
 steps of 15 s) with its history and restart files written through PnetCDF
-(io_form_history = io_form_restart = 11), on four instance types, 1 to 16
+(io_form_history = io_form_restart = 11), on the AMD instance types, 1 to 16
 nodes, as relative performance against one hpc7a.96xlarge node (= 1.00, higher
 is faster), next to each type's parallel efficiency against its own single node.
+
+Each CPU vendor's instance types are measured against a reference node of the
+same vendor. The Intel type (c8i.96xlarge) was the only type of its vendor:
+its values, against one c8i.96xlarge node, are in the README and in the
+summary printed below, with no chart.
 
 Timing basis: the whole run, i.e. the wall time of wrf.exe from the start of
 mpirun to its exit, output included (the scripts' "Total WRF time"). Per
 configuration (instance type, node count) the median over its runs is taken;
-relative performance = the 1 x hpc7a.96xlarge median / the configuration's
+relative performance = the reference node's median / the configuration's
 median. Only relative values and run counts are embedded here.
 
 The compute alone (the steady step, output left out) is charted by
@@ -27,29 +32,33 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import FixedLocator, FuncFormatter, NullLocator
 
 # ---------------------------------------------------------------------------
-# Measured data: relative performance (1 x hpc7a.96xlarge = 1.00) and run count
-# per node count. WRF 4.6.1, CONUS 2.5km (1501 x 1201 x 50), the 6-hour forecast
-# with hourly history output and a restart write, both through PnetCDF to FSx for
-# Lustre; AWS runs of October 2026 in eu-north-1. Every node fully populated,
-# one MPI rank per core (OMP_NUM_THREADS=1), EFA, the GCC 11 + Intel MPI build
-# (dmpar) with Intel MPI 2021.18 and the settings of
-# x86/wrf-benchmark-conus2.5km-intel.sbatch.
+# Measured data: relative performance and run count per node count, for each
+# CPU vendor against its reference node (= 1.00). WRF 4.6.1, CONUS 2.5km
+# (1501 x 1201 x 50), the 6-hour forecast with hourly history output and a
+# restart write, both through PnetCDF to FSx for Lustre; AWS runs of October
+# 2026 in eu-north-1. Every node fully populated, one MPI rank per core
+# (OMP_NUM_THREADS=1), EFA, the GCC 11 + Intel MPI build (dmpar) with Intel MPI
+# 2021.18 and the settings of x86/wrf-benchmark-conus2.5km-intel.sbatch.
 # ---------------------------------------------------------------------------
 DATA = {
-    # type             {nodes: (relative performance, runs)}
-    "hpc8a.96xlarge": {1: (1.3923, 2), 2: (2.7798, 2), 4: (5.3979, 2), 8: (9.7480, 2)},
-    "c8i.96xlarge":   {1: (1.3712, 2), 2: (2.6020, 2)},
-    "hpc7a.96xlarge": {1: (1.0000, 2), 2: (2.0378, 2), 4: (3.9397, 2), 8: (7.2542, 2)},
-    "hpc6a.48xlarge": {1: (0.4199, 2), 2: (0.8089, 2), 4: (1.6406, 2), 8: (3.2525, 2),
-                       16: (6.1500, 2)},
+    # vendor: {type: {nodes: (relative performance, runs)}}
+    "AMD": {  # 1 x hpc7a.96xlarge = 1.00: the chart
+        "hpc8a.96xlarge": {1: (1.3923, 2), 2: (2.7798, 2), 4: (5.3979, 2), 8: (9.7480, 2)},
+        "hpc7a.96xlarge": {1: (1.0000, 2), 2: (2.0378, 2), 4: (3.9397, 2), 8: (7.2542, 2)},
+        "hpc6a.48xlarge": {1: (0.4199, 2), 2: (0.8089, 2), 4: (1.6406, 2), 8: (3.2525, 2), 16: (6.1500, 2)},
+    },
+    "Intel": {  # 1 x c8i.96xlarge = 1.00
+        "c8i.96xlarge": {1: (1.0000, 2), 2: (1.8976, 2)},
+    },
 }
+REFERENCE = {"AMD": "1 x hpc7a.96xlarge", "Intel": "1 x c8i.96xlarge"}
+CHART = DATA["AMD"]
 
 # type: (legend label, colour, marker,
 #        end-label offset in points (dx, dy), left panel and right panel)
 # The colours and markers are those of WRF-CONUS2.5km-6h-Scaling.png.
 STYLE = {
     "hpc8a.96xlarge": ("hpc8a.96xlarge (192 cores/node)", "#232F3E", "o", (7, 0), (7, -4)),
-    "c8i.96xlarge":   ("c8i.96xlarge (192)", "#59A14F", "D", None, None),
     "hpc7a.96xlarge": ("hpc7a.96xlarge (192)", "#FF9900", "s", (7, 0), (7, 4)),
     "hpc6a.48xlarge": ("hpc6a.48xlarge (96)", "#B07AA1", "P", (7, 0), (7, 0)),
 }
@@ -96,7 +105,7 @@ def node_axis(ax):
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=FIG_SIZE)
 
 # --- Left: relative performance ------------------------------------------------
-for itype, points in DATA.items():
+for itype, points in CHART.items():
     label, colour, marker, offset, _ = STYLE[itype]
     nodes = sorted(points)
     rel = [points[n][0] for n in nodes]
@@ -109,12 +118,12 @@ ax1.yaxis.set_major_locator(FixedLocator([0.25, 0.5, 1, 2, 4, 8, 16]))
 ax1.yaxis.set_minor_locator(NullLocator())
 ax1.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
 ax1.set_ylim(0.3, 18)
-ax1.set_ylabel("Relative performance (1 x hpc7a.96xlarge = 1.00, higher is faster)")
+ax1.set_ylabel(f"Relative performance ({REFERENCE['AMD']} = 1.00, higher is faster)")
 ax1.set_title("Relative performance, whole run")
 ax1.legend(loc="upper left", fontsize=9)
 
 # --- Right: parallel efficiency ---------------------------------------------------
-for itype, points in DATA.items():
+for itype, points in CHART.items():
     label, colour, marker, _, offset = STYLE[itype]
     eff = efficiency(points)
     nodes = sorted(eff)
@@ -129,7 +138,7 @@ ax2.set_ylabel("Parallel efficiency (%)")
 ax2.set_title("Parallel efficiency: speed-up over 1 node of the same type / nodes")
 
 # --- Notes: the metric and the run counts ---------------------------------------------
-runs = sorted({r for points in DATA.values() for _, r in points.values()})
+runs = sorted({r for points in CHART.values() for _, r in points.values()})
 runs_text = " or ".join(str(r) for r in runs)
 notes = [
     "Whole run: the wall time of wrf.exe, output included (7 hourly history writes and a restart write, "
@@ -139,24 +148,25 @@ notes = [
 ]
 fig.text(0.01, 0.005, "\n".join(notes), fontsize=9, style="italic", color="dimgray",
          ha="left", va="bottom")
-fig.suptitle("WRF 4.6.1 CONUS 2.5km, full 6-hour forecast with PnetCDF output: scaling of the whole run",
-             fontsize=13, fontweight="bold")
+fig.suptitle("WRF 4.6.1 CONUS 2.5km, full 6-hour forecast with PnetCDF output: scaling of the whole run "
+             + "on AMD instance types", fontsize=13, fontweight="bold")
 plt.tight_layout(rect=(0, 0.06, 1, 1))
 plt.savefig(OUTPUT, dpi=DPI)
 print(f"Wrote {OUTPUT}")
 
 # ---------------------------------------------------------------------------
-# Also print a summary table for reference (the README's table)
+# Also print a summary table for reference (the README's table), per vendor
 # ---------------------------------------------------------------------------
-print("\n=== Relative performance (1 x hpc7a.96xlarge = 1.00), runs, efficiency ===")
-print(f"{'Type':<16}" + "".join(f"{str(n) + 'N':>18}" for n in NODES))
-for itype, points in DATA.items():
-    eff = efficiency(points)
-    cells = []
-    for n in NODES:
-        if n in points:
-            rel, r = points[n]
-            cells.append(f"{rel:6.2f} ({r}r, {100 * eff[n]:3.0f}%)")
-        else:
-            cells.append("—")
-    print(f"{itype:<16}" + "".join(f"{c:>18}" for c in cells))
+for vendor, types in DATA.items():
+    print(f"\n=== {vendor}: relative performance ({REFERENCE[vendor]} = 1.00), runs, efficiency ===")
+    print(f"{'Type':<16}" + "".join(f"{str(n) + 'N':>18}" for n in NODES))
+    for itype, points in types.items():
+        eff = efficiency(points)
+        cells = []
+        for n in NODES:
+            if n in points:
+                rel, r = points[n]
+                cells.append(f"{rel:6.2f} ({r}r, {100 * eff[n]:3.0f}%)")
+            else:
+                cells.append("—")
+        print(f"{itype:<16}" + "".join(f"{c:>18}" for c in cells))
