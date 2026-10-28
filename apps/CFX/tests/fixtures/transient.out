@@ -1,0 +1,29 @@
+ Synthetic cfx5solve output file for apps/CFX/tests: every time in it is made up.
+ A transient run: time steps and coefficient loops, no outer loop iterations.
+
+ +--------------------------------------------------------------------+
+ |                Job Information at Start of Run                     |
+ +--------------------------------------------------------------------+
+
+ Run mode:       parallel run (Intel(R) MPI Library 2021.14)
+
+ Job started:    Mon Jan  5 10:01:05 2026
+
+ ======================================================================
+ TIME STEP =     1 SIMULATION TIME = 1.0000E-03 CPU SECONDS = 1.000E+01
+ ----------------------------------------------------------------------
+ COEFFICIENT LOOP ITERATION =    1              CPU SECONDS = 1.000E+01
+ ----------------------------------------------------------------------
+ COEFFICIENT LOOP ITERATION =    2              CPU SECONDS = 2.000E+01
+ ======================================================================
+ TIME STEP =     2 SIMULATION TIME = 2.0000E-03 CPU SECONDS = 3.000E+01
+ ----------------------------------------------------------------------
+ COEFFICIENT LOOP ITERATION =    1              CPU SECONDS = 3.000E+01
+ ----------------------------------------------------------------------
+ COEFFICIENT LOOP ITERATION =    2              CPU SECONDS = 4.000E+01
+
+ CFD Solver wall clock seconds: 5.0000E+01
+
+ Job finished:   Mon Jan  5 10:02:00 2026
+
+ Total wall clock time: 5.500E+01 seconds

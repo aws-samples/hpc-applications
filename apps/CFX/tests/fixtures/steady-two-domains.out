@@ -1,0 +1,63 @@
+ Synthetic cfx5solve output file for apps/CFX/tests: every time and mesh count in it is made up.
+ A case of two domains: a partitioning run and a steady-state solver run of 2 outer loop iterations.
+ +--------------------------------------------------------------------+
+ |                Job Information at Start of Run                     |
+ +--------------------------------------------------------------------+
+ Run mode:       partitioning run
+ Job started:    Mon Jan  5 10:00:00 2026
+ +--------------------------------------------------------------------+
+ |                          Mesh Statistics                           |
+ +--------------------------------------------------------------------+
+ Domain Name : rotor
+     Total Number of Nodes                                =      200000
+     Total Number of Elements                             =      500000
+         Total Number of Tetrahedrons                     =      500000
+     Total Number of Faces                                =       40000
+ Domain Name : stator
+     Total Number of Nodes                                =      300000
+     Total Number of Elements                             =     1000000
+         Total Number of Tetrahedrons                     =     1000000
+     Total Number of Faces                                =       60000
+ Global Statistics :
+     Global Number of Nodes                               =      500000
+     Global Number of Elements                            =     1500000
+         Total Number of Tetrahedrons                     =     1500000
+     Global Number of Faces                               =      100000
+ +--------------------------------------------------------------------+
+ |                  Job Information at End of Run                     |
+ +--------------------------------------------------------------------+
+ Job finished:   Mon Jan  5 10:00:30 2026
+ Total wall clock time: 3.000E+01 seconds
+ +--------------------------------------------------------------------+
+ |                Job Information at Start of Run                     |
+ +--------------------------------------------------------------------+
+ Run mode:       parallel run (Intel(R) MPI Library 2021.14)
+ Job started:    Mon Jan  5 10:00:35 2026
+ +--------------------------------------------------------------------+
+ |                          Mesh Statistics                           |
+ +--------------------------------------------------------------------+
+ Domain Name : rotor
+     Total Number of Nodes                                =      200000
+     Total Number of Elements                             =      500000
+         Total Number of Tetrahedrons                     =      500000
+     Total Number of Faces                                =       40000
+ Domain Name : stator
+     Total Number of Nodes                                =      300000
+     Total Number of Elements                             =     1000000
+         Total Number of Tetrahedrons                     =     1000000
+     Total Number of Faces                                =       60000
+ Global Statistics :
+     Global Number of Nodes                               =      500000
+     Global Number of Elements                            =     1500000
+         Total Number of Tetrahedrons                     =     1500000
+     Global Number of Faces                               =      100000
+ ======================================================================
+ OUTER LOOP ITERATION =    1                    CPU SECONDS = 1.000E+01
+ ======================================================================
+ OUTER LOOP ITERATION =    2                    CPU SECONDS = 2.000E+01
+ CFD Solver wall clock seconds: 2.0000E+01
+ +--------------------------------------------------------------------+
+ |                  Job Information at End of Run                     |
+ +--------------------------------------------------------------------+
+ Job finished:   Mon Jan  5 10:01:00 2026
+ Total wall clock time: 2.500E+01 seconds
