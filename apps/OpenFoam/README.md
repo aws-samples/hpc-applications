@@ -92,9 +92,7 @@ To override auto-detection (e.g. cross-build or run on an instance whose CPU par
 
 ### Graviton results
 
-`m8g.48xlarge` (Graviton4, this GCC 14 build, OpenMPI 5.0.9) is one of the six instance types under [Performance](#performance). On one node it ran `simpleFoam` 1.35× (236M) and 1.29× (65M) as fast as one `hpc7a.96xlarge`, which is 0.97× and 0.92× one `hpc8a.96xlarge`. Its parallel efficiency against one node was 82% (236M) and 80% (65M) on 4 nodes, and 59% and 47% on 8 (one run on 65M). `m8g.48xlarge` has 50 Gbps of network bandwidth, against 300 Gbps on `hpc7a.96xlarge` and `hpc8a.96xlarge`.
-
-Graviton3E was measured on `c7gn.16xlarge` (64 cores, 128 GiB and 200 Gbps EFA: the processor, memory and network bandwidth of `hpc7g.16xlarge`), with the Graviton3E build and OpenMPI 5.0.9, on the 65M mesh, one run per node count (April 2026). Against one `hpc7a.96xlarge` node on 65M = 1.00×, it ran 0.95× on 2 nodes, 1.63× on 4 and 2.54× on 8, a parallel efficiency against 2 nodes of 86% on 4 and 67% on 8. On the same node counts, `m8g.48xlarge` ran 2.39×, 4.10× and 4.84× (one run on 8 nodes). The 65M mesh needs 2 or more of these 128 GiB nodes (see the memory note under [Benchmark](#benchmark)).
+The results of these builds are under [Graviton: m8g.48xlarge and c7gn.16xlarge](#graviton-m8g48xlarge-and-c7gn16xlarge): `m8g.48xlarge` with the Graviton4 build, on both meshes, and `c7gn.16xlarge`, which has the processor, memory and network bandwidth of `hpc7g.16xlarge`, with the Graviton3E build, on the 65M mesh.
 
 ## Benchmark
 
@@ -183,51 +181,84 @@ The case's `controlDict` runs 4,000 SIMPLE iterations (`endTime 4000`). The benc
 
 ## Performance
 
-AWS ran both meshes, 236M and 65M cells, on six instance types in October 2026, 200 iterations each, with every node fully populated: one MPI rank per core, 192 per node (96 on `hpc6a.48xlarge`). Each run took the steps of the benchmark scripts here: the page cache dropped and transparent huge pages set to `always`, the case decomposed with the scripts' `simple` method (`n (nodes 1 ranks-per-node)`), then `renumberMesh`, `potentialFoam` and `simpleFoam`. Each layout (mesh, nodes and ranks per node) was decomposed once and copied into each of its runs (see [Key Metrics](#key-metrics)). `hpc8a`, `hpc7a`, `m8a` and `c8i` ran the AVX-512 OpenMPI build (Option 1) and `hpc6a.48xlarge` the AVX2 build (Option 3), both with OpenMPI 4.1.7 and one rank bound to each core (`--bind-to core --map-by slot`); `m8g.48xlarge` ran the Graviton4 build with OpenMPI 5.0.9. On 236M, `hpc8a.96xlarge` comes from May 2026 runs of the same phases with the same build options and MPI, which decomposed in the job.
+AWS ran both meshes, 236M and 65M cells, on four AMD instance types (`hpc8a`, `m8a`, `hpc7a`, `hpc6a`), one Intel type (`c8i`) and one Graviton type (`m8g`) in October 2026, 200 iterations each, with every node fully populated: one MPI rank per core, 192 per node (96 on `hpc6a.48xlarge`). Each run took the steps of the benchmark scripts here: the page cache dropped and transparent huge pages set to `always`, the case decomposed with the scripts' `simple` method (`n (nodes 1 ranks-per-node)`), then `renumberMesh`, `potentialFoam` and `simpleFoam`. Each layout (mesh, nodes and ranks per node) was decomposed once and copied into each of its runs (see [Key Metrics](#key-metrics)). `hpc8a`, `hpc7a`, `m8a` and `c8i` ran the AVX-512 OpenMPI build (Option 1) and `hpc6a.48xlarge` the AVX2 build (Option 3), both with OpenMPI 4.1.7 and one rank bound to each core (`--bind-to core --map-by slot`); `m8g.48xlarge` ran the Graviton4 build with OpenMPI 5.0.9. On 236M, `hpc8a.96xlarge` comes from May 2026 runs of the same phases with the same build options and MPI, which decomposed in the job. Graviton3E was run on `c7gn.16xlarge` in April 2026 (see [Graviton](#graviton-m8g48xlarge-and-c7gn16xlarge)).
 
-Performance is the `simpleFoam` time (see [Key Metrics](#key-metrics)), the median over each configuration's runs, relative to one `hpc7a.96xlarge` node on the same mesh = 1.00×; higher is faster. In parentheses: the parallel efficiency, the speed-up over the same instance type's smallest node count divided by the node-count ratio. Values are medians of 2 to 4 runs, except where marked ¹ (a single run). The runs of each configuration spread by at most 4.0% from fastest to slowest (median 0.8%); the October runs had 0 to 8 other benchmark jobs sharing their FSx for Lustre file system.
+Performance is the `simpleFoam` time (see [Key Metrics](#key-metrics)), the median over each configuration's runs, relative to one node of the same CPU vendor on the same mesh = 1.00×: `hpc7a.96xlarge` for the AMD types, `c8i.96xlarge` for Intel and `m8g.48xlarge` for Graviton; higher is faster. In parentheses: the parallel efficiency, the speed-up over the same instance type's smallest node count divided by the node-count ratio. Values are medians of 2 to 5 runs, except where marked ¹ (a single run). The runs of each configuration spread by at most 4.0% from fastest to slowest (median 0.8%); the October runs had 0 to 8 other benchmark jobs sharing their FSx for Lustre file system.
 
 ### OCC DrivAer 236M
 
-![OpenFOAM OCC DrivAer 236M scaling on six instance types](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/OpenFoam/OpenFOAM-OCCDrivAer-236M-Scaling.png?raw=true)
+On the AMD instance types, against one `hpc7a.96xlarge` node:
 
-| Nodes | hpc8a.96xlarge | c8i.96xlarge | m8a.48xlarge | m8g.48xlarge | hpc7a.96xlarge | hpc6a.48xlarge |
-|------:|---------------:|-------------:|-------------:|-------------:|---------------:|---------------:|
-| 1 | 1.39× | 1.52× | 1.38×¹ | 1.35× | 1.00× | — |
-| 2 | 2.78× (100%) | 2.88× (94%) | — | 2.49× (92%) | 1.93× (96%) | 0.84× |
-| 4 | 5.01× (90%) | — | — | 4.44× (82%) | 3.59× (90%) | 1.58× (94%) |
-| 8 | 8.08× (73%) | — | — | 6.42× (59%) | 5.61× (70%) | 2.57× (76%) |
-| 16 | 9.85×¹ (44%) | — | — | — | 6.74× (42%) | 3.51× (52%) |
+![OpenFOAM OCC DrivAer 236M scaling on four AMD instance types](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/OpenFoam/OpenFOAM-OCCDrivAer-236M-Scaling.png?raw=true)
+
+| Nodes | hpc8a.96xlarge | m8a.48xlarge | hpc7a.96xlarge | hpc6a.48xlarge |
+|------:|---------------:|-------------:|---------------:|---------------:|
+| 1 | 1.39× | 1.38×¹ | 1.00× | — |
+| 2 | 2.78× (100%) | — | 1.93× (96%) | 0.84× |
+| 4 | 5.01× (90%) | — | 3.59× (90%) | 1.58× (94%) |
+| 8 | 8.08× (73%) | — | 5.61× (70%) | 2.57× (76%) |
+| 16 | 9.85×¹ (44%) | — | 6.74× (42%) | 3.51× (52%) |
 
 `hpc6a.48xlarge` was run on 2 to 16 nodes, so its efficiency is against 2 nodes.
 
 - `hpc8a.96xlarge` is 1.39–1.46× `hpc7a.96xlarge` at every node count from 1 to 16 (1.46× on 16 nodes, from one run).
-- On one node, `c8i.96xlarge` leads (1.52×, or 1.10× `hpc8a`), and on two it is 1.04× `hpc8a`. `m8a.48xlarge` is 0.99× `hpc8a` on one node (one run).
-- `m8g.48xlarge` (Graviton4) is 1.35× on one node and keeps 82% efficiency on 4 nodes; on 8 it is at 59%.
+- On one node, `m8a.48xlarge` is 0.99× `hpc8a` (one run).
 - 16 nodes still run faster than 8, but at 42–52% efficiency: 1.22× as fast on `hpc8a`, 1.20× on `hpc7a` and 1.37× on `hpc6a`, for twice the nodes (`hpc8a` from one run on 16 nodes).
 
 ### OCC DrivAer 65M
 
-![OpenFOAM OCC DrivAer 65M scaling on six instance types](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/OpenFoam/OpenFOAM-OCCDrivAer-65M-Scaling.png?raw=true)
+On the AMD instance types, against one `hpc7a.96xlarge` node:
 
-| Nodes | hpc8a.96xlarge | c8i.96xlarge | m8a.48xlarge | m8g.48xlarge | hpc7a.96xlarge | hpc6a.48xlarge |
-|------:|---------------:|-------------:|-------------:|-------------:|---------------:|---------------:|
-| 1 | 1.40× | 1.70× | 1.35×¹ | 1.29× | 1.00× | 0.41× |
-| 2 | 2.85× (102%) | 2.68× (79%) | — | 2.39× (93%) | 1.99× (100%) | 0.84× (103%) |
-| 4 | 4.77× (85%) | — | — | 4.10× (80%) | 3.77× (94%) | 1.65× (100%) |
-| 8 | 6.29× (56%) | — | — | 4.84×¹ (47%) | 5.32× (66%) | 2.60× (79%) |
-| 16 | — | — | — | — | — | 3.45× (53%) |
+![OpenFOAM OCC DrivAer 65M scaling on four AMD instance types](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/OpenFoam/OpenFOAM-OCCDrivAer-65M-Scaling.png?raw=true)
+
+| Nodes | hpc8a.96xlarge | m8a.48xlarge | hpc7a.96xlarge | hpc6a.48xlarge |
+|------:|---------------:|-------------:|---------------:|---------------:|
+| 1 | 1.40× | 1.35×¹ | 1.00× | 0.41× |
+| 2 | 2.85× (102%) | — | 1.99× (100%) | 0.84× (103%) |
+| 4 | 4.77× (85%) | — | 3.77× (94%) | 1.65× (100%) |
+| 8 | 6.29× (56%) | — | 5.32× (66%) | 2.60× (79%) |
+| 16 | — | — | — | 3.45× (53%) |
 
 - `hpc8a.96xlarge` is 1.40× and 1.43× `hpc7a.96xlarge` on 1 and 2 nodes, and 1.26× and 1.18× on 4 and 8: on the smaller mesh, `hpc8a` reaches the end of its scaling first (56% efficiency on 8 nodes, where `hpc7a` keeps 66%).
-- On one node, `c8i.96xlarge` leads (1.70×, or 1.21× `hpc8a`), but on two it falls to 79% efficiency and 0.94× `hpc8a`. `m8a.48xlarge` is 0.97× `hpc8a` on one node (one run).
+- On one node, `m8a.48xlarge` is 0.97× `hpc8a` (one run).
 - One `hpc6a.48xlarge` node (96 cores) delivers 0.41× one `hpc7a.96xlarge` node (192 cores), and keeps 79% efficiency up to 8 nodes.
+
+### Intel: c8i.96xlarge
+
+`c8i.96xlarge` (Intel Xeon 6) ran both meshes on 1 and 2 nodes, 3 runs each. Relative to one `c8i.96xlarge` node on the same mesh:
+
+| Nodes | c8i.96xlarge, 236M | c8i.96xlarge, 65M |
+|------:|-------------------:|------------------:|
+| 1 | 1.00× | 1.00× |
+| 2 | 1.89× (94%) | 1.58× (79%) |
+
+On the smaller mesh the second node adds less: 79% efficiency on 65M, against 94% on 236M.
+
+### Graviton: m8g.48xlarge and c7gn.16xlarge
+
+`m8g.48xlarge` (Graviton4, 192 cores) ran both meshes on 1 to 8 nodes, with the Graviton4 build and OpenMPI 5.0.9. Graviton3E was measured on `c7gn.16xlarge` (64 cores, 128 GiB and 200 Gbps EFA: the processor, memory and network bandwidth of `hpc7g.16xlarge`), with the Graviton3E build and OpenMPI 5.0.9, on the 65M mesh, one run per node count (April 2026); the 65M mesh needs 2 or more of these 128 GiB nodes (see the memory note under [Benchmark](#benchmark)). Both are given against one `m8g.48xlarge` node on the same mesh:
+
+![OpenFOAM OCC DrivAer scaling on Graviton](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/OpenFoam/OpenFOAM-OCCDrivAer-Graviton-Scaling.png?raw=true)
+
+| Nodes | m8g.48xlarge, 236M | m8g.48xlarge, 65M | c7gn.16xlarge, 65M |
+|------:|-------------------:|------------------:|-------------------:|
+| 1 | 1.00× | 1.00× | — |
+| 2 | 1.84× (92%) | 1.86× (93%) | 0.74×¹ |
+| 4 | 3.28× (82%) | 3.19× (80%) | 1.27×¹ (86%) |
+| 8 | 4.74× (59%) | 3.77×¹ (47%) | 1.98×¹ (67%) |
+
+`c7gn.16xlarge` was run on 2 to 8 nodes, so its efficiency is against 2 nodes.
+
+- `m8g.48xlarge` keeps 92% (236M) and 93% (65M) efficiency on 2 nodes and 82% and 80% on 4; on 8 it is at 59% and 47% (one run on 65M).
+- On 65M, `c7gn.16xlarge` (64 cores per node) ran 0.74× on 2 nodes, 1.27× on 4 and 1.98× on 8, a parallel efficiency against 2 nodes of 86% on 4 and 67% on 8. On the same node counts, `m8g.48xlarge` (192 cores per node) ran 1.86×, 3.19× and 3.77× (one run on 8 nodes).
 
 ### Where scaling stops paying
 
 On one instance type, the node-hours of a run, and so its EC2 cost, grow as 1 / efficiency against the type's smallest node count: at 60% efficiency a run costs 1.67× as much as on the smallest node count. Taking the first node count under 60% as the point where scaling stops paying:
 
-- **236M:** 16 nodes of `hpc8a`, `hpc7a` and `hpc6a` (44% from one run, 42% and 52%), and 8 of `m8g` (59%). `c8i` kept 94% on 2 nodes, the most it was run on.
-- **65M:** 8 nodes of `hpc8a` and `m8g` (56%, and 47% from one run), and 16 of `hpc6a` (53%). `hpc7a` kept 66% on 8 nodes and `c8i` 79% on 2, the most each was run on.
+- **AMD:** on 236M, 16 nodes of `hpc8a`, `hpc7a` and `hpc6a` (44% from one run, 42% and 52%); on 65M, 8 nodes of `hpc8a` (56%) and 16 of `hpc6a` (53%), while `hpc7a` kept 66% on 8 nodes, the most it was run on.
+- **Intel:** `c8i` kept 94% (236M) and 79% (65M) on 2 nodes, the most it was run on.
+- **Graviton:** 8 nodes of `m8g` on both meshes (59% on 236M, and 47% on 65M from one run). `c7gn` kept 67% on 8 nodes of 65M against 2 nodes (one run each), the most it was run on.
 - On `hpc8a.96xlarge`, efficiency stayed at 60% or more down to about 85,000 cells per core (236M on 8 nodes is about 153,000 cells per core, 65M on 4 nodes about 85,000), and was under 60% at 77,000 or fewer (236M on 16 nodes, one run; 65M on 8 nodes, about 43,000).
 
 ### Fewer ranks per node
@@ -253,9 +284,10 @@ When IMDS gives no instance type (no answer within a few seconds, an error, or a
 
 ### Choosing an instance type
 
-- **Per node,** `c8i.96xlarge` was the fastest: 1.52× (236M) and 1.70× (65M) one `hpc7a.96xlarge`. Then `hpc8a.96xlarge` (1.39× and 1.40×), `m8a.48xlarge` (1.38× and 1.35×, one run each), `m8g.48xlarge` (1.35× and 1.29×) and `hpc7a.96xlarge`. `hpc6a.48xlarge`, with half the cores, delivered 0.41× on 65M.
-- **Per cluster,** at 4 nodes and more `hpc8a.96xlarge` was the fastest type measured (`c8i` was run on 1 and 2 nodes, `m8a` on 1). On 1,536 cores, 8 `hpc8a.96xlarge` nodes ran 236M 8.08× and 65M 6.29× as fast as one `hpc7a.96xlarge`, against 6.42× and 4.84× (one run) on 8 `m8g.48xlarge`, 5.61× and 5.32× on 8 `hpc7a.96xlarge`, and 3.51× and 3.45× on 16 `hpc6a.48xlarge`.
-- **For more than one node,** compare the network bandwidth per node as well: 300 Gbps of EFA on `hpc8a.96xlarge` and `hpc7a.96xlarge`, 100 Gbps on `c8i.96xlarge` and `hpc6a.48xlarge`, 75 Gbps on `m8a.48xlarge` and 50 Gbps on `m8g.48xlarge`.
+- **Per node,** of the AMD types, `hpc8a.96xlarge` was the fastest: 1.39× (236M) and 1.40× (65M) one `hpc7a.96xlarge`. Then `m8a.48xlarge` (1.38× and 1.35×, one run each) and `hpc7a.96xlarge`. `hpc6a.48xlarge`, with half the cores, delivered 0.41× on 65M.
+- **Per cluster,** from 2 nodes on, `hpc8a.96xlarge` was the fastest of the AMD types measured (`m8a` was run on 1 node). On 1,536 cores, 8 `hpc8a.96xlarge` nodes ran 236M 8.08× and 65M 6.29× as fast as one `hpc7a.96xlarge`, against 5.61× and 5.32× on 8 `hpc7a.96xlarge`, and 3.51× and 3.45× on 16 `hpc6a.48xlarge`.
+- **On Graviton,** `m8g.48xlarge` was the faster type per node and per cluster: two `c7gn.16xlarge` nodes ran 65M 0.74× as fast as one `m8g.48xlarge`, and eight 1.98× (one run), against 3.77× (one run) on eight `m8g.48xlarge`.
+- **For more than one node,** the network bandwidth per node matters as well: EC2 gives 300 Gbps of EFA bandwidth to `hpc8a.96xlarge` and `hpc7a.96xlarge`, 100 Gbps to `hpc6a.48xlarge` and 75 Gbps to `m8a.48xlarge`; 100 Gbps to `c8i.96xlarge`; and 200 Gbps to `c7gn.16xlarge` and 50 Gbps to `m8g.48xlarge`.
 
 ## Key Metrics
 
