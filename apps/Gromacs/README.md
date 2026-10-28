@@ -336,7 +336,7 @@ Relative performance on one node (1 node `hpc7a.96xlarge` = 1.00×):
 
 | Benchmark | hpc8a.96xlarge | m8a.48xlarge | hpc7a.96xlarge | hpc6a.48xlarge |
 |-----------|---------------:|-------------:|---------------:|---------------:|
-| benchMEM (82k atoms) | 1.37× | 1.17× (1 run) | 1.00× (1 run) | 0.51× |
+| benchMEM (82k atoms) | 1.37× | 1.17× (1 run) | 1.00× (3 runs) | 0.51× |
 | benchRIB (2.0M atoms) | 1.41× | 1.17× (1 run) | 1.00× | 0.43× |
 | benchPEP-h (12.5M atoms) | 1.38× | 0.98× (1 run) | 1.00× | 0.37× |
 
@@ -357,13 +357,13 @@ Relative performance on one node (1 node `hpc7a.96xlarge` = 1.00×):
 
 | Nodes | hpc8a.96xlarge | m8a.48xlarge | hpc7a.96xlarge | hpc6a.48xlarge |
 |------:|---------------:|-------------:|---------------:|---------------:|
-| 1 | 1.37× | 1.17× (1 run) | 1.00× (1 run) | 0.51× |
+| 1 | 1.37× | 1.17× (1 run) | 1.00× (3 runs) | 0.51× |
 | 2 | 1.52× (56%) | 1.25× (53%, 1 run) | 0.84× (42%) | 0.61× (60%) |
 | 4 | 1.13× (21%) | — | 0.65× (16%) | 0.68× (33%) |
 
 **benchRIB** on 2 `hpc6a.48xlarge` nodes: 0.73× (85%). With a quarter of the ranks on PME, its box has no PP domain grid for 2 nodes of the 192-core types (384 ranks; see [PME settings](#pme-settings)).
 
-Values are medians of 3 runs on hpc8a and of 2 on hpc7a and hpc6a, except where a cell gives its run count; m8a is one run per point. The runs shared each cluster's FSx for Lustre file system with 0 to 8 other benchmark jobs. The runs of 22 of the 24 points with more than one run agree within 5%. At the other two, the median sets the outlying run aside: on 2 and 4 hpc8a nodes the benchMEM runs spread 10% and 21%.
+Values are medians of 3 runs on hpc8a and of 2 on hpc7a and hpc6a, except where a cell gives its run count; m8a is one run per point. The runs shared each cluster's FSx for Lustre file system with 0 to 8 other benchmark jobs. The runs of 23 of the 25 points with more than one run agree within 5%. At the other two, the median sets the outlying run aside: on 2 and 4 hpc8a nodes the benchMEM runs spread 10% and 21%.
 
 Key takeaways:
 
