@@ -203,11 +203,11 @@ Both Arm builds use OpenMPI 5.0.9 (required for Graviton4 at 192 rpn) and CPU-tu
 
 Key takeaways:
 
-- The **1N hpc7g engine run does not fit in a 4 h SLURM wall-time limit**; the 1N baseline is estimated as 2 × the 2N time (same convention used by the OpenFOAM and WRF Arm charts in this repo)
+- The **1N hpc7g engine run does not fit in a 4 h SLURM wall-time limit**; the 1N baseline is estimated as 2 × the 2N time (the same convention as the WRF Arm chart in this repo)
 - A single m8g node delivers **3.31×** the performance of a single (estimated) hpc7g node — consistent with the 3× core-count ratio (192 vs 64) and the larger L2/L3 caches on Neoverse V2
 - At 4 nodes m8g reaches **10.41×** vs **3.83×** for hpc7g (both relative to the estimated 1N hpc7g baseline)
-- **hpc7g scales near-linearly all the way to 8 nodes (6.65× at 8N)** — the same contact-sort wall that limits x86 is reached much later on the smaller 64-core Graviton3E nodes, because 512 ranks is still well below where the contact-sort work runs out
-- **m8g 8N continues to improve over m8g 4N** (12.75× vs 10.41×), the opposite behaviour to hpc8a 8N vs 4N at the same 1536-rank total. The larger per-node core count with 6 CCDs and higher memory bandwidth on Graviton4 appears to digest the contact-sort work better than 4 × hpc8a does
+- **hpc7g scales near-linearly all the way to 8 nodes (6.65× at 8N, 512 ranks)**
+- **m8g 8N continues to improve over m8g 4N** (12.75× vs 10.41×)
 - A single m8g node outperforms roughly **3.3 hpc7g nodes** for this workload — useful when capacity or interconnect cost is a concern
 
 ## Key metrics
