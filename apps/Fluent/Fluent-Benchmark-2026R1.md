@@ -45,7 +45,7 @@ MIUPS relates to the classic per-iteration wall time by the mesh size:
 time_per_iteration_seconds = num_cells_million / MIUPS
 ```
 
-So a 140M-cell case at MIUPS = 12.3 corresponds to ~11.4 s per iteration.
+So a 140M-cell case at a MIUPS of `<miups>` takes 140 / `<miups>` seconds per iteration.
 
 ## Running the CPU benchmark
 
@@ -63,12 +63,26 @@ Useful environment knobs (all optional):
 | Variable | Meaning |
 |----------|---------|
 | `BENCHMARK_NAME` | case id (default `f1_racecar_140m`) |
-| `ITERATIONS` | timed iterations (blank → harness default 200) |
-| `WARMUP_ITERATIONS` | warm-up iterations (blank → harness default 50) |
+| `ITERATIONS` | timed iterations, time steps for a transient case (default 25; the harness's own default is 200) |
+| `WARMUP_ITERATIONS` | warm-up iterations, time steps for a transient case, which the harness runs twice (default 10; the harness's own default is 50) |
 | `SOLVER` | `segregated` \| `coupled` (blank → case default) |
 | `EXTRA_FLUENT_ARGS` | extra raw Fluent flags, e.g. `3ddp` |
 | `ANSYSLMD_LICENSE_FILE` | `port@host` of your Ansys license server |
 | `SOURCE` | tag your DynamoDB benchmark contributions |
+
+The CPU script's defaults are the protocol of its results under
+[Performance](Readme.md#performance): 10 warm-up iterations, which the
+harness runs twice, then 25 timed iterations (both counts are time steps for
+a transient case), so a run at the defaults compares with those results as
+it is. Set `ITERATIONS` and `WARMUP_ITERATIONS` to run another protocol, for
+example the harness's own 200 and 50.
+
+The CPU script records `ITERATIONS` (or 25) as `num_iterations`,
+`WARMUP_ITERATIONS` (or 10), the setting the harness runs twice, as
+`warmup_iterations`, and the iterations the harness timed, from the
+`Number of Iterations` line of its transcript, as `timed_iterations`: for a
+steady case the same as `num_iterations`, for a transient case every
+iteration of its timed time steps.
 
 Example — a short CPU run of the shipped 140M case on one hpc8a node:
 
@@ -78,6 +92,13 @@ ANSYSLMD_LICENSE_FILE=1055@your.license.server \
 sbatch -N1 --ntasks=192 --constraint=hpc8a.96xlarge \
     x86/Fluent-Benchmark.2026R1.sbatch v261 shipped
 ```
+
+On `hpc8a.96xlarge` and `hpc7a.96xlarge` the script runs only at 24, 48, 72,
+96, 120, 144, 168 or 192 ranks per node, and stops before Fluent starts at any
+other count: see
+[Cores per node (flexible cores)](Readme.md#cores-per-node-flexible-cores),
+which also says what it does when the instance metadata gives no instance
+type.
 
 ## Automatic benchmark recording
 
@@ -89,6 +110,13 @@ the derived per-iteration time, and tags the row with `benchmark_method` and
 `solver_mode` (`cpu`/`gpu`). Set `SOURCE=<YourOrg>` to attribute your rows. See
 [../BENCHMARK-RECORDERS.md](../BENCHMARK-RECORDERS.md) for the full contribution
 workflow.
+
+The CPU script records a run only when the harness's transcript of the case
+and core count, `working/<tag>/transcript/<case>-<cores>.trn`, gives the
+case's rating: a positive number on its
+`Million Cell Iteration Per Wall Second =` line, which the recorder then gets
+as MIUPS. Otherwise the job output has a NOTE that names that transcript, and
+nothing is recorded.
 
 ## Classic method (pre-2026 R1)
 
