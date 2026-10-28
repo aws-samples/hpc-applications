@@ -10,6 +10,9 @@ AMD instance types of the October 2026 runs:
    of the same four types, relative performance (same reference) next to each
    type's parallel efficiency against its own single node.
 
+benchRIB's points beyond one node are in DATA for the README's benchRIB table,
+which the summary printed at the end gives; no chart draws them.
+
 Timing basis: GROMACS's own rate, the ns/day it prints on md.log's Performance
 line (mdrun -resethway times the second half of the run). Per configuration
 (benchmark, instance type, node count) the median over its runs is taken;
@@ -35,7 +38,9 @@ from matplotlib.ticker import FixedLocator, FuncFormatter, NullLocator
 # x86/gromacs-benchmark.sbatch does (Thread-MPI gmx on one node, gmx_mpi with
 # OpenMPI over EFA on more), mdrun -resethway -noconfout -nstlist 100;
 # benchPEP-h and benchRIB with -notunepme, benchRIB with a quarter of the ranks
-# on PME (-npme). Builds: AVX_512 (hpc8a, m8a, hpc7a), AVX2_256 (hpc6a).
+# on PME (-npme), but 90 of the 384 ranks of 2 hpc8a or hpc7a nodes and of 4
+# hpc6a nodes, with the PP grid given (-npme 90 -dd 7 7 6).
+# Builds: AVX_512 (hpc8a, m8a, hpc7a), AVX2_256 (hpc6a).
 # Software stack: ParallelCluster 3.16.0 and EFA installer 1.49.0 in eu-north-1
 # (hpc8a, hpc7a, hpc6a), 3.15.0 and 1.47.0 in us-east-2 (m8a); hpc7a and
 # hpc6a, which also ran in us-east-2, are their eu-north-1 runs only, so that
@@ -51,10 +56,10 @@ DATA = {
         "hpc6a.48xlarge": {1: (0.51017, 2), 2: (0.61198, 2), 4: (0.68318, 2)},
     },
     "benchRIB": {
-        "hpc8a.96xlarge": {1: (1.41497, 3)},
+        "hpc8a.96xlarge": {1: (1.41497, 3), 2: (1.54628, 1)},
         "m8a.48xlarge": {1: (1.16662, 1)},
-        "hpc7a.96xlarge": {1: (1.00000, 2)},
-        "hpc6a.48xlarge": {1: (0.43417, 2), 2: (0.73489, 2)},
+        "hpc7a.96xlarge": {1: (1.00000, 2), 2: (1.01077, 1)},
+        "hpc6a.48xlarge": {1: (0.43417, 2), 2: (0.73489, 2), 3: (1.09791, 3), 4: (0.82161, 1)},
     },
     "benchPEP-h": {
         "hpc8a.96xlarge": {1: (1.38248, 3), 2: (2.71323, 3), 4: (5.06985, 3), 8: (9.89911, 3)},
@@ -259,7 +264,7 @@ scaling_chart()
 for bench, spec in DATA.items():
     print(f"\n=== {bench}: relative performance (1 x hpc7a.96xlarge = 1.00), runs, efficiency ===")
     print(f"{'Nodes':<6}" + "".join(f"{t:>26}" for t in STYLE))
-    for n in NODES:
+    for n in sorted({n for pts in spec.values() for n in pts}):
         cells = []
         for itype in STYLE:
             pts = spec.get(itype, {})
