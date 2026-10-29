@@ -89,7 +89,8 @@ cat > "${STUBS}/bin/lscpu" <<'EOF'
 # with two threads per core, so 192 CPUs; amd96-1s: 96 cores on one socket;
 # amd256: 2 x 128 cores; intel192), in the flat layout or, for
 # amd192-indented, the indented one of newer util-linux. Anything else fails,
-# as on a node without lscpu.
+# as on a node without lscpu. In a German locale (LC_ALL, else LC_MESSAGES,
+# else LANG: de_DE.UTF-8) the labels are German, as lscpu prints them there.
 echo "lscpu $*" >> "${LSCPU_LOG}"
 threads=1
 case "${STUB_LSCPU:-}" in
@@ -106,6 +107,14 @@ row() {  # row <indent> <field> <value>
   [ "${STUB_LSCPU}" = amd192-indented ] && indent="$1"
   printf '%*s%-*s%s\n' "${indent}" '' $(( 41 - indent )) "$2" "$3"
 }
+case "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}" in
+  de|de[_.@]*)
+    row 0 "Architektur:" x86_64; row 0 "CPU(s):" $(( per_socket * sockets * threads ))
+    row 0 "Anbieterkennung:" "${vendor}"; row 2 "Modellname:" "${model}"
+    row 4 "Thread(s) pro Kern:" "${threads}"; row 4 "Kern(e) pro Sockel:" "${per_socket}"
+    row 4 "Sockel:" "${sockets}"; row 0 "NUMA-Knoten:" 4
+    exit 0;;
+esac
 row 0 "Architecture:" x86_64
 row 0 "CPU(s):" $(( per_socket * sockets * threads ))
 row 0 "Vendor ID:" "${vendor}"
@@ -520,6 +529,10 @@ for imds in no-answer error-page not-a-type; do
 done
 on_node hpc8a.96xlarge 64 192 STUB_IMDS=no-answer STUB_LSCPU=amd192-indented
 refused "IMDS no-answer, lscpu's indented layout, a 192-core AMD node, 64 cores per node: refused" \
+    "this 192-core AMD node" 64 "this node" "${NOTE_AMD}"
+# lscpu is read in the C locale: in a German locale its labels are German, and would hide the 192 AMD cores.
+on_node hpc8a.96xlarge 64 192 STUB_IMDS=no-answer STUB_LSCPU=amd192 LC_ALL=de_DE.UTF-8
+refused "IMDS no-answer, a 192-core AMD node, LC_ALL=de_DE.UTF-8 (lscpu read in the C locale), 64 cores per node: refused" \
     "this 192-core AMD node" 64 "this node" "${NOTE_AMD}"
 on_node hpc8a.96xlarge 64 192 STUB_IMDS=no-answer STUB_LSCPU=fail
 binds "IMDS no-answer, lscpu fails: runs by slot, with a NOTE" "--bind-to core --map-by slot" "${NOTE_SKIP}"

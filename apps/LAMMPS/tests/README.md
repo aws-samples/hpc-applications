@@ -53,8 +53,8 @@ For the x86 script it also checks the rank placement, with the stub IMDS answeri
   192-core Intel node, a 96-core AMD node with or without SMT, so with 96 or 192 CPUs, one with 96 cores on one
   socket, one with 2 x 128 cores, or one where `lscpu` fails) the job runs, mapped by slot. Either way a `NOTE:` line
   on stderr says which, and both layouts of `lscpu`'s output (flat, and indented as newer util-linux prints it) are
-  read. A full node, and a hybrid layout at a supported count, run as on any type, with no `lscpu` call and no
-  `NOTE:`;
+  read, in a German locale too, where `lscpu`'s labels are German unless it runs in the C locale. A full node, and a
+  hybrid layout at a supported count, run as on any type, with no `lscpu` call and no `NOTE:`;
 - every IMDS call has a connect timeout and a total timeout of a few seconds, and when IMDS gives the instance type
   (`hpc8a.96xlarge`, `c7a.48xlarge` on a 192-core AMD CPU, or `c8i.96xlarge` in a Turkish locale, where `[a-z]`
   leaves out `i`), no `NOTE:` is printed and `lscpu` is not run.
