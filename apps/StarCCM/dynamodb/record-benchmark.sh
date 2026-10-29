@@ -84,7 +84,7 @@ TURBULENCE_MODEL="${TURBULENCE_MODEL:-}"
 SOLVER_TYPE="${SOLVER_TYPE:-}"
 MESH_CELLS_MILLION="${MESH_CELLS_MILLION:-}"
 
-# Directory scanned for the solver .log to recover metrics in zero-arg use
+# Directory scanned for the solver .log to recover metrics not passed in
 # (defaults to the current dir, which is the run dir when called from a job).
 RUN_DIR="${RUN_DIR:-$PWD}"
 
@@ -130,7 +130,8 @@ OPTIONS
     --no-put                  Never call AWS; only write the JSON file.
     --dry-run                 Print the record to stdout; touch no file and no AWS.
     --run-dir DIR             Dir to scan for the solver .log when metrics aren't
-                              supplied (default: current dir). Enables zero-arg use.
+                              supplied (default: current dir). Lets a launch
+                              script call the recorder with no arguments.
     --out DIR                 Directory for the saved JSON (default: current dir).
     -h, --help                Show this help.
 EOF
@@ -225,7 +226,7 @@ MPI_VERSION="$(mpirun --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | he
 LIBFABRIC_VERSION="$(fi_info --version 2>/dev/null | awk '/libfabric:/ {print $2; exit}')"
 EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print $2; exit}')"
 
-# --- Zero-arg fallback: recover STAR-CCM+ result metrics from the solver .log
+# --- Fallback: recover STAR-CCM+ result metrics from the solver .log ---------
 # Conservative by design. STAR-CCM+ batch logs report elapsed time positionally
 # inside the residual table (a "Total Solver Elapsed Time (hr)" COLUMN whose
 # repeating header line lists column names, not a value), so a plain text match

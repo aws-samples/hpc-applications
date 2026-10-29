@@ -78,7 +78,7 @@ NUM_ELEMENTS_MILLION="${NUM_ELEMENTS_MILLION:-}"
 ANALYSIS_TYPE="${ANALYSIS_TYPE:-}"
 ELEMENT_TYPE="${ELEMENT_TYPE:-}"
 
-# Directory scanned for the engine log to recover metrics in zero-arg use
+# Directory scanned for the engine log to recover metrics not passed in
 # (defaults to the current dir, which is the run dir when called from a job).
 RUN_DIR="${RUN_DIR:-$PWD}"
 
@@ -121,7 +121,8 @@ OPTIONS
     --no-put                  Never call AWS; only write the JSON file.
     --dry-run                 Print the record to stdout; touch no file and no AWS.
     --run-dir DIR             Dir to scan for the engine log when metrics aren't
-                              supplied (default: current dir). Enables zero-arg use.
+                              supplied (default: current dir). Lets a launch
+                              script call the recorder with no arguments.
     --out DIR                 Directory for the saved JSON (default: current dir).
     -h, --help                Show this help.
 EOF
@@ -202,7 +203,7 @@ MPI_VERSION="$(mpirun --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | he
 LIBFABRIC_VERSION="$(fi_info --version 2>/dev/null | awk '/libfabric:/ {print $2; exit}')"
 EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print $2; exit}')"
 
-# --- Zero-arg fallback: recover OpenRadioss result metrics from the engine log
+# --- Fallback: recover OpenRadioss result metrics from the engine log --------
 # When a value wasn't supplied (flag or env), parse the OpenRadioss engine log
 # in RUN_DIR. OpenRadioss prints an "ELAPSED TIME : <N>" (or "= <N>") line near
 # the end of the engine run; that is its own solver wall time. This lets the

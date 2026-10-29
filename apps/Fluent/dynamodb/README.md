@@ -31,8 +31,8 @@ with `./record-benchmark.sh --help`.
 
 The recorder also understands the **2026 R1** benchmark harness
 (`fluent_benchmark_gpu.py`, used for both CPU and GPU — see
-[../Fluent-Benchmark-2026R1.md](../Fluent-Benchmark-2026R1.md)). Run zero-arg at
-the end of a job (the launch scripts already do this) and it parses the
+[../Fluent-Benchmark-2026R1.md](../Fluent-Benchmark-2026R1.md)). Run it at the
+end of a job (the launch scripts already do this) and it parses the
 `<case>-<cores>.trn` transcript to record **`miups`** (Million Cell Iterations
 per Wall Second), `case_read_seconds`, `data_read_seconds`, `benchmark_method`
 and `solver_mode`. With the mesh size it also derives `time_per_iteration_seconds`

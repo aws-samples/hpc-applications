@@ -13,7 +13,9 @@ that answers nothing (no instance metadata), an aws whose put-item is refused,
 and a PATH that holds no other aws, curl, mpirun, fi_info or Slurm command.
 Nothing reaches AWS, and every value passed is synthetic. The last checks keep
 the old wording out of every recorder's --help, where seven recorders name the
-issue instead, and "their contribution inbox" out of every file.
+issue instead, the "zero-arg" shorthand out of it too, where --run-dir now
+says what it allows (a launch script can call the recorder with no arguments),
+and "their contribution inbox" out of every file.
 
 Run with:
     python -m pip install -r tests/requirements.txt
@@ -155,6 +157,17 @@ def test_help_names_the_issue_not_the_old_channel(tmp_path, host_tools):
         if app in HEADER_APPS and "Benchmark results issue" not in text:
             problems.append(f"{app}: names no Benchmark results issue")
     assert not problems, problems
+
+
+@pytest.mark.parametrize("app", APPS)
+def test_help_says_what_run_dir_allows(app, tmp_path, host_tools):
+    """--help explains --run-dir in plain words, without the "zero-arg" shorthand."""
+    env = {"PATH": str(host_tools), "HOME": str(tmp_path), "LC_ALL": "C"}
+    proc = subprocess.run([BASH, str(recorder(app)), "--help"], cwd=tmp_path, env=env, capture_output=True,
+                          text=True, errors="replace", timeout=120)
+    assert proc.returncode == 0, proc.stderr
+    assert "zero-arg" not in proc.stdout.lower(), proc.stdout
+    assert "Lets a launch script call the recorder with no arguments." in " ".join(proc.stdout.split()), proc.stdout
 
 
 def test_no_file_names_a_contribution_inbox():
