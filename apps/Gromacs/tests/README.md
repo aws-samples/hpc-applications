@@ -15,8 +15,11 @@ The suite runs **the launch scripts themselves**, `x86/gromacs-benchmark.sbatch`
 `Arm/gromacs-benchmark.sbatch`, with `curl` (IMDS), `lscpu`, `scontrol`, `srun`,
 `sudo`, `fi_info`, `mpirun`, `ldd`, `aws`, `gmx` and `gmx_mpi` replaced by the stubs of
 `harness.sh`, so the assembled script executes from its checks to its results block.
+`test-imds-reads.sh` also runs `GPU/gromacs-benchmark.sbatch` that way, with an
+`nvidia-smi` stub and a stub GPU build of its own.
 The `curl` stub answers IMDS as `STUB_IMDS` says (an instance type by default; no
-answer, an HTTP error, or a page that is not an instance type name), and the `lscpu`
+answer, an answer cut off at the time limit, an HTTP error, or a page that is not
+an instance type name), and the `lscpu`
 stub describes the CPU `STUB_LSCPU` names and logs each call, so the test host's CPU
 never decides a case.
 The stubs touch nothing on the host: the cache drop and the THP setting are

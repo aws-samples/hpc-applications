@@ -39,7 +39,9 @@ cat > "${STUBS}/bin/curl" <<'EOF'
 #   none          no answer: nothing printed, exit 28, as curl when its time limit ends;
 #   http-error    HTTP 401 to every request: with -f (--fail) nothing printed and
 #                 exit 22, as curl does; without it, the error page and exit 0;
-#   not-a-type    an HTML page, with status 200, for the instance type.
+#   not-a-type    an HTML page, with status 200, for the instance type;
+#   cut-off       for the instance type, its first characters (the type less its last
+#                 five), then exit 28, as curl ends a transfer at its time limit.
 # Each IMDS call's arguments are logged to IMDS_LOG, so a test can check its time limits.
 # Any other URL is a download: refused, with the URL logged, so no test reaches the
 # network.
@@ -58,6 +60,10 @@ case "$*" in
       not-a-type)
         case "$*" in *meta-data/instance-type*)
           printf '%s\n' '<html><body><h1>Instance metadata</h1></body></html>'; exit 0;;
+        esac;;
+      cut-off)
+        case "$*" in *meta-data/instance-type*)
+          t="${STUB_INSTANCE_TYPE:-hpc8a.96xlarge}"; printf '%s' "${t%?????}"; exit 28;;
         esac;;
     esac;;
 esac
