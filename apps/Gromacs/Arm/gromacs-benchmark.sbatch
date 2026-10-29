@@ -32,8 +32,8 @@
 #
 # GROMACS prints performance to md.log on the lines:
 #                  (ns/day)    (hour/ns)
-#   Performance:   144.741     0.166
-#   Wall t (s):     59.668
+#   Performance:   100.000     0.240
+#   Wall t (s):     10.000
 # `-resethway` discards the first half of the run from the timing so warm-up
 # cost is excluded; `-noconfout` suppresses the multi-GiB per-rank confout
 # write that otherwise dominates I/O at high rank counts.
@@ -57,6 +57,8 @@
 #                       (range 1..10,000,000)
 #   NSTLIST             neighbour-list rebuild interval (default 100,
 #                       range 1..1,000)
+#   TUNEPME             on | off: PME tuning (mdrun -tunepme). Default off
+#                       (-notunepme) for benchPEP-h, on for the others
 #   THREADS_PER_RANK    OpenMP threads per MPI rank
 #                       (default 1 = pure MPI, range 1..192)
 #   BASE_DIR            run output root (default: /fsx/gromacs)
@@ -107,6 +109,8 @@ DYNAMODB_RECORDER="${DYNAMODB_RECORDER:-/fsx/gromacs/scripts/dynamodb/record_to_
 # Pages serve .tpr.gz archives — fetched, gunzipped, validated non-empty,
 # then cached at /fsx/gromacs/benchmarks/<MODEL>/<MODEL>.tpr.
 # ---------------------------------------------------------------------------
+# PME tuning stays on unless the model below turns it off (TUNEPME overrides).
+DEFAULT_TUNEPME=on
 case "${MODEL}" in
     benchMEM)
         TPR_FILE="benchMEM.tpr"
@@ -117,6 +121,7 @@ case "${MODEL}" in
         TPR_FILE="benchPEP-h.tpr"
         DEFAULT_TIMESTEPS=5000
         MODEL_URL="https://www.mpinat.mpg.de/benchPEP-h"
+        DEFAULT_TUNEPME=off
         ;;
     STMV)
         TPR_FILE="STMV.tpr"
@@ -136,6 +141,13 @@ case "${MODEL}" in
 esac
 
 TIMESTEPS="${TIMESTEPS:-${DEFAULT_TIMESTEPS}}"
+# PME tuning (mdrun -tunepme) is off by default for benchPEP-h: on a 12M-atom
+# system it can still be running at the -resethway midpoint, and mdrun then
+# stops ("PME tuning was still active when attempting to reset mdrun
+# counters"); with -notunepme every run also computes the same thing. Smaller
+# systems finish tuning well before the midpoint and keep it on. TUNEPME=on or
+# off overrides the default for any model.
+TUNEPME="${TUNEPME:-${DEFAULT_TUNEPME}}"
 
 # ---------------------------------------------------------------------------
 # Override validation (Requirements 4.6, 7.2). Each check identifies the
@@ -156,6 +168,10 @@ if ! is_positive_int "${NSTLIST}" || (( NSTLIST < 1 || NSTLIST > 1000 )); then
 fi
 if ! is_positive_int "${THREADS_PER_RANK}" || (( THREADS_PER_RANK < 1 || THREADS_PER_RANK > 192 )); then
     echo "ERROR: THREADS_PER_RANK='${THREADS_PER_RANK}' invalid (expected integer in 1..192)" >&2
+    exit 1
+fi
+if [ "${TUNEPME}" != "on" ] && [ "${TUNEPME}" != "off" ]; then
+    echo "ERROR: TUNEPME='${TUNEPME}' invalid (expected on or off)" >&2
     exit 1
 fi
 if [[ "${BASE_DIR}" != /* ]]; then
@@ -313,6 +329,7 @@ echo "MPI ranks:     ${NRANK_TOTAL} total (${NRANK_PER_NODE}/node)"
 echo "OMP threads:   ${THREADS_PER_RANK}/rank -> ${NPROC_TOTAL} cores total"
 echo "Timesteps:     ${TIMESTEPS}"
 echo "NSTLIST:       ${NSTLIST}"
+echo "PME tuning:    ${TUNEPME}"
 echo "ENV_VARIANT:   ${ENV_VARIANT}"
 echo "GROMACS_ENV:   ${GROMACS_ENV}"
 echo "Workdir:       ${WORKDIR}"
@@ -478,10 +495,18 @@ fi
 
 # ---------------------------------------------------------------------------
 # OpenMP + EFA tuning. These vars are forwarded to every rank via -x.
+# OMP_PLACES / OMP_PROC_BIND bind the threads of mpirun's ranks. A Thread_MPI
+# run (one node) leaves pinning to gmx -pin on and gets neither: with them set,
+# libgomp binds gmx's first thread to one core at start-up, and every
+# Thread_MPI rank starts on that core.
 # ---------------------------------------------------------------------------
 export OMP_NUM_THREADS="${THREADS_PER_RANK}"
-export OMP_PLACES=cores
-export OMP_PROC_BIND=close
+if (( SLURM_JOB_NUM_NODES == 1 )) && [ "${ENV_VARIANT}" = "tmpi" ]; then
+    unset OMP_PLACES OMP_PROC_BIND
+else
+    export OMP_PLACES=cores
+    export OMP_PROC_BIND=close
+fi
 
 export FI_PROVIDER=efa
 export FI_EFA_USE_DEVICE_RDMA=1
@@ -524,6 +549,9 @@ echo "provider=efa"
 # ---------------------------------------------------------------------------
 MDRUN_ARGS=(mdrun -s "${TPR_FILE}" -nsteps "${TIMESTEPS}" -resethway -noconfout
     -nstlist "${NSTLIST}" -deffnm md)
+if [ "${TUNEPME}" = "off" ]; then
+    MDRUN_ARGS+=(-notunepme)
+fi
 
 # ---------------------------------------------------------------------------
 # Run
@@ -557,8 +585,8 @@ WALL_TIME_TOTAL=$(awk "BEGIN{printf \"%.2f\", ${T_END} - ${T_START}}")
 # Extract performance metrics (Requirements 4.4; design Property 3).
 # GROMACS prints near the end of md.log:
 #                  (ns/day)    (hour/ns)
-#   Performance:   144.741     0.166
-#   Wall t (s):     59.668
+#   Performance:   100.000     0.240
+#   Wall t (s):     10.000
 # Missing values -> 0 / "n/a" (non-fatal: gmx_mpi exit code is the
 # authoritative success signal per design.md error-handling table).
 # ---------------------------------------------------------------------------
@@ -726,8 +754,12 @@ REPORT
 # non-fatal). This uses the *contribution* recorder
 # (apps/Gromacs/dynamodb/record-benchmark.sh), SEPARATE from the optional
 # internal record_to_dynamodb.sh block above. It self-collects host details
-# from the environment and parses md.log in this run dir, so it needs no
-# arguments. A recorder problem NEVER fails a good solve (`|| echo` keeps it
+# from the environment and parses md.log in this run dir; the launcher adds
+# what makes runs comparable, under the names the dataset gives them: the run
+# length (nsteps), whether PME tuning was left on (pme_tuning, off when the
+# mdrun command line has -notunepme) and the OpenMP threads per rank
+# (threads_per_rank). A recorder problem
+# NEVER fails a good solve (`|| echo` keeps it
 # non-fatal, even under `set -e` + the ERR trap). Override the recorder path
 # with CONTRIB_RECORDER (NOT DYNAMODB_RECORDER, which the internal block uses),
 # and set SOURCE=<YourOrg> to tag your contributions.
@@ -739,6 +771,8 @@ _atoms_m=""
 if [ -n "${ATOMS:-}" ] && [ "${ATOMS}" != "0" ]; then
     _atoms_m="$(awk "BEGIN{printf \"%.6g\", ${ATOMS}/1000000}" 2>/dev/null || true)"
 fi
+_pme_tuning=on
+case " ${MDRUN_ARGS[*]} " in *" -notunepme "*) _pme_tuning=off ;; esac
 _contrib_recorder="${CONTRIB_RECORDER:-}"
 for _c in "${_contrib_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
@@ -746,10 +780,17 @@ for _c in "${_contrib_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/apps/Gromacs/dynamodb/record-benchmark.sh"; do
     if [ -n "${_c}" ] && [ -x "${_c}" ]; then _contrib_recorder="${_c}"; break; fi
 done
-if [ -n "${_contrib_recorder}" ] && [ -x "${_contrib_recorder}" ]; then
+# The success gate: record only a run whose md.log gives a positive ns/day. mdrun
+# exited 0 to get here (set -e and pipefail); the rate shows it timed the second
+# half of the run.
+if ! awk -v v="${_ns}" 'BEGIN { exit !(v ~ /^[0-9]+([.][0-9]+)?$/ && v + 0 > 0) }'; then
+    echo "NOTE: md.log gives no positive ns/day, so this run is not recorded." >&2
+elif [ -n "${_contrib_recorder}" ] && [ -x "${_contrib_recorder}" ]; then
     GROMACS_VERSION="${GROMACS_TAG:-}" BENCHMARK_CASE="${MODEL}" \
     NS_PER_DAY="${_ns}" TIME_TO_SOLUTION="${_wall}" ATOMS_MILLION="${_atoms_m}" \
     RUN_DIR="${WORKDIR}" "${_contrib_recorder}" \
+        --metric "nsteps=${TIMESTEPS}" --char "pme_tuning=${_pme_tuning}" \
+        --metric "threads_per_rank=${THREADS_PER_RANK}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 else
     echo "NOTE: contribution recorder not found; set CONTRIB_RECORDER=/path/to/record-benchmark.sh to record." >&2

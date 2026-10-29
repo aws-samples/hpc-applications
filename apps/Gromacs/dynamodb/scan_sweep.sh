@@ -1,8 +1,7 @@
 #!/bin/bash
 # Pull means of a Phase 1 scaling sweep from the Gromacs_Benchmarks table.
-# Mirrors the manual-scan pattern used by Doc/img/LAMMPS/generate_charts.py
-# (which has the per-replicate ns/day values pasted in as numeric literals
-# at the top of the script).
+# Mirrors the manual-scan pattern used for the LAMMPS charts: one list of
+# per-replicate ns/day values per cell.
 #
 # Usage:
 #   ./scan_sweep.sh                       # latest sweep (last 24 hours)
@@ -10,12 +9,13 @@
 #   ./scan_sweep.sh --raw                 # dump every matching row as JSON
 #
 # Output (default): one row per (instance, nodes, model) cell with the
-# per-replicate ns/day list and the mean. This is what
-# Doc/img/Gromacs/generate_charts.py expects to copy in as numeric literals.
+# per-replicate ns/day list and the mean. The chart generators in
+# Doc/img/Gromacs/ take relative values: each cell's median over the median
+# of the sweep's reference cell (see the SCALING_SWEEP.md hand-offs).
 #
 #   instance        nodes  model         ns_per_day_replicates           mean_ns_per_day
-#   hpc8a.96xlarge  1      benchMEM      [144.741, 144.812, 144.598]     144.717
-#   hpc8a.96xlarge  2      benchMEM      [273.5, 274.1, 273.0]           273.533
+#   hpc8a.96xlarge  1      benchMEM      [100.000, 100.000, 100.000]     100.000
+#   hpc8a.96xlarge  2      benchMEM      [200.000, 200.000, 200.000]     200.000
 #   ...
 #
 # When the sweep is fresh (table just populated by scaling_sweep_manifest.sh),
