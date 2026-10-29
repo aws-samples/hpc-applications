@@ -59,6 +59,12 @@ For the x86 script it also checks the rank placement, with the stub IMDS answeri
   (`hpc8a.96xlarge`, `c7a.48xlarge` on a 192-core AMD CPU, or `c8i.96xlarge` in a Turkish locale, where `[a-z]`
   leaves out `i`), no `NOTE:` is printed and `lscpu` is not run.
 
+For the Arm script, where the instance type names the run directory and the job log only, it checks that every IMDS
+call has a connect timeout, a total timeout of a few seconds and `-f`, and that with no answer, an answer cut off at
+the time limit, an HTTP error, or an answer that is not an instance type name (capitals included, or a type name
+inside other text) the job runs, its run directory and job log name no type and nothing of the answer, `lscpu` is not
+run and no `NOTE:` is printed; a type name with an `i` reads as one in a Turkish locale too.
+
 The property tests in [`tests/test_lammps_properties.py`](../../../tests/test_lammps_properties.py) (run with
 `pytest tests`) also run the scripts' own `set_run_length` on generated decks.
 

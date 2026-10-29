@@ -114,12 +114,20 @@ else
 fi
 NRANK_PER_NODE=$(( SLURM_NTASKS_PER_NODE / THREADS_PER_RANK ))
 
-TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-INSTANCE_TYPE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
+# ---------------------------------------------------------------------------
+# Instance metadata (IMDSv2), for the run directory's name and the job log
+# only. Each call gives up after a few seconds, and an answer that is not an
+# instance type name (an error page, for example; the name is tested in the C
+# locale) counts as none: INSTANCE_TYPE is then empty, and the job goes on.
+# ---------------------------------------------------------------------------
+IMDS_CURL=(curl -fs --connect-timeout 2 --max-time 5)
+TOKEN=$("${IMDS_CURL[@]}" -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") || TOKEN=""
+INSTANCE_TYPE=$("${IMDS_CURL[@]}" -H "X-aws-ec2-metadata-token: ${TOKEN}" http://169.254.169.254/latest/meta-data/instance-type) || INSTANCE_TYPE=""
+( LC_ALL=C; [[ "${INSTANCE_TYPE}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || INSTANCE_TYPE=""
 # REGION is referenced by the optional DynamoDB recorder block at the
 # bottom of this file (commented out by default).
 # shellcheck disable=SC2034
-REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+REGION=$("${IMDS_CURL[@]}" -H "X-aws-ec2-metadata-token: ${TOKEN}" http://169.254.169.254/latest/meta-data/placement/region) || REGION=""
 WORKDIR="${BASE_DIR}/Run/${SLURM_JOB_NAME}/${MODEL}/${SLURM_CLUSTER_NAME:-cluster}/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${INSTANCE_TYPE}-${NRANK_TOTAL}x${THREADS_PER_RANK}-s${SCALE}-$(date '+%d-%m-%Y-%H-%M')"
 
 mkdir -p "${WORKDIR}"

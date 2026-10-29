@@ -45,7 +45,10 @@ cat > "${STUBS}/bin/curl" <<'EOF'
 #   no-answer   nothing: every call ends as curl does past --max-time (exit 28);
 #   error-page  the instance type is an HTTP 404: curl -f fails (exit 22), and
 #               curl without -f prints the error page and exits 0;
-#   not-a-type  the instance type is answered with a page that is not one.
+#   not-a-type  the instance type is answered with a page that is not one;
+#   cut-off     the instance type is answered with its first characters (the
+#               type less its last five), then exit 28, as curl ends a transfer
+#               past --max-time.
 # Any other URL is a download, which this test never expects: logged, and
 # refused as curl -f refuses an HTTP error.
 case "$*" in
@@ -67,6 +70,8 @@ case "$*" in
           not-a-type)
             echo "<html><body>Instance metadata is not available here</body></html>"
             exit 0;;
+          cut-off)
+            t="${STUB_INSTANCE_TYPE:-stub.96xlarge}"; printf '%s' "${t%?????}"; exit 28;;
         esac
         echo "${STUB_INSTANCE_TYPE:-stub.96xlarge}"; exit 0;;
       *placement/region*) echo "stub-region-1"; exit 0;;
@@ -592,6 +597,60 @@ else
   bad "${label}" "no NOTE, no lscpu call" \
       "exit ${RC}; $(grep -E '^NOTE: the instance' <<<"${OUT}" | head -1); lscpu calls $(grep -c . "${LSCPULOG}")"
 fi
+
+# ---------------------------------------------------------------------------
+# The Arm script's instance metadata. The type names its run directory and job
+# log only (no flexible-cores list or check), so it never changes what the job
+# does. Every IMDS call has a connect timeout, a total timeout of at most 10 s
+# and -f, and no answer, an answer cut off at that timeout, an HTTP error, or an
+# answer that is not an instance type name leaves the type empty: the job runs,
+# and its run directory and job log name no type and nothing of the answer, as
+# the x86 script's do; lscpu is not run and no NOTE is printed.
+# ---------------------------------------------------------------------------
+echo "== Arm/lammps-benchmark.sbatch: the instance metadata =="
+ARM=Arm/lammps-benchmark.sbatch
+# arm_runs <label> <type>: the run completed with one lmp launch, and its only run
+# directory and its job log name the type (an empty one: no type)
+arm_runs() {
+  local dirs
+  dirs="$(find "${BASE}/Run" -mindepth 4 -maxdepth 4 2>/dev/null)"
+  if [ "${RC}" -eq 0 ] && [ "$(grep -c . "${LMPLOG}")" = 1 ] \
+      && [[ "${dirs}" == "${BASE}/Run/lammps/lj/test/4242-2x$2-8x1-s8-"* && "${dirs}" != *$'\n'* ]] \
+      && grep -qxF "Nodes:         2 x $2" <<<"${OUT}"; then ok "$1"
+  else bad "$1" "exit 0, one lmp launch, the run directory 4242-2x$2-8x1-s8-<date>, 'Nodes: 2 x $2'" \
+           "exit ${RC}; lmp launches $(grep -c . "${LMPLOG}"); ${dirs#"${BASE}/Run/"}; $(grep -E '^Nodes:' <<<"${OUT}" | head -1)"; fi
+}
+# arm_bounded <label>: every IMDS call of the last run had a connect timeout, a total
+# timeout of at most 10 s and -f, the instance type's among them; and lscpu was not
+# run, and no NOTE printed
+arm_bounded() {
+  local call untimed=0 connect_re='(^| )--connect-timeout [1-9][0-9]?( |$)' total_re='(^| )--max-time ([1-9]|10)( |$)'
+  local f_re='(^| )(--fail|-f[a-zA-Z]*|-[a-zA-Z]+f[a-zA-Z]*)( |$)'
+  while read -r call; do
+    [[ "${call}" =~ ${connect_re} ]] && [[ "${call}" =~ ${total_re} ]] && [[ "${call}" =~ ${f_re} ]] \
+      || untimed=$(( untimed + 1 ))
+  done < "${IMDSLOG}"
+  if grep -q 'meta-data/instance-type' "${IMDSLOG}" && [ "${untimed}" = 0 ] && [ ! -s "${LSCPULOG}" ] \
+      && ! grep -q '^NOTE' "${ERRLOG}"; then ok "$1"
+  else bad "$1" "every IMDS call with --connect-timeout N, --max-time M (M <= 10) and -f; no lscpu, no NOTE" \
+           "${untimed} untimed of $(grep -c . "${IMDSLOG}"); lscpu calls $(grep -c . "${LSCPULOG}"); $(grep '^NOTE' "${ERRLOG}" | head -1)"; fi
+}
+run_script "${ARM}" lj "" STUB_INSTANCE_TYPE=m8g.48xlarge
+arm_runs "m8g.48xlarge from IMDS: it names the run directory and the job log" m8g.48xlarge
+arm_bounded "m8g.48xlarge from IMDS: every IMDS call is bounded and has -f; no lscpu, no NOTE"
+for imds in no-answer cut-off error-page not-a-type; do
+  run_script "${ARM}" lj "" STUB_IMDS="${imds}"
+  arm_runs "IMDS ${imds}: the job runs, and its run directory and job log name no type" ""
+  arm_bounded "IMDS ${imds}: every IMDS call is bounded and has -f; no lscpu, no NOTE"
+done
+# Not a type name: capitals, and a type name inside other text (a page naming a host, a type and more).
+for answer in M8G.48XLARGE "Request denied by proxy.example.com" "m8g.48xlarge: not found"; do
+  run_script "${ARM}" lj "" STUB_INSTANCE_TYPE="${answer}"
+  arm_runs "the answer '${answer}': the job runs, and nothing of it names the run directory or the job log" ""
+done
+# A type name with an i reads as one in a Turkish locale too, where [a-z] leaves out i.
+run_script "${ARM}" lj "" STUB_INSTANCE_TYPE=im4gn.16xlarge LANG=tr_TR.UTF-8
+arm_runs "im4gn.16xlarge from IMDS, a Turkish locale: it names the run directory and the job log" im4gn.16xlarge
 
 echo
 printf 'sbatch e2e tests: %d passed, %d failed\n' "${pass}" "${fail}"
