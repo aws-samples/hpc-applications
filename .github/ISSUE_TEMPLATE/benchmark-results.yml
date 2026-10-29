@@ -1,0 +1,85 @@
+name: Benchmark results
+description: Contribute one benchmark run, as the JSON record an application's record-benchmark.sh saved.
+title: "[Benchmark results] "
+labels: ["benchmark-results"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This issue is public.** Anyone can read it and its attachments, so:
+        - Share results of public benchmark cases only, or rename a confidential case before you attach the JSON: in the JSON (its `benchmark_case`, its `record_id`, and any other field that names it, such as ANSYS Mechanical's `model_name`) and in the file's name, which is the `record_id`. Or paste the edited JSON instead of attaching the file. Use the new name in the issue's title too.
+        - Include no licence server, licence key or customer name: not in the JSON or its file's name, where the `--source` label you gave the recorder appears too, and not anywhere else in the issue.
+        - Read the JSON before you attach it. It holds what the recorder detected about your run: the instance type, the operating system, the cores and nodes, and the MPI and library versions. Some scripts also store the input file's name as the case, and the nodes' names.
+        - If you attach or paste something you should not have, editing the issue does not remove it: GitHub keeps the earlier text in the issue's edit history, which anyone can open. Ask the maintainers in a comment to remove it, without repeating what it was.
+
+        One run per issue. [apps/BENCHMARK-RECORDERS.md](https://github.com/aws-samples/hpc-applications/blob/main/apps/BENCHMARK-RECORDERS.md) says how to record a run, and the dataset owner loads each record into the dataset.
+  - type: dropdown
+    id: application
+    attributes:
+      label: Application
+      options:
+        - ANSYS Mechanical
+        - CFX
+        - Fluent
+        - GROMACS
+        - LAMMPS
+        - LS-DYNA
+        - OpenFOAM
+        - OpenRadioss
+        - OptiStruct
+        - STAR-CCM+
+        - WRF
+    validations:
+      required: true
+  - type: input
+    id: case
+    attributes:
+      label: Benchmark case
+      description: The case as the recorder stored it in `benchmark_case`. A public case, or a confidential one renamed.
+      placeholder: f1_racecar_140m
+    validations:
+      required: true
+  - type: input
+    id: instance-type
+    attributes:
+      label: Instance type
+      placeholder: hpc7a.96xlarge
+    validations:
+      required: true
+  - type: input
+    id: nodes
+    attributes:
+      label: Nodes
+      description: The number of instances the run used.
+      placeholder: "2"
+    validations:
+      required: true
+  - type: input
+    id: cores-per-node
+    attributes:
+      label: Cores per node
+      description: The cores the run used on each node (MPI ranks × OpenMP threads per rank).
+      placeholder: "96"
+    validations:
+      required: true
+  - type: textarea
+    id: record
+    attributes:
+      label: The recorder's JSON record
+      description: Attach the `<record_id>.json` file the recorder saved (drag and drop it here), or paste its content as a JSON code block. Its name is the `record_id`, and GitHub shows it in the issue, so rename the file too if you changed anything in it.
+    validations:
+      required: true
+  - type: textarea
+    id: versions
+    attributes:
+      label: Software versions
+      description: The application version, the MPI and its version, libfabric and the EFA installer if you know them, the operating system, and the AWS ParallelCluster or AWS PCS version if the cluster used one.
+    validations:
+      required: true
+  - type: checkboxes
+    id: public
+    attributes:
+      label: Before you submit
+      options:
+        - label: This issue holds one run, of a public benchmark case or a renamed one, and no licence server, licence key or customer name.
+          required: true
