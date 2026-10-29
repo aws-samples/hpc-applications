@@ -33,7 +33,10 @@
 #                       its closing statistics, whose Memory Option: line gives
 #                       the memory mode the run is recorded with. off leaves it
 #                       out, and the memory mode is unknown.
-#     ANSYSLMD_LICENSE_FILE, SOURCE, DYNAMODB_RECORDER    see recorder section.
+#     ANSYSLMD_LICENSE_FILE  the Ansys licence server, as <port>@<host>: set it
+#                       in the shell you submit from (Readme.md, "Running under
+#                       a job scheduler"). The default is only a placeholder.
+#     SOURCE, DYNAMODB_RECORDER    see recorder section.
 #     SOLVER_TYPE       solver family the recorder stores with the run, e.g.
 #                       sparse-direct-symmetric or pcg-iterative. Set it on
 #                       the submission, SOLVER_TYPE=pcg-iterative sbatch ...,

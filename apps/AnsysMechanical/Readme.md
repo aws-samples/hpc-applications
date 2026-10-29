@@ -498,7 +498,7 @@ error block says that the solve never finished
 ([tests/fixtures/disk-full-abort.log](https://github.com/aws-samples/hpc-applications/blob/main/apps/AnsysMechanical/tests/fixtures/disk-full-abort.log)).
 
 Getting that test right is fiddlier than it looks, and the failure modes are
-silent in both directions. Four traps we hit:
+silent in both directions. Seven traps we hit:
 
   * **Match error *blocks*, not lines, and ignore indentation.** A MAPDL error is
     a header line plus continuation lines. Filtering out the line that contains
