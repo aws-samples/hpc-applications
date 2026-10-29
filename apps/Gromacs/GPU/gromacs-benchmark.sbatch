@@ -916,7 +916,12 @@ for _c in "${_contrib_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/apps/Gromacs/dynamodb/record-benchmark.sh"; do
     if [ -n "${_c}" ] && [ -x "${_c}" ]; then _contrib_recorder="${_c}"; break; fi
 done
-if [ -n "${_contrib_recorder}" ] && [ -x "${_contrib_recorder}" ]; then
+# The success gate, as in the CPU launchers: record only a run whose md.log gives
+# a positive ns/day. mdrun exited 0 to get here (set -e and pipefail); the rate
+# shows it timed the second half of the run.
+if ! awk -v v="${_ns}" 'BEGIN { exit !(v ~ /^[0-9]+([.][0-9]+)?$/ && v + 0 > 0) }'; then
+    echo "NOTE: md.log gives no positive ns/day, so this run is not recorded." >&2
+elif [ -n "${_contrib_recorder}" ] && [ -x "${_contrib_recorder}" ]; then
     GROMACS_VERSION="${GROMACS_TAG:-}" BENCHMARK_CASE="${MODEL}" \
     NS_PER_DAY="${_ns}" TIME_TO_SOLUTION="${_wall}" ATOMS_MILLION="${_atoms_m}" \
     RUN_DIR="${WORKDIR}" "${_contrib_recorder}" \

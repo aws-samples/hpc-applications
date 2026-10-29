@@ -1,7 +1,8 @@
 """Run the GROMACS shell suite from pytest.
 
 apps/Gromacs/tests/run-tests.sh runs the CPU benchmark launchers
-(x86/gromacs-benchmark.sbatch, Arm/gromacs-benchmark.sbatch) end to end with
+(x86/gromacs-benchmark.sbatch, Arm/gromacs-benchmark.sbatch) and the GPU
+single-simulation launcher (GPU/gromacs-benchmark.sbatch) end to end with
 stubbed Slurm, IMDS, MPI and GROMACS commands, so the assembled scripts really
 execute, and checks every GROMACS script with `bash -n`. Unlike
 test_gromacs_properties.py, which re-implements the shell logic in Python, this
