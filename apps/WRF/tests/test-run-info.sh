@@ -158,7 +158,7 @@ io_form=11"
 # In a Turkish locale awk lowercases I to a dotless ı, so RUN_MINUTES and
 # IO_FORM_HISTORY in capitals are read there only because the library runs awk
 # in the C locale.
-if locale -a 2>/dev/null | grep -qiE '^tr_TR\.utf-?8$'; then
+if grep -qiE '^tr_TR\.utf-?8$' <<< "$(locale -a 2>/dev/null)"; then
     d="$(dir turkish)"
     nl "${d}" 'E_WE = 1501,' 'E_SN = 1201,' 'E_VERT = 50,' 'RUN_MINUTES = 90,' 'IO_FORM_HISTORY = 11,'
     got="$(export LC_ALL=tr_TR.UTF-8; wrf_run_info "${d}")"; rc=$?
