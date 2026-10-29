@@ -421,6 +421,24 @@ for s in "${SCRIPTS[@]}"; do
   lmp_args_have "SCALE=6 TIMESTEPS=9000 together" -var x 6 -var y 6 -var z 6 -var nsteps 9000
   run_script "${s}" rhodo "" SCALE=4
   has "MODEL=rhodo, SCALE=4: still 32,000 atoms (in.rhodo has no replicate)" "Atoms:            32000"
+  # in.rhodo reads no scale, so the run is labelled with the one it has, 1, and a NOTE says so.
+  has "MODEL=rhodo, SCALE=4: the results give scale 1" "Scale factor:     1"
+  lmp_args_have "MODEL=rhodo, SCALE=4: lmp gets -var x 1" -var x 1 -var y 1 -var z 1
+  grep -qF -- "--char scale=1 " "${RECLOG}" && ok "MODEL=rhodo, SCALE=4: the recorder gets scale 1" \
+    || bad "MODEL=rhodo, SCALE=4: the recorder gets scale 1" "--char scale=1" "$(tr '\n' '|' < "${RECLOG}")"
+  rundir="$(find "${BASE}/Run" -mindepth 4 -maxdepth 4 -type d 2>/dev/null | head -1)"
+  [[ "${rundir##*/}" == *-s1-* ]] && ok "MODEL=rhodo, SCALE=4: the run directory's name gives scale 1" \
+    || bad "MODEL=rhodo, SCALE=4: the run directory's name gives scale 1" "...-s1-..." "${rundir##*/}"
+  rhodo_note="NOTE: MODEL=rhodo runs in.rhodo's 32,000 atoms whatever SCALE is, so SCALE=4 is replaced by 1; to scale the rhodopsin model, use MODEL=rhodo_scaled."
+  grep -qxF -- "${rhodo_note}" "${ERRLOG}" && ok "MODEL=rhodo, SCALE=4: a NOTE on stderr says so" \
+    || bad "MODEL=rhodo, SCALE=4: a NOTE on stderr says so" "${rhodo_note}" "$(grep '^NOTE' "${ERRLOG}" | head -2 | tr '\n' '|')"
+  notes=0
+  for scale_arg in "" SCALE=1; do
+    run_script "${s}" rhodo "" ${scale_arg:+"${scale_arg}"}
+    grep -q '^NOTE: MODEL=rhodo' "${ERRLOG}" && notes=$(( notes + 1 ))
+  done
+  [ "${notes}" = 0 ] && ok "MODEL=rhodo at its default scale, and with SCALE=1: no such NOTE" \
+    || bad "MODEL=rhodo at its default scale, and with SCALE=1: no such NOTE" "no NOTE" "${notes} run(s) with the NOTE"
 
   # A run length that is not a whole number from 1 to 10,000,000 stops the job before any launch.
   for t in 0 -5 abc 1e4 10.5 "1 000" 007 10000001 99999999999999999999; do

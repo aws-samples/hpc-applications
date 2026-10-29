@@ -33,7 +33,9 @@ asks for, with `${name}` taken from `-var name`, as LAMMPS does. For each script
   that block alone, and a stub in place of `record_to_dynamodb.sh`), a run that ends as asked is recorded once by
   each recorder, and none of those three runs by either;
 - `TIMESTEPS` and `SCALE` override the defaults, alone and together (the recorder gets the `TIMESTEPS` run), and
-  `MODEL=rhodo` keeps its 32,000 atoms whatever `SCALE` is (`in.rhodo` has no `replicate` command);
+  `MODEL=rhodo` keeps its 32,000 atoms whatever `SCALE` is (`in.rhodo` has no `replicate` command): with `SCALE=4`
+  its results, its record, its run directory's name and `lmp`'s `-var x`, `y` and `z` give scale 1, and a `NOTE:` on
+  stderr says so, which neither its default nor `SCALE=1` prints;
 - a `TIMESTEPS` that is not a whole number from 1 to 10,000,000 (`0`, `-5`, `abc`, `1e4`, `10.5`, `1 000`, `007`,
   `10000001`, a 20-digit number) stops the job with an `ERROR:` line before any launch, and `10000000` runs;
 - a cached deck without exactly one plain `run <steps>` line (none, two, `run 100 post no`, `run ${t}`,

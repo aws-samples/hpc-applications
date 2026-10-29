@@ -101,7 +101,7 @@ Four models from the upstream LAMMPS [`bench/`](https://github.com/lammps/lammps
 | `eam` | `in.eam` | Cu metal | EAM many-body | 4 | 2,048,000 | 30,000 |
 | `rhodo` | `in.rhodo` | Rhodopsin protein in water | CHARMM + PPPM | — | 32,000 | 6,000 |
 
-The atom count is 32,000 × `SCALE`³: `in.lj`, `in.eam` and `in.rhodo.scaled` replicate their box `SCALE` times along each axis, which makes `SCALE` the knob for weak-scaling studies. `in.rhodo` has no `replicate` command, so `MODEL=rhodo` runs its 32,000 atoms whatever `SCALE` is; to scale the rhodopsin model, use `MODEL=rhodo_scaled` (at `SCALE=1` it is the same 32,000 atoms). For `eam` at `SCALE=1` (32,000 atoms), the EAM neighbour-list build does not parallelise well past about 64 ranks: use `SCALE=2` or more at higher rank counts.
+The atom count is 32,000 × `SCALE`³: `in.lj`, `in.eam` and `in.rhodo.scaled` replicate their box `SCALE` times along each axis, which makes `SCALE` the knob for weak-scaling studies. `in.rhodo` has no `replicate` command, so `MODEL=rhodo` runs its 32,000 atoms whatever `SCALE` is: with another `SCALE`, the launchers run, name and record the run with `SCALE=1`, and a `NOTE:` says so. To scale the rhodopsin model, use `MODEL=rhodo_scaled` (at `SCALE=1` it is the same 32,000 atoms). For `eam` at `SCALE=1` (32,000 atoms), the EAM neighbour-list build does not parallelise well past about 64 ranks: use `SCALE=2` or more at higher rank counts.
 
 Input decks are tiny (~1 KB each) and are auto-fetched from the LAMMPS GitHub repo on first run, then cached on FSx at `/fsx/lammps/benchmarks/<model>/`.
 

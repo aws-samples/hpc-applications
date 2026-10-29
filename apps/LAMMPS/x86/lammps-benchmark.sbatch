@@ -105,6 +105,13 @@ case "${MODEL}" in
 esac
 
 SCALE="${SCALE:-${DEFAULT_SCALE}}"
+# in.rhodo reads no scale, so a SCALE override would only mislabel the run:
+# its directory name, its results and its record would give a scale it did not
+# run at. Such a run is labelled with the scale it has, 1, and a NOTE says so.
+if [ "${MODEL}" = rhodo ] && [ "${SCALE}" != 1 ]; then
+    echo "NOTE: MODEL=rhodo runs in.rhodo's 32,000 atoms whatever SCALE is, so SCALE=${SCALE} is replaced by 1; to scale the rhodopsin model, use MODEL=rhodo_scaled." >&2
+    SCALE=1
+fi
 TIMESTEPS="${TIMESTEPS:-${DEFAULT_TIMESTEPS}}"
 # At most 8 digits before the arithmetic test, so a long value cannot overflow it.
 if ! [[ "${TIMESTEPS}" =~ ^[1-9][0-9]{0,7}$ ]] || (( TIMESTEPS > 10000000 )); then
