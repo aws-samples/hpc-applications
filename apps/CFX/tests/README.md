@@ -83,6 +83,17 @@ file, and a newest `_002` without the value next to an `_001` with it. A transie
 run, CRLF line ends and a comma-decimal locale are recorded, and a run that exits
 1 gets the existing NOTE only.
 
+The run directory's name gives the instance type from the instance metadata. The
+`curl` stub logs each request, and can answer as a metadata service that gives no
+answer (a refused connection, or none within the time limit), an answer cut off at
+the time limit, an HTTP error, a page that is not an instance type name, or a type
+name followed by a second line. The last cases check that both requests carry
+`-f`, `--connect-timeout 2` and `--max-time 5`, and that with each of those answers
+the run goes on, in a run directory whose name has no instance type and nothing of
+the answer. A type name with an `i`, `c8i.96xlarge`, names the run directory under
+`LANG=tr_TR.UTF-8` too, where `[a-z]` leaves out `i` unless the name is tested in
+the C locale.
+
 ## Adding a case
 
 Drop a cfx5solve output file in `fixtures/` and add a `run_case` and its

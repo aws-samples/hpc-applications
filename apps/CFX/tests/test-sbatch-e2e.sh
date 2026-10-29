@@ -63,10 +63,45 @@ fi
 mkdir -p "${WORK}/bin"
 cat > "${WORK}/bin/curl" <<'EOF'
 #!/bin/bash
-# IMDS stub: token request or instance-type lookup.
+# IMDS stub: token request or instance-type lookup (STUB_INSTANCE_TYPE, default
+# hpc8a.96xlarge), each call logged with its options. STUB_IMDS gives another
+# answer, as curl reports it:
+#   down        no answer: the connection is refused (exit 7);
+#   timeout     no answer within the call's --max-time (exit 28);
+#   cut-off     the instance type's first characters, then exit 28, as curl
+#               ends a transfer at its --max-time;
+#   http-error  an HTTP error: no output and exit 22 with -f (--fail), the
+#               error page and exit 0 without it;
+#   not-a-type  for the instance type, an answer that is not an instance type
+#               name, such as a web proxy's own page, which names the proxy's
+#               host (exit 0);
+#   two-lines   for the instance type, an instance type name, then a line that
+#               ends in a host name, as a proxy might add (exit 0).
+echo "curl $*" >> "${STUB_STATE}/curl.log"
+case "${STUB_IMDS:-up}" in
+    down)    exit 7 ;;
+    timeout) exit 28 ;;
+    cut-off) case "$*" in *instance-type*) printf 'hpc8a.96x'; exit 28 ;; esac ;;
+    http-error)
+        for _a in "$@"; do
+            case "${_a}" in --fail) exit 22;; --*) ;; -*f*) exit 22;; esac
+        done
+        printf '%s\n' "<html><head><title>401 - Unauthorized</title></head>" "<body><h1>401 - Unauthorized</h1></body></html>"
+        exit 0 ;;
+    not-a-type)
+        case "$*" in *instance-type*)
+            echo "<html><head><title>Proxy</title></head><body>Request not allowed by proxy.example.com</body></html>"
+            exit 0 ;;
+        esac ;;
+    two-lines)
+        case "$*" in *instance-type*)
+            printf '%s\n' "hpc8a.96xlarge" "<p>Request checked by proxy.example.com"
+            exit 0 ;;
+        esac ;;
+esac
 case "$*" in
   *api/token*)     echo "stub-token";;
-  *instance-type*) echo "hpc8a.96xlarge";;
+  *instance-type*) echo "${STUB_INSTANCE_TYPE:-hpc8a.96xlarge}";;
   *)               echo "";;
 esac
 exit 0
@@ -418,6 +453,52 @@ else
     bad "exit 1 with the solver's time -> not recorded, with the existing NOTE only" \
         "no recorder call; NOTE: solver exited 1; skipping benchmark recording." "stderr: ${ERR//$'\n'/ | }"
 fi
+
+# ---------------------------------------------------------------------------
+# 10. The run directory's instance type, from the instance metadata. At 192
+#     cores per node (a supported count) the cores-per-node check asks it
+#     nothing, so the run directory's two requests are the only ones. Each
+#     carries -f, --connect-timeout 2 and --max-time 5; with no answer, an
+#     answer cut off at that limit, an HTTP error, or an answer that is not an
+#     instance type name, the run directory's name has no instance type and
+#     nothing of the answer, and the run goes on as before. A type name with an
+#     i names the run directory in a Turkish locale too, where [a-z] leaves out
+#     i unless the name is tested in the C locale.
+# ---------------------------------------------------------------------------
+# named_dir <description> <type, empty for none>: the last run_case ran, and its only run directory is
+# 4242-2x<type>-384-<date>
+named_dir() {
+    local runs n
+    runs="$(readlink -m "${STATE}/base/cfx-e2e")/Run"
+    n="$(find "${runs}" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)"
+    if [ "${RC}" -eq 0 ] && [ "${n}" -eq 1 ] && [[ "${WORKDIR}" =~ ^"${runs}"/4242-2x"$2"-384-[0-9-]+$ ]] \
+            && [ -d "${WORKDIR}" ] && [ -s "${STATE}/cfx5solve.args" ]; then
+        ok "$1"
+    else
+        bad "$1" "exit 0, cfx5solve ran, one run directory: ${runs}/4242-2x$2-384-<date>" \
+            "exit ${RC}; ${n} entr(ies) in Run; ${WORKDIR//$'\n'/ | }"
+    fi
+}
+bounded() {  # <description>: the last run_case's two instance metadata requests carry -f and both time limits
+    local log="${STATE}/curl.log" n
+    n="$(grep -c . "${log}" 2>/dev/null)"
+    if [ "${n:-0}" -eq 2 ] && [ "$(grep -cE -- ' -fs --connect-timeout 2 --max-time 5 ' "${log}")" -eq 2 ] \
+            && grep -q 'latest/api/token' "${log}" && grep -q 'meta-data/instance-type' "${log}"; then
+        ok "$1"
+    else
+        bad "$1" "2 requests, each with -fs --connect-timeout 2 --max-time 5" "$(tr '\n' '|' < "${log}" 2>/dev/null)"
+    fi
+}
+run_case imds-up 0 "${FIX}/steady-10-iterations.out"
+bounded "the run directory's two instance metadata requests carry -f, --connect-timeout 2 and --max-time 5"
+for imds in down timeout cut-off http-error not-a-type two-lines; do
+    EXTRA_ENV="STUB_IMDS=${imds}" run_case "imds-${imds}" 0 "${FIX}/steady-10-iterations.out"
+    named_dir "instance metadata ${imds}: the run goes on, and its run directory's name has no instance type" ""
+    bounded "instance metadata ${imds}: both requests carry -f and both time limits"
+done
+EXTRA_ENV="STUB_INSTANCE_TYPE=c8i.96xlarge LC_ALL= LC_CTYPE= LC_COLLATE= LANG=tr_TR.UTF-8" \
+    run_case imds-turkish 0 "${FIX}/steady-10-iterations.out"
+named_dir "c8i.96xlarge in a Turkish locale: it names the run directory" c8i.96xlarge
 
 echo
 printf 'sbatch e2e tests: %d passed, %d failed, %d skipped\n' "${pass}" "${fail}" "${skip}"
