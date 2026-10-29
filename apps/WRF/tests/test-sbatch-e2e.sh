@@ -51,7 +51,9 @@ cat > "${STUBS}/bin/curl" <<'EOF'
 # CURL_LOG, one line per call, when it is set. IMDS_MODE=down answers nothing
 # (exit 28, as curl does at its time limit); IMDS_MODE=http-error answers an
 # HTTP 401, which curl -f (--fail, or f among short options) turns into exit 22
-# and no output, and plain curl prints, with exit 0.
+# and no output, and plain curl prints, with exit 0; IMDS_MODE=cut-off answers
+# the instance-type lookup with the type's first characters (the type less its
+# last five), then exit 28, as curl ends a transfer at its time limit.
 [ -n "${CURL_LOG:-}" ] && printf '%s\n' "$*" >> "${CURL_LOG}"
 case "${IMDS_MODE:-}" in
   down) exit 28 ;;
@@ -61,6 +63,10 @@ case "${IMDS_MODE:-}" in
     done
     echo "<html><head><title>401 - Unauthorized</title></head></html>"
     exit 0 ;;
+  cut-off)
+    case "$*" in
+      *instance-type*) t="${IMDS_INSTANCE_TYPE-stub.48xlarge}"; printf '%s' "${t%?????}"; exit 28 ;;
+    esac ;;
 esac
 case "$*" in
   *api/token*)     echo "stub-token";;
@@ -774,6 +780,48 @@ for s in "${SCRIPTS[@]}"; do
     says "${s}: the NOTE goes to stderr" "$(skip_note 64)"
     lacks "${s}: (the script's stdout was discarded)" '^=== WRF'
 done
+
+# The Arm script reads the instance type for its run directory's name and its
+# job log only, as it has no ranks-per-node check. Both instance-metadata
+# requests carry -f and give up after 5 seconds, 2 to connect, and with no
+# answer, an answer cut off at that limit, an HTTP error, or an answer that is
+# not a type name, the job runs and is recorded, its run directory's name and
+# its job log hold no instance type and nothing of the answer, lscpu is not
+# asked, and no NOTE is printed. A type name with an i reads as one in a
+# Turkish locale too.
+echo "== the instance metadata (the Arm script) =="
+ARM=Arm/wrf-benchmark.sbatch
+# arm_dir <label> <type>: the job ran, and its only run directory is named 4242-2x<type>-8-<date>
+arm_dir() {
+    local w
+    w="$(find "$(dirname "${RECLOG}")/Run" -mindepth 3 -maxdepth 3 2>/dev/null)"
+    if [ "${RC}" -eq 0 ] && grep -q 'starting wrf task' <<<"${OUT}" \
+            && [[ "${w##*/}" =~ ^4242-2x"$2"-8-[0-9-]+$ && "$(wc -l <<<"${w}")" -eq 1 ]]; then ok "$1"
+    else bad "$1" "exit 0, wrf.exe started, the run directory 4242-2x$2-8-<date>" "exit ${RC}; ${w//$'\n'/|}"; fi
+}
+per_node "${ARM}" 4 IMDS_INSTANCE_TYPE=m8g.48xlarge
+arm_dir "${ARM}: m8g.48xlarge from the instance metadata names the run directory" m8g.48xlarge
+says "${ARM}: m8g.48xlarge: and the job log" "Instance: m8g.48xlarge"
+imds_calls "${ARM}: both instance-metadata requests carry -f and give up after 5 seconds, 2 to connect"
+lscpu_asked "${ARM}: m8g.48xlarge: lscpu is not asked" no
+for k in IMDS_MODE=down IMDS_MODE=cut-off IMDS_MODE=http-error IMDS_INSTANCE_TYPE= \
+         "IMDS_INSTANCE_TYPE=<html><body>401 Unauthorized</body></html>" \
+         "IMDS_INSTANCE_TYPE=Access denied by proxy.example.com" \
+         "IMDS_INSTANCE_TYPE=Not found: m8g.48xlarge" \
+         "IMDS_INSTANCE_TYPE=m8g.48xlarge"$'\n'"<html>" \
+         IMDS_INSTANCE_TYPE=M8G.48XLARGE; do
+    l="${k//$'\n'/\\n}"
+    per_node "${ARM}" 4 "${k}"
+    arm_dir "${ARM}: ${l}: the job runs, and its run directory's name has no instance type" ""
+    says "${ARM}: ${l}: the job log names none" "Instance: "
+    recorded "${ARM}: ${l}: the run is recorded"
+    lacks "${ARM}: ${l}: no NOTE" '^NOTE'
+    lscpu_asked "${ARM}: ${l}: lscpu is not asked" no
+done
+per_node "${ARM}" 4 IMDS_MODE=down
+imds_calls "${ARM}: no answer: both requests carry -f and give up after 5 seconds, 2 to connect"
+per_node "${ARM}" 4 IMDS_INSTANCE_TYPE=im4gn.16xlarge LANG=tr_TR.UTF-8
+arm_dir "${ARM}: im4gn.16xlarge in a Turkish locale names the run directory" im4gn.16xlarge
 
 echo "== the stubs kept AWS out of it =="
 [ -s "${STUBS}/aws-calls.log" ] && bad "no AWS call" "none" "$(head -1 "${STUBS}/aws-calls.log")" \

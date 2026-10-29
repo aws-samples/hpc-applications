@@ -82,6 +82,13 @@ empty ones, or no restart file, as a case asks. For each script it asserts:
     an HTTP error leaves the run directory's name without an instance type
     rather than with the error page, as does a proxy's page that is not a type
     name. These cases are 125 checks for each x86 script;
+  * the Arm script, which has no such check, reads the instance type for its
+    run directory's name and its job log only: both requests carry `-f`,
+    `--connect-timeout 2` and `--max-time 5`, and with the same answers that
+    give no instance type, and one cut off at that limit, the job runs and is
+    recorded, its run directory's name and job log hold no instance type and
+    nothing of the answer, `lscpu` is not asked and no NOTE is printed; a type
+    name with an `i` names the run directory under `LANG=tr_TR.UTF-8` too;
   * the average step is unchanged, and the report gives `Median timestep:` and
     `Steady timestep:` right after `Avg timestep:` (the x86 scripts also print
     both next to their average in the checking section);
