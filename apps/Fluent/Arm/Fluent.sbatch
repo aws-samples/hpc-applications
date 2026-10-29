@@ -47,13 +47,16 @@ echo "Enabling Transparent Huge Pages (THP)"
 mpirun -n $SLURM_JOB_NUM_NODES --map-by ppr:1:node /bin/bash -c "echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled"
 
 "${APP_BIN_PATH}" ${fluent_mode} -g -t${SLURM_NPROCS} -cnf=hostfile -cflush -env -ssh -part=4 -p=eth.efa -mpi=openmpi -i ${journal_file} | tee output.$SLURM_JOBID.out
+_rec_rc=${PIPESTATUS[0]}
 
 # --- Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal) ---
 # The recorder self-collects host info from the environment and parses the Fluent
 # solver log in this run dir, so it needs no arguments and NEVER fails the job
-# (the `|| echo` keeps it non-fatal, even under `set -e`). Override its path with
-# DYNAMODB_RECORDER; set SOURCE=<YourOrg> to tag your contributions. See
-# apps/Fluent/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
+# (the `|| echo` keeps it non-fatal, even under `set -e`). Only a run that Fluent
+# ended with exit status 0 (Fluent's own, not tee's) is recorded: a run that
+# Fluent ends abnormally is not. Override its path with DYNAMODB_RECORDER; set
+# SOURCE=<YourOrg> to tag your contributions. See apps/Fluent/dynamodb/README.md
+# and apps/BENCHMARK-RECORDERS.md.
 _recorder="${DYNAMODB_RECORDER:-}"
 for _c in "${_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
@@ -61,9 +64,11 @@ for _c in "${_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/apps/Fluent/dynamodb/record-benchmark.sh"; do
     if [ -n "${_c}" ] && [ -x "${_c}" ]; then _recorder="${_c}"; break; fi
 done
-if [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
+if [ "${_rec_rc}" -eq 0 ] && [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
     FLUENT_VERSION="${fluentversion}" RUN_DIR="${workdir}" "${_recorder}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
+elif [ "${_rec_rc}" -ne 0 ]; then
+    echo "NOTE: solver exited ${_rec_rc}; skipping benchmark recording." >&2
 else
     echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2
 fi
