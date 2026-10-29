@@ -14,8 +14,8 @@
 #   * It ALWAYS writes the record as a local JSON file you can inspect/keep.
 #   * It only calls `aws dynamodb put-item` when AWS credentials with write
 #     access are available (or you pass --put). With no credentials it just
-#     saves the JSON and tells you where it is, so you can send it to the
-#     dataset owner or upload it to their contribution inbox. Nothing fails.
+#     saves the JSON and tells you where it is, so you can share it in a public
+#     Benchmark results issue (see apps/BENCHMARK-RECORDERS.md). Nothing fails.
 #   * `--dry-run` prints the record to stdout and touches neither disk nor AWS.
 #
 # ---------------------------------------------------------------------------
@@ -88,7 +88,7 @@ DISCIPLINE="MD"           # always true for LAMMPS; override if you must
 ANALYSIS_TYPE="${ANALYSIS_TYPE:-}"
 ATOMS_MILLION="${ATOMS_MILLION:-}"
 
-# Directory scanned for log.lammps to recover metrics in zero-arg use
+# Directory scanned for log.lammps to recover metrics not passed in
 # (defaults to the current dir, which is the run dir when called from a job).
 RUN_DIR="${RUN_DIR:-$PWD}"
 
@@ -130,10 +130,12 @@ OPTIONS
 
   Behavior:
     --put                     Force the DynamoDB put-item (error out if it fails).
+                              With no AWS CLI on the PATH, keep the JSON and exit 0.
     --no-put                  Never call AWS; only write the JSON file.
     --dry-run                 Print the record to stdout; touch no file and no AWS.
     --run-dir DIR             Dir to scan for log.lammps when metrics aren't
-                              supplied (default: current dir). Enables zero-arg use.
+                              supplied (default: current dir). Lets a launch
+                              script call the recorder with no arguments.
     --out DIR                 Directory for the saved JSON (default: current dir).
     -h, --help                Show this help.
 EOF
@@ -227,7 +229,7 @@ MPI_VERSION="$(mpirun --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | he
 LIBFABRIC_VERSION="$(fi_info --version 2>/dev/null | awk '/libfabric:/ {print $2; exit}')"
 EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print $2; exit}')"
 
-# --- Zero-arg fallback: recover LAMMPS result metrics from log.lammps --------
+# --- Fallback: recover LAMMPS result metrics from log.lammps -----------------
 # When a value wasn't supplied (flag or env), parse it from LAMMPS's log.lammps
 # in RUN_DIR. LAMMPS prints near the end:
 #     Loop time of <t> on <P> procs for <N> steps with <A> atoms
@@ -349,12 +351,14 @@ attempt_put=0
 case "$DO_PUT" in
     yes) attempt_put=1;;
     no)  attempt_put=0;;
-    auto) if command -v aws >/dev/null 2>&1; then attempt_put=1; fi;;
+    auto) attempt_put=1;;
 esac
 
 if [ "$attempt_put" -eq 1 ]; then
     if ! command -v aws >/dev/null 2>&1; then
-        echo "NOTE: AWS CLI not found; kept JSON only. Send ${JSON_FILE} to the dataset owner." >&2
+        echo "NOTE: AWS CLI not found; kept JSON only. To share it, attach ${JSON_FILE} to a Benchmark results issue:" >&2
+        echo "      https://github.com/aws-samples/hpc-applications/issues/new?template=benchmark-results.yml" >&2
+        echo "      The issue is public, and so are the JSON and its file's name: rename a confidential case in both first." >&2
         exit 0
     fi
     put_err="$( aws dynamodb put-item --region "$REGION" --table-name "$TABLE" \
@@ -367,7 +371,9 @@ if [ "$attempt_put" -eq 1 ]; then
             exit 1
         fi
         echo "NOTE: could not write to DynamoDB (this is expected without write access to the owner's account)." >&2
-        echo "      Your result is saved at ${JSON_FILE} — send it to the dataset owner or upload it to their contribution inbox." >&2
+        echo "      Your result is saved at ${JSON_FILE}. To share it, attach it to a Benchmark results issue:" >&2
+        echo "      https://github.com/aws-samples/hpc-applications/issues/new?template=benchmark-results.yml" >&2
+        echo "      The issue is public, and so are the JSON and its file's name: rename a confidential case in both first." >&2
     fi
 else
     echo "Skipped DynamoDB write (--no-put). JSON saved at ${JSON_FILE}."

@@ -115,7 +115,7 @@ for training:
 **Behavior**
 | Flag | Meaning |
 |------|---------|
-| `--put` | Force the DynamoDB write (error out if it fails). |
+| `--put` | Force the DynamoDB write (error out if it fails). With no AWS CLI on the `PATH` it writes no row: it keeps the JSON, prints a `NOTE:` that says how to share it, and exits 0. |
 | `--no-put` | Never call AWS; only write the JSON file. |
 | `--dry-run` | Print the record; touch no file and no AWS. |
 | `--run-dir DIR` | Directory scanned for the solver log, to recover the metrics no flag or variable gave (default: current dir). |
@@ -191,10 +191,14 @@ Either way nothing fails and you keep the JSON.
 
 ## Automatic recording (built into this repo's benchmark launch scripts)
 
-**You normally don't need to do anything.** Every benchmark launch script in
-this repository — with the exception of Quantum ESPRESSO, noted above — calls
-its app's `record-benchmark.sh` automatically, right after the solve. Just run the benchmark as usual — and set `SOURCE=<YourOrg>`
-if you want your rows tagged. The built-in call is:
+**You normally don't need to do anything.** Every benchmark launch script under
+`apps/` calls its app's `record-benchmark.sh` automatically, right after the
+solve, except those of Abaqus (`Abaqus.sbatch`), Quantum ESPRESSO
+(`qe-benchmark.sbatch`, noted above) and STREAM (`stream.sbatch`), which ship no
+recorder, and STAR-CCM+'s `submit_server.sbatch` scripts, which start a server
+for an interactive client rather than a benchmark run. Just run the benchmark as
+usual — and set `SOURCE=<YourOrg>` if you want your rows tagged. The built-in
+call is:
 
 - **Nothing to pass.** The launch script exports what it already knows (instance
   type, cores, nodes, MPI, the app version, the benchmark case and the measured

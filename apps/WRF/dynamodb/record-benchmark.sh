@@ -74,7 +74,7 @@ DISCIPLINE="Weather"      # WRF is a weather/atmospheric model
 NUM_CELLS_MILLION="${NUM_CELLS_MILLION:-}"
 ANALYSIS_TYPE="${ANALYSIS_TYPE:-}"
 
-# Directory scanned for the run logs to recover metrics in zero-arg use
+# Directory scanned for the run logs to recover metrics not passed in
 # (defaults to the current dir, which is the run dir when called from a job).
 RUN_DIR="${RUN_DIR:-$PWD}"
 
@@ -113,10 +113,12 @@ OPTIONS
 
   Behavior:
     --put                     Force the DynamoDB put-item (error out if it fails).
+                              With no AWS CLI on the PATH, keep the JSON and exit 0.
     --no-put                  Never call AWS; only write the JSON file.
     --dry-run                 Print the record to stdout; touch no file and no AWS.
     --run-dir DIR             Dir to scan for the run logs when metrics aren't
-                              supplied (default: current dir). Enables zero-arg use.
+                              supplied (default: current dir). Lets a launch
+                              script call the recorder with no arguments.
     --out DIR                 Directory for the saved JSON (default: current dir).
     -h, --help                Show this help.
 EOF
@@ -196,7 +198,7 @@ MPI_VERSION="$(mpirun --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | he
 LIBFABRIC_VERSION="$(fi_info --version 2>/dev/null | awk '/libfabric:/ {print $2; exit}')"
 EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print $2; exit}')"
 
-# --- Zero-arg fallback: recover WRF result metrics from the run logs ---------
+# --- Fallback: recover WRF result metrics from the run logs ------------------
 # When a value wasn't supplied (flag or env), parse it from WRF's rsl.error.0000
 # (or any rsl.error.*) in RUN_DIR. WRF prints a per-timestep
 # "Timing for main: ... <N> elapsed seconds" line; summing the elapsed seconds
@@ -293,11 +295,13 @@ attempt_put=0
 case "$DO_PUT" in
     yes) attempt_put=1;;
     no)  attempt_put=0;;
-    auto) if command -v aws >/dev/null 2>&1; then attempt_put=1; fi;;
+    auto) attempt_put=1;;
 esac
 if [ "$attempt_put" -eq 1 ]; then
     if ! command -v aws >/dev/null 2>&1; then
-        echo "NOTE: AWS CLI not found; kept JSON only. Send ${JSON_FILE} to the dataset owner." >&2; exit 0
+        echo "NOTE: AWS CLI not found; kept JSON only. To share it, attach ${JSON_FILE} to a Benchmark results issue:" >&2
+        echo "      https://github.com/aws-samples/hpc-applications/issues/new?template=benchmark-results.yml" >&2
+        echo "      The issue is public, and so are the JSON and its file's name: rename a confidential case in both first." >&2; exit 0
     fi
     put_err="$( aws dynamodb put-item --region "$REGION" --table-name "$TABLE" --item "file://${JSON_FILE}" 2>&1 )"
     if [ $? -eq 0 ]; then
@@ -305,7 +309,9 @@ if [ "$attempt_put" -eq 1 ]; then
     else
         if [ "$DO_PUT" = "yes" ]; then echo "ERROR: put-item failed: ${put_err}" >&2; exit 1; fi
         echo "NOTE: could not write to DynamoDB (expected without write access to the owner's account)." >&2
-        echo "      Your result is saved at ${JSON_FILE} — send it to the dataset owner or upload it to their contribution inbox." >&2
+        echo "      Your result is saved at ${JSON_FILE}. To share it, attach it to a Benchmark results issue:" >&2
+        echo "      https://github.com/aws-samples/hpc-applications/issues/new?template=benchmark-results.yml" >&2
+        echo "      The issue is public, and so are the JSON and its file's name: rename a confidential case in both first." >&2
     fi
 else
     echo "Skipped DynamoDB write (--no-put). JSON saved at ${JSON_FILE}."

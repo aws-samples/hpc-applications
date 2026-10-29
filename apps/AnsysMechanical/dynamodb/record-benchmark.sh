@@ -91,7 +91,7 @@ MDOFS="${MDOFS:-}"
 NUM_GPUS="${NUM_GPUS:-}"
 RELEASE="${RELEASE:-}"
 
-# Directory scanned for the solver output to recover metrics in zero-arg use
+# Directory scanned for the solver output to recover metrics not passed in
 # (defaults to the current dir, which is the run dir when called from a job).
 RUN_DIR="${RUN_DIR:-$PWD}"
 
@@ -138,10 +138,12 @@ OPTIONS
 
   Behavior:
     --put                     Force the DynamoDB put-item (error out if it fails).
+                              With no AWS CLI on the PATH, keep the JSON and exit 0.
     --no-put                  Never call AWS; only write the JSON file.
     --dry-run                 Print the record to stdout; touch no file and no AWS.
     --run-dir DIR             Dir to scan for the solver output when metrics aren't
-                              supplied (default: current dir). Enables zero-arg use.
+                              supplied (default: current dir). Lets a launch
+                              script call the recorder with no arguments.
     --out DIR                 Directory for the saved JSON (default: current dir).
     -h, --help                Show this help.
 EOF
@@ -282,7 +284,7 @@ if [ -n "$TIME_TO_SOLUTION" ] && ! is_positive_number "$TIME_TO_SOLUTION"; then
     TIME_TO_SOLUTION=""
 fi
 
-# --- Zero-arg fallback: recover the solve time from the solver output --------
+# --- Fallback: recover the solve time from the solver output -----------------
 # MAPDL writes an "Elapsed Time (sec) = <N>" line near the end of its output.
 # Launch scripts that already time the solve should export TIME_TO_SOLUTION
 # instead of relying on this.
@@ -447,11 +449,13 @@ attempt_put=0
 case "$DO_PUT" in
     yes) attempt_put=1;;
     no)  attempt_put=0;;
-    auto) if command -v aws >/dev/null 2>&1; then attempt_put=1; fi;;
+    auto) attempt_put=1;;
 esac
 if [ "$attempt_put" -eq 1 ]; then
     if ! command -v aws >/dev/null 2>&1; then
-        echo "NOTE: AWS CLI not found; kept JSON only. Send ${JSON_FILE} to the dataset owner." >&2; exit 0
+        echo "NOTE: AWS CLI not found; kept JSON only. To share it, attach ${JSON_FILE} to a Benchmark results issue:" >&2
+        echo "      https://github.com/aws-samples/hpc-applications/issues/new?template=benchmark-results.yml" >&2
+        echo "      The issue is public, and so are the JSON and its file's name: rename a confidential case in both first." >&2; exit 0
     fi
     # Test the command directly rather than a separate `$?` read, so the status
     # cannot be clobbered by anything between the call and the check.
@@ -461,7 +465,9 @@ if [ "$attempt_put" -eq 1 ]; then
     else
         if [ "$DO_PUT" = "yes" ]; then echo "ERROR: put-item failed: ${put_err}" >&2; exit 1; fi
         echo "NOTE: could not write to DynamoDB (expected without write access to the owner's account)." >&2
-        echo "      Your result is saved at ${JSON_FILE} — send it to the dataset owner or upload it to their contribution inbox." >&2
+        echo "      Your result is saved at ${JSON_FILE}. To share it, attach it to a Benchmark results issue:" >&2
+        echo "      https://github.com/aws-samples/hpc-applications/issues/new?template=benchmark-results.yml" >&2
+        echo "      The issue is public, and so are the JSON and its file's name: rename a confidential case in both first." >&2
     fi
 else
     echo "Skipped DynamoDB write (--no-put). JSON saved at ${JSON_FILE}."
