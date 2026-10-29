@@ -84,10 +84,11 @@ The CPU script records `ITERATIONS` (or 25) as `num_iterations`,
 steady case the same as `num_iterations`, for a transient case every
 iteration of its timed time steps.
 
-Example — a short CPU run of the shipped 140M case on one hpc8a node:
+Example — a CPU run of the shipped 140M case on one hpc8a node, at the
+script's defaults:
 
 ```bash
-ITERATIONS=20 WARMUP_ITERATIONS=5 BENCHMARK_NAME=f1_racecar_140m \
+BENCHMARK_NAME=f1_racecar_140m \
 ANSYSLMD_LICENSE_FILE=1055@your.license.server \
 sbatch -N1 --ntasks=192 --constraint=hpc8a.96xlarge \
     x86/Fluent-Benchmark.2026R1.sbatch v261 shipped
