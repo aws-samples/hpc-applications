@@ -15,6 +15,8 @@
 # with an i reads as one in a Turkish locale too, where [a-z] leaves out i. Every
 # IMDS read has curl's time limits (--connect-timeout 2, --max-time 5) and -f, so
 # that no answer within a few seconds, or an HTTP error, leaves the type unknown.
+# lscpu is read in the C locale, so its cores read in a German locale too, where
+# its labels are German.
 #
 #   ./tests/test-flexible-cores.sh
 # =============================================================================
@@ -168,6 +170,10 @@ for cpu in amd-96 amd-1x96 amd-256 none; do
     runs "IMDS none, lscpu ${cpu}, 64 cores per node"
     note "IMDS none, lscpu ${cpu}, 64 cores per node" "${SKIPPED}"
 done
+# lscpu is read in the C locale: in a German locale its labels are German, and would hide the 192 AMD cores.
+run_launcher x86 STUB_IMDS=none STUB_LSCPU=amd-192 SLURM_NTASKS_PER_NODE=64 LC_ALL=de_DE.UTF-8
+refused "IMDS none, a 192-core AMD node, LC_ALL=de_DE.UTF-8 (lscpu read in the C locale), 64 cores per node"
+note "IMDS none, a 192-core AMD node, LC_ALL=de_DE.UTF-8, 64 cores per node" "${APPLIES}"
 run_launcher x86 STUB_IMDS=none STUB_LSCPU=intel-192 SLURM_NTASKS_PER_NODE=96
 runs "IMDS none, a 192-core Intel node, 96 cores per node (a supported count)"
 no_note "IMDS none, a 192-core Intel node, 96 cores per node"

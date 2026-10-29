@@ -84,7 +84,8 @@ cat > "${STUBS}/bin/lscpu" <<'EOF'
 #   amd-1x96             AuthenticAMD, 1 socket x 96 cores;
 #   amd-256              AuthenticAMD, 2 sockets x 128 cores;
 #   none                 nothing printed, exit 1.
-# Each call is logged to LSCPU_LOG.
+# Each call is logged to LSCPU_LOG. In a German locale (LC_ALL, else LC_MESSAGES,
+# else LANG: de_DE.UTF-8) the labels are German, as lscpu prints them there.
 printf '%s\n' "lscpu $*" >> "${LSCPU_LOG:-/dev/null}"
 sockets=2
 case "${STUB_LSCPU:-intel-192}" in
@@ -94,6 +95,13 @@ case "${STUB_LSCPU:-intel-192}" in
   amd-256)  vendor=AuthenticAMD; per_socket=128;;
   none)     exit 1;;
   *)        vendor=GenuineIntel; per_socket=96;;
+esac
+case "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}" in
+  de|de[_.@]*)
+    printf '%-26s%s\n' "Architektur:" x86_64 "CPU(s):" "$(( sockets * per_socket ))" \
+        "Anbieterkennung:" "${vendor}" "  BIOS-Anbieterkennung:" "Amazon EC2" "  Modellname:" "stub CPU" \
+        "    Thread(s) pro Kern:" 1 "    Kern(e) pro Sockel:" "${per_socket}" "    Sockel:" "${sockets}"
+    exit 0;;
 esac
 cat <<OUT
 Architecture:             x86_64
