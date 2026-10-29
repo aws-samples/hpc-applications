@@ -1,14 +1,15 @@
 """How the recorders tell a contributor to share a run.
 
 Each application's dynamodb/record-benchmark.sh always saves the run as a JSON
-file. When it writes no row to DynamoDB, because --put found no AWS CLI on the
-PATH or because the default write was refused, it prints a NOTE that says how
-to share that file: attach it to a Benchmark results issue, the form in
-.github/ISSUE_TEMPLATE/benchmark-results.yml, and rename a confidential case
-first, since the issue, the JSON and its file's name are public. Either way it
-exits 0. With --put, a refused write still ends the run with exit 1.
+file. When it writes no row to DynamoDB, because it found no AWS CLI on the
+PATH, with --put or by default, or because the default write was refused, it
+prints a NOTE that says how to share that file: attach it to a Benchmark
+results issue, the form in .github/ISSUE_TEMPLATE/benchmark-results.yml, and
+rename a confidential case first, since the issue, the JSON and its file's
+name are public. Either way it exits 0. With --put, a refused write still
+ends the run with exit 1; with --no-put, the run prints its own line instead.
 
-These tests run all eleven recorders on both paths with stubs only: a curl
+These tests run all eleven recorders on those paths with stubs only: a curl
 that answers nothing (no instance metadata), an aws whose put-item is refused,
 and a PATH that holds no other aws, curl, mpirun, fi_info or Slurm command.
 Nothing reaches AWS, and every value passed is synthetic. The last checks keep
@@ -139,6 +140,24 @@ def test_refused_write_names_the_form(app, tmp_path, host_tools):
     proc, out, _ = run_recorder(app, tmp_path / "put", host_tools, "--put", aws=True)
     assert proc.returncode == 1, proc.stderr
     assert "ERROR: put-item failed" in proc.stderr
+    saved_json(out)
+
+
+@pytest.mark.parametrize("app", APPS)
+def test_default_without_aws_cli_names_the_form(app, tmp_path, host_tools):
+    """Neither --put nor --no-put, and no AWS CLI on the PATH: the JSON is kept, the NOTE that --put prints there
+    names the form, and the run exits 0. An explicit --no-put still prints its own line, and not the form's URL."""
+    proc, out, _ = run_recorder(app, tmp_path / "default", host_tools)
+    assert proc.returncode == 0, proc.stderr
+    json_file = saved_json(out)
+    assert "NOTE: AWS CLI not found; kept JSON only." in proc.stderr
+    assert "Skipped DynamoDB write" not in proc.stdout, proc.stdout
+    assert_says_how_to_share(proc, json_file)
+
+    proc, out, _ = run_recorder(app, tmp_path / "no-put", host_tools, "--no-put")
+    assert proc.returncode == 0, proc.stderr
+    assert "Skipped DynamoDB write (--no-put)." in proc.stdout, proc.stdout
+    assert FORM_URL not in proc.stdout + proc.stderr, proc.stdout + proc.stderr
     saved_json(out)
 
 
