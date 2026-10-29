@@ -7,8 +7,8 @@ apps/Fluent/tests/run-tests.sh
 ```
 
 No Slurm, no EC2, no Fluent licence, no MPI, no AWS credentials and no network
-access are required. The transcripts in `fixtures/` are synthetic, and so is
-every value in them.
+access are required. The transcripts and the output file in `fixtures/` are
+synthetic, and so is every value in them.
 
 ## What is covered
 
@@ -29,8 +29,25 @@ Each test file starts with a list of what it checks.
 `FLUENT_2026R1_SBATCH=/path/to/a/copy` runs the tests on another copy of the
 script.
 
+The `test-launchers-*.sh` files run **the other launch scripts themselves**:
+the classic benchmark scripts (`x86/Fluent-Benchmark.IMPI.sbatch`,
+`x86/Fluent-Benchmark.OMPI.sbatch`, `Arm/Fluent-benchmark.sbatch`), the GPU
+benchmark script (`gpu/Fluent-Benchmark-GPU.sbatch`) and the journal scripts
+(`x86/Fluent.IMPI.sbatch`, `x86/Fluent.OMPI.sbatch`, `Arm/Fluent.sbatch`,
+`gpu/Fluent-GPU.sbatch`, `gpu/Fluent-GPU.OMPI.sbatch`). `helpers-launchers.sh`
+adds to the stubs above an `aws` that serves the case's archive from a local
+directory and refuses every other call, and stubs of `fluentbench.pl`, of
+Fluent and of the 2026 R1 harness, in one install tree. The `fluentbench.pl`
+stub writes a fixture where `fluentbench.pl` writes its output of the case and
+core count, `<case>-<cores>.out`: `fixtures/fluentbench-rated.out` has the
+fields that this repository's parsers read from that file, with synthetic
+values. The Arm scripts name their install as `/fsx/ansys_inc`, so they run
+from a copy that names the stub tree instead and differs from the script in
+that line alone.
+
 ## Adding a case
 
-Drop a transcript in `fixtures/` and add a `run_2026r1` call and its
-assertions to a `test-*.sh`. `run-tests.sh` picks up any `test-*.sh`, and also
-runs `bash -n` over the Fluent scripts, the recorder and the tests.
+Drop a transcript in `fixtures/` and add a `run_2026r1` call (for the other
+scripts, a `run_launcher` call) and its assertions to a `test-*.sh`.
+`run-tests.sh` picks up any `test-*.sh`, and also runs `bash -n` over the
+Fluent scripts, the recorder and the tests.
