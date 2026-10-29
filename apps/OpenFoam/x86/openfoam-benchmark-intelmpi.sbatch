@@ -1,5 +1,5 @@
 #!/bin/bash
-# OCC DrivAer Fine Mesh (236M cells) — Intel MPI on hpc8a
+# OCC DrivAer, the case and mesh in CASE_SRC (236M cells by default) — Intel MPI on hpc8a
 #SBATCH --job-name=occ-drivaer-fine
 #SBATCH -p hpc8a
 #SBATCH --nodes=8
@@ -89,7 +89,7 @@ fi
 
 workdir="${basedir}/Run/${SLURM_JOB_NAME%.*}/${SLURM_CLUSTER_NAME}/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${instanceType}-${TOTAL_CORES}-$(date "+%d-%m-%Y-%H-%M")"
 
-echo "=== OCC DrivAer Fine (236M) — Intel MPI ==="
+echo "=== OCC DrivAer, the case and mesh in ${CASE_SRC} — Intel MPI ==="
 echo "Nodes: ${SLURM_JOB_NUM_NODES}, Cores/node: ${SLURM_NTASKS_PER_NODE}, Total: ${TOTAL_CORES}"
 echo "Execution directory: ${workdir}"
 mkdir -p "${workdir}" && cd "${workdir}"
@@ -279,7 +279,7 @@ TOTAL_TIME=$(elapsed_seconds "$T_DECOMP_START" "$T_SOLVE_END")
 cat << REPORT
 
 ================================================================================
-OCC DrivAer Fine (236M) — Intel MPI Results
+OCC DrivAer, the case and mesh in ${CASE_SRC} — Intel MPI Results
 ================================================================================
 Date:             $(date)
 SLURM Job ID:     ${SLURM_JOB_ID}

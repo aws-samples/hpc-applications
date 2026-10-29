@@ -331,14 +331,14 @@ before trusting a timing.
         was the quickest per node; Hpc7a took 1.15-1.59x as long at the same
         layout. Their 768 GiB per node is what to plan around: V26direct-5 needs
         two nodes to run in-core.
-      * [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6id/) — 16 GB/core,
+      * [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6i/) — 16 GB/core,
         a cost-effective way to buy memory capacity, **plus 15.2 TB of local
         NVMe** for solver scratch (see below), and the reference configuration in
         the sbatch. One node holds V26direct-5 in-core, where one c8i.96xlarge
         (768 GiB) does not, which pays off when the job stays on one node.
       * R-family ([r7i](https://aws.amazon.com/ec2/instance-types/r7i/) /
         [r8i](https://aws.amazon.com/ec2/instance-types/r8i/), or
-        [r8id](https://aws.amazon.com/ec2/instance-types/r8id/) /
+        [r8id](https://aws.amazon.com/ec2/instance-types/r8i/) /
         [i7ie](https://aws.amazon.com/ec2/instance-types/i7ie/) for local
         NVMe) — worth it mainly when a single node must hold a very large model:
         one r8i.96xlarge ran V26direct-6 in-core, while two Hpc6id nodes ran it
@@ -400,7 +400,7 @@ constraint:
     Benchmark numbers collected under that load are not trustworthy — validate
     any surprising result with an isolated re-run before acting on it.
   * **Prefer local NVMe instance store for the solver scratch when the instance
-    has it.** [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6id/)
+    has it.** [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6i/)
     (15.2 TB per node), r8id and the i-family carry instance-store NVMe
     that is both faster (local, no network round-trip) and effectively free
     compared to shared-filesystem capacity and throughput. AWS ParallelCluster
@@ -498,7 +498,7 @@ error block says that the solve never finished
 ([tests/fixtures/disk-full-abort.log](https://github.com/aws-samples/hpc-applications/blob/main/apps/AnsysMechanical/tests/fixtures/disk-full-abort.log)).
 
 Getting that test right is fiddlier than it looks, and the failure modes are
-silent in both directions. Four traps we hit:
+silent in both directions. Seven traps we hit:
 
   * **Match error *blocks*, not lines, and ignore indentation.** A MAPDL error is
     a header line plus continuation lines. Filtering out the line that contains

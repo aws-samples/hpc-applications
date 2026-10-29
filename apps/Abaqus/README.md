@@ -103,7 +103,7 @@ This chart shows the per-core performance of Abaqus 2024 running a Standard/Impl
 This chart shows the per-core performance of Abaqus 2024 running a Standard/Implicit simulation using the s4e dataset on all the different sizes of the AWS EC2 [Hpc7a](https://aws.amazon.com/ec2/instance-types/hpc7a/) Instances.
 ![Abaqus 2024 X core Performance on AMD-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-s4e-Hpc7a.png)
 <br><br>
-This chart shows the per-core performance of Abaqus 2024 running a Standard/Implicit simulation using the s4e dataset on older and newer generation of Intel-based AWS EC2 [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6id/) Instances.
+This chart shows the per-core performance of Abaqus 2024 running a Standard/Implicit simulation using the s4e dataset on older and newer generation of Intel-based AWS EC2 [Hpc6id](https://aws.amazon.com/ec2/instance-types/hpc6i/) Instances.
 ![Abaqus 2024 X core Performance on Intel-based instances](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/Abaqus/Abaqus-s4e-Hpc6id.png)
 
 ## s9

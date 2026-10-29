@@ -57,7 +57,7 @@ TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-m
 instanceType=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
 workdir="${basedir}/Run/${SLURM_JOB_NAME%.*}/${SLURM_CLUSTER_NAME}/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${instanceType}-${TOTAL_CORES}-$(date "+%d-%m-%Y-%H-%M")"
 
-echo "=== OCC DrivAer Static Mesh (${MESH_SIZE}M cells) — OpenMPI (Arm) ==="
+echo "=== OCC DrivAer, the case and mesh in ${CASE_SRC} — OpenMPI (Arm) ==="
 echo "Nodes: ${SLURM_JOB_NUM_NODES}, Cores/node: ${SLURM_NTASKS_PER_NODE}, Total: ${TOTAL_CORES}"
 echo "Instance type: ${instanceType}"
 echo "OPENFOAM_ENV: ${OPENFOAM_ENV}"
@@ -280,7 +280,7 @@ TOTAL_TIME=$(elapsed_seconds "$T_DECOMP_START" "$T_SOLVE_END")
 cat << REPORT
 
 ================================================================================
-OCC DrivAer Static Mesh (${MESH_SIZE}M) — OpenMPI (Arm) Results
+OCC DrivAer, the case and mesh in ${CASE_SRC} — OpenMPI (Arm) Results
 ================================================================================
 Date:             $(date)
 SLURM Job ID:     ${SLURM_JOB_ID}
