@@ -160,13 +160,25 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# imds <path>: the instance metadata's answer at <path> (IMDSv2), or nothing.
+# Each request gives up after 2 seconds (1 to connect), and an HTTP error, or an
+# answer cut off at that limit, gives nothing.
 imds() {
-    local path="$1" token
+    local path="$1" token answer
     token=$(curl -fsS --connect-timeout 1 --max-time 2 -X PUT \
         "http://169.254.169.254/latest/api/token" \
         -H "X-aws-ec2-metadata-token-ttl-seconds: 60" 2>/dev/null) || return 0
-    curl -fsS --connect-timeout 1 --max-time 2 -H "X-aws-ec2-metadata-token: $token" \
-        "http://169.254.169.254/latest/meta-data/${path}" 2>/dev/null || return 0
+    answer=$(curl -fsS --connect-timeout 1 --max-time 2 -H "X-aws-ec2-metadata-token: $token" \
+        "http://169.254.169.254/latest/meta-data/${path}" 2>/dev/null) || return 0
+    printf '%s' "$answer"
+}
+# imds_instance_type: the instance type from the instance metadata, when the
+# answer is an instance type name (tested in the C locale: in some locales [a-z]
+# leaves out i). Anything else, a proxy's page for example, counts as none.
+imds_instance_type() {
+    local itype
+    itype="$(imds instance-type)"
+    if ( LC_ALL=C; [[ "$itype" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ); then printf '%s' "$itype"; fi
 }
 json_escape() { local s="${1//\\/\\\\}"; printf '%s' "${s//\"/\\\"}"; }
 is_number() { [[ "$1" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; }
@@ -184,7 +196,7 @@ add_kv() {
     "$fn" "$name" "$val"
 }
 
-[ -n "$INSTANCE_TYPE" ]    || INSTANCE_TYPE="$(imds instance-type)"
+[ -n "$INSTANCE_TYPE" ]    || INSTANCE_TYPE="$(imds_instance_type)"
 [ -n "$NUM_CORES" ]        || NUM_CORES="${SLURM_NTASKS:-${SLURM_NPROCS:-}}"
 [ -n "$NUM_INSTANCES" ]    || NUM_INSTANCES="${SLURM_JOB_NUM_NODES:-}"
 if [ -z "$OPERATING_SYSTEM" ] && [ -r /etc/os-release ]; then
