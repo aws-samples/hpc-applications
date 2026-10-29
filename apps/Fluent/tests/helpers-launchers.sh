@@ -66,7 +66,8 @@ cat > "${WORK}/lbin/recorder-stub" <<'EOF'
 {
     echo "CALL"
     for a in "$@"; do echo "ARG ${a}"; done
-    for v in FLUENT_VERSION RUN_DIR BENCHMARK_CASE BENCHMARK_METHOD SOLVER_MODE NUM_ITERATIONS MIUPS SOLVER_RATING; do
+    for v in FLUENT_VERSION RUN_DIR BENCHMARK_CASE BENCHMARK_METHOD SOLVER_MODE NUM_ITERATIONS MIUPS SOLVER_RATING \
+             TIME_PER_ITERATION SOLVER_SPEED; do
         echo "${v}=${!v-}"
     done
 } >> "${STUB_STATE}/recorder.log"
@@ -151,7 +152,8 @@ script_path() {
 # and the 2026 R1 harness fixtures/steady-25-iterations.trn. A journal script
 # gets version v261 and a synthetic journal, case and data file; Fluent exits
 # 0. The recorder is the recorder stub. Each VAR=value replaces one of these
-# settings or adds a variable.
+# settings or adds a variable. RUN_URI, when set, replaces the benchmark
+# script's second argument, the case's archive.
 # Sets OUT and ERR (the job's output and error streams), RC (its exit status),
 # STATE (the case's directory, with the stubs' logs) and WORKDIR (the run
 # directory the job printed).
@@ -164,7 +166,7 @@ run_launcher() {
     mkdir -p "${STATE}/home" "${STATE}/base" "${STATE}/submit"
     ln -sfn "${ANSYS_STUB}" "${STATE}/base/ansys_inc"   # the GPU scripts' install root is BASE_DIR
     case "${script}" in
-        *enchmark*) args=(v261 s3://YOUR_BUCKET/sedan_4m.tar) ;;
+        *enchmark*) args=(v261 "${RUN_URI:-s3://YOUR_BUCKET/sedan_4m.tar}") ;;
         *)          args=(v261 "${WORK}/case/run.jou" "${WORK}/case/model.cas.gz" "${WORK}/case/model.dat.gz") ;;
     esac
     OUT="$(cd "${STATE}" && env -i \

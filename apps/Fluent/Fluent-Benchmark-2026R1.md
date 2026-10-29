@@ -125,3 +125,13 @@ The classic `fluentbench.pl` harness (reported *Solver rating* / *Solver wall
 time per iteration* / *Solver speed*) is still available via
 [`x86/Fluent-Benchmark.OMPI.sbatch`](x86/Fluent-Benchmark.OMPI.sbatch). The
 recorder understands both formats, so existing workflows keep working.
+
+The classic scripts,
+[`x86/Fluent-Benchmark.IMPI.sbatch`](x86/Fluent-Benchmark.IMPI.sbatch),
+[`x86/Fluent-Benchmark.OMPI.sbatch`](x86/Fluent-Benchmark.OMPI.sbatch) and
+[`Arm/Fluent-benchmark.sbatch`](Arm/Fluent-benchmark.sbatch), record a run
+only when `fluentbench.pl`'s output of the case and core count,
+`<case>-<cores>.out` in the run directory, gives the case's rating: a positive
+number on its `Solver rating =` line. The recorder then gets that rating, and
+that file's time per iteration and solver speed. Otherwise the job output has
+a NOTE that names that file, and nothing is recorded.
