@@ -1,6 +1,6 @@
 # LAMMPS — DynamoDB result store (optional)
 
-This directory contains the optional helper that records every LAMMPS benchmark run to a centralised DynamoDB table. It is **not** required to build or run LAMMPS — the recorder call site is **commented out by default** in the benchmark scripts under [`x86/`](../x86/) and [`Arm/`](../Arm/), so customers who only want to run LAMMPS can ignore this directory entirely.
+This directory contains the optional helper that records every successful LAMMPS benchmark run to a centralised DynamoDB table. It is **not** required to build or run LAMMPS — the recorder call site is **commented out by default** in the benchmark scripts under [`x86/`](../x86/) and [`Arm/`](../Arm/), so customers who only want to run LAMMPS can ignore this directory entirely.
 
 If you don't care about cross-run aggregation, simply leave the block commented (or delete this directory). The default benchmark scripts will not attempt any DynamoDB calls.
 
@@ -98,6 +98,8 @@ A typical setup mirrors this repo's `apps/LAMMPS/` layout under `/fsx/lammps/scr
 ```
 
 Then edit the `x86/lammps-benchmark.sbatch` and / or `Arm/lammps-benchmark.sbatch` you intend to run and **uncomment** the block at the bottom marked `Optional: record the result to DynamoDB.` (each line in that block starts with `# ` after the comment header — strip the leading `# ` to enable the call).
+
+The block records a run only after the check the contribution recorder makes: `log.lammps` reports the requested `TIMESTEPS` on its `Loop time` line and ends with LAMMPS's `Total wall time` line. For any other run the job log says `NOTE: not recorded: <why>`, and neither recorder is called.
 
 Override the recorder location with `DYNAMODB_RECORDER=/path/to/record_to_dynamodb.sh` on the `sbatch` command line if you place it somewhere other than the default. If the recorder isn't found at the resolved path, the benchmark prints a one-line note and continues — there is no failure path that depends on DynamoDB.
 

@@ -29,6 +29,9 @@ asks for, with `${name}` taken from `-var name`, as LAMMPS does. For each script
 - a run whose `log.lammps` has no `Loop time` line, reports fewer timesteps than asked for, or has no closing
   `Total wall time` line (the stub `lmp`'s `STUB_LMP_LOG`) is not recorded: the recorder is not called, and a
   `NOTE: not recorded:` line says why, while the job still ends with exit 0 and its results block;
+- with the optional DynamoDB block uncommented as `dynamodb/README.md` says (in a copy of the script that differs in
+  that block alone, and a stub in place of `record_to_dynamodb.sh`), a run that ends as asked is recorded once by
+  each recorder, and none of those three runs by either;
 - `TIMESTEPS` and `SCALE` override the defaults, alone and together (the recorder gets the `TIMESTEPS` run), and
   `MODEL=rhodo` keeps its 32,000 atoms whatever `SCALE` is (`in.rhodo` has no `replicate` command);
 - a `TIMESTEPS` that is not a whole number from 1 to 10,000,000 (`0`, `-5`, `abc`, `1e4`, `10.5`, `1 000`, `007`,
