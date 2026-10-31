@@ -186,7 +186,7 @@ Key takeaways:
 - A single hpc8a node delivers **1.44×** the performance of a single hpc7a node
 - At 4 nodes — the scaling sweet spot on both families — hpc8a reaches **4.14×** vs **3.00×** for hpc7a (relative to 1N hpc7a)
 - hpc8a maintains a consistent **38–44 %** advantage over hpc7a at every node count
-- Scaling stops at 4 nodes on both families: the Taurus 10M deck hits a contact-sort scaling wall at 1536 ranks (8N × 192 rpn). Inspection of the Radioss CPU breakdown shows "Contact sorting" rising from 24 % of CPU time at 4N to 48 % at 8N, and 8N hpc8a measured 6 % slower than 4N hpc8a. This is an algorithmic property of the Taurus deck, not a hardware or MPI limitation — the crash model has a limited amount of parallelisable contact work and runs out of runway around 768 ranks.
+- The chart stops at 4 nodes. From 4N to 8N (1536 ranks), hpc7a ran 1.25× as fast (3 runs at each node count) and hpc8a 1.30× as fast (one run at each), 63 % and 65 % of linear scaling, while "Contact sorting" grew from 18–20 % to 26–30 % of the CPU time (the CPU time summary at the end of `engine.log`). On hpc7a, the parallel efficiency against 1N falls from 75 % at 4N to 47 % at 8N.
 
 ### Arm — Graviton3E (hpc7g) vs Graviton4 (m8g)
 

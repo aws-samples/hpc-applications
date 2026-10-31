@@ -27,10 +27,9 @@ import numpy as np
 # Pure MPI: 1 OpenMP thread per rank, 192 cores/node (64 on hpc7g)
 
 # x86 —————————————————————————————————————————————————————————————————————
-# 8N data collected but not plotted: the Taurus 10M deck hits a contact-sort
-# scaling wall at 1536 ranks (see README). 8N is 6% slower than 4N on hpc8a
-# and only 20% faster than 4N on hpc7a, so the chart caps at 4N to focus on
-# the useful scaling range.
+# 8N data collected but not plotted (see README): from 4N to 8N, hpc7a ran
+# 1.25x as fast (3 runs each) and hpc8a 1.30x (one run each), 63% and 65% of
+# linear scaling, so the chart caps at 4N to focus on the useful scaling range.
 nodes_x86 = np.array([1, 2, 4])
 t_hpc8a = np.array([2956.2, 1744.1, 1029.7])  # AMD Zen5, AVX-512
 t_hpc7a = np.array([4263.7, 2436.6, 1420.2])  # AMD Zen4, AVX-512
