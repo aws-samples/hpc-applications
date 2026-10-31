@@ -17,7 +17,7 @@ module load libfabric-aws
 export I_MPI_DEBUG=5
 
 OPTISTRUCT_VER="2024.1"
-INPUT_FILE=${2:-"/path/to/Engine_Assy.fem"}
+INPUT_FILE=${2:-"/path/to/model.fem"}
 export ALTAIR_HOME="/fsx/Altair"
 export RADFLEX_PATH="${ALTAIR_HOME}/${OPTISTRUCT_VER}/altair/hwsolvers/common/bin/linux64"
 export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:${RADFLEX_PATH}
