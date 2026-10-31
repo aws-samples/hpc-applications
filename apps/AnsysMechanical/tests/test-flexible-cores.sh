@@ -14,9 +14,10 @@
 #
 # The instance metadata is read with curl -fs and timeouts of 2 seconds to
 # connect and 5 in all. When it gives no instance type (no answer, an HTTP error,
-# or an answer that is not an instance type name, capitals included; a type name
-# reads as one in any locale, a Turkish one too, where [a-z] leaves out i) and a
-# node's count is outside the set, lscpu decides: a node with 192 AMD cores
+# an answer cut off at the time limit, or an answer that is not an instance type
+# name, capitals included; a type name reads as one in any locale, a Turkish one
+# too, where [a-z] leaves out i) and a node's count is outside the set, lscpu
+# decides: a node with 192 AMD cores
 # (sockets x cores per socket) could be one of those two types, so such a count is
 # refused there too, by the same check with both types named and the reason; any
 # other node (192 CPUs from 96 cores, 96 AMD cores on one socket, 256 on two, an
@@ -58,6 +59,9 @@ mkdir -p "${WORK}/bin"
 # it:
 #   down        no answer: the connection is refused (exit 7);
 #   timeout     no answer within the call's --max-time (exit 28);
+#   cut-off     for the instance type, STUB_INSTANCE_TYPE less its last five
+#               characters, then exit 28, as curl ends a transfer at its
+#               --max-time;
 #   http-error  an HTTP error: no output and exit 22 with -f (--fail), the error
 #               page and exit 0 without it.
 cat > "${WORK}/bin/curl" <<'EOF'
@@ -66,6 +70,7 @@ echo "curl $*" >> "${STUB_STATE}/curl.log"
 case "${STUB_IMDS:-up}" in
   down)    exit 7 ;;
   timeout) exit 28 ;;
+  cut-off) case "$*" in *instance-type*) printf '%s' "${STUB_INSTANCE_TYPE%?????}"; exit 28 ;; esac ;;
   http-error)
     for _a in "$@"; do
       case "${_a}" in --fail) exit 22 ;; --*) ;; -*f*) exit 22 ;; esac
@@ -425,6 +430,20 @@ refused "no answer, a 192-core AMD node, 216 tasks on one node -> refused, as mo
 
 fc_case imds-timeout-amd-1x64 "" 1 64 64 STUB_IMDS=timeout STUB_LSCPU=amd-2x96
 refused "no answer within --max-time, a 192-core AMD node, 1 node x 64 cores -> refused" 64 "${BOTH}" 64
+# An answer cut off at --max-time (the start of a type name, hpc8a.96x, then curl's exit
+# 28) is no instance type either, though what came through has the shape of one.
+fc_case imds-cutoff-amd-1x64 hpc8a.96xlarge 1 64 64 STUB_IMDS=cut-off STUB_LSCPU=amd-2x96
+refused "an answer cut off at --max-time, a 192-core AMD node, 1 node x 64 cores -> refused" 64 "${BOTH}" 64
+fc_case imds-cutoff-1x64 hpc8a.96xlarge 1 64 64 STUB_IMDS=cut-off
+runs "an answer cut off at --max-time, Intel node, 1 node x 64 cores -> runs"
+skip_note "an answer cut off at --max-time, Intel node -> the one-line NOTE says the check is skipped" yes
+_run_dirs=( "${BASE}/AnsysMechanical/Run"/* )
+if [ "${#_run_dirs[@]}" -eq 1 ] && [[ "${_run_dirs[0]##*/}" == 96000-1x-64-* ]]; then
+    ok "an answer cut off at --max-time: the run directory names no instance type (96000-1x-64-<date>)"
+else
+    bad "the run directory after an answer cut off at --max-time" "one directory 96000-1x-64-<date>" \
+        "${_run_dirs[*]##*/Run/}"
+fi
 
 fc_case imds-http-amd-1x64 "" 1 64 64 STUB_IMDS=http-error STUB_LSCPU=amd-2x96
 refused "an HTTP error from the instance metadata, a 192-core AMD node, 1 node x 64 cores -> refused" \

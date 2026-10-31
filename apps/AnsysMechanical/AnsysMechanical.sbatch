@@ -184,11 +184,12 @@ fi
 
 # The instance type, from the instance metadata (IMDSv2). Each request gives up
 # after 5 seconds (2 to connect), and -f turns an HTTP error into no answer. An
-# answer that is not an instance type name (tested in the C locale: in some
-# locales [a-z] leaves out i), a proxy's page for example, counts as none, so it
-# never names the run directory or the NVMe scratch directory.
-TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-instanceType=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
+# answer cut off at that limit, or one that is not an instance type name (tested
+# in the C locale: in some locales [a-z] leaves out i), a proxy's page for
+# example, counts as none, so it never names the run directory or the NVMe
+# scratch directory.
+TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") || TOKEN=""
+instanceType=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type) || instanceType=""
 ( LC_ALL=C; [[ "${instanceType}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || instanceType=""
 
 # ---------------------------------------------------------------------------
@@ -203,12 +204,13 @@ instanceType=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-
 # the job when Slurm's placement cannot be read). Other instance types and
 # sizes get no list and no check.
 # When the metadata gives no instance type (no answer within those 5 seconds,
-# an HTTP error, or an answer that is not an instance type name) and a node's
-# count is outside the set, lscpu decides: a node with 192 AMD cores (sockets x
-# cores per socket) could be one of those two types, so the count is refused
-# there too, and the refusal names both types and says why. Any other node
-# runs it, with a one-line NOTE that the check was skipped: no run is refused
-# only because the metadata did not answer.
+# an HTTP error, an answer cut off at that limit, or an answer that is not an
+# instance type name) and a node's count is outside the set, lscpu decides: a
+# node with 192 AMD cores (sockets x cores per socket) could be one of those
+# two types, so the count is refused there too, and the refusal names both
+# types and says why. Any other node runs it, with a one-line NOTE that the
+# check was skipped: no run is refused only because the metadata did not
+# answer.
 # ---------------------------------------------------------------------------
 _fc_types=""; _fc_by_lscpu=0; _fc_off=0
 case "${instanceType}" in
