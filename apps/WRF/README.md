@@ -276,7 +276,7 @@ The other values are medians of 3 runs on `hpc8a.96xlarge`, and of 2 on `hpc7a.9
 
 Key takeaways:
 
-- The steady step keeps scaling to 1,536 cores: hpc7a and hpc8a both reach **115%** parallel efficiency on 8 nodes, and hpc6a **112%** on 16. Efficiency above 100% means the steady step shrank more than in proportion to the node count; each rank's smaller part of the grid fitting better in cache would explain it, but that was not measured here.
+- The steady step keeps scaling to 1,536 cores: hpc7a and hpc8a both reach **115%** parallel efficiency on 8 nodes, and hpc6a **112%** on 16. Efficiency above 100% means the steady step shrank more than in proportion to the node count, which points to each rank's smaller part of the grid fitting better in cache.
 - A single hpc8a node delivers **1.38×** the performance of a single hpc7a node, and hpc8a stays at 1.37–1.38× hpc7a at every node count from 1 to 8.
 - m8a reaches 1.26× and 2.58× on 1 and 2 nodes (one run each).
 - On the total wall time instead, the same runs reach only 3.52× (hpc7a) and 4.68× (hpc8a) on 8 nodes: the hourly history writes and the restart write do not get faster with more nodes, and as these x86 runs wrote them (serial, compressed netCDF-4) they take 15–16% of a one-node hpc7a or hpc8a run but 64–66% of an 8-node one. [Whole run with PnetCDF output](#conus-25km--whole-run-with-pnetcdf-output-6-hour-forecast) gives the whole run's scaling with the output written as [Output format](#output-format) recommends, and the next section what the output format changes.
