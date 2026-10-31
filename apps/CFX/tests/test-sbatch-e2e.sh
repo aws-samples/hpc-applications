@@ -81,7 +81,10 @@ echo "curl $*" >> "${STUB_STATE}/curl.log"
 case "${STUB_IMDS:-up}" in
     down)    exit 7 ;;
     timeout) exit 28 ;;
-    cut-off) case "$*" in *instance-type*) printf 'hpc8a.96x'; exit 28 ;; esac ;;
+    cut-off)
+        case "$*" in *instance-type*)
+            t="${STUB_INSTANCE_TYPE:-hpc8a.96xlarge}"; printf '%s' "${t%?????}"; exit 28 ;;
+        esac ;;
     http-error)
         for _a in "$@"; do
             case "${_a}" in --fail) exit 22;; --*) ;; -*f*) exit 22;; esac
