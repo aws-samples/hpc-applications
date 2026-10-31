@@ -342,7 +342,7 @@ Key takeaways:
 
 - A single m8g node delivers **2.52× (12km)** and an estimated **3.08× (2.5km)** the performance of a single hpc7g node — consistent with the 3× core-count ratio minus the usual communication/memory-bandwidth tax
 - On CONUS 2.5km, m8g reaches **5.04× (2N)** and **7.49× (4N)** vs the hpc7g 1N baseline, while hpc7g scales from 1N → 4N at **3.30×** — both platforms scale sub-linearly (Amdahl) but G4 stays consistently ahead
-- The **CONUS 12km grid (425×300) does not decompose past ~500 ranks** — 4N m8g at 768 ranks triggers a decomposition error. For that level of parallelism, use CONUS 2.5km (1501×1201), which supports 1500+ ranks cleanly.
+- The **CONUS 12km grid (425×300) is too small for WRF's default split of 768 ranks (4N m8g)**: WRF requires each rank's patch to span at least 10 grid cells in each direction, and that split, 24 × 32 ranks in x and y, leaves 9 cells per rank in y, so WRF stops before the run starts. For that level of parallelism, use CONUS 2.5km (1501×1201), which supports 1500+ ranks cleanly.
 - The 1N hpc7g 2.5km point is *estimated* at 2 × the 2N time; running it directly on a single 64-core node is expensive and a pessimistic baseline for a grid of 1501 × 1201 points
 - A single m8g node is about as fast as **4 hpc7g nodes** for this workload: 99% of their speed on CONUS 12km (2.52× against 2.55×) and 93% on CONUS 2.5km (3.08× against 3.30×)
 
