@@ -33,8 +33,8 @@
 #   analysis_type (ensemble: NVE/NVT/NPT), discipline, gromacs_version, cores_per_node
 #
 # The record lands in a DynamoDB table named  External_<Source>_Gromacs  in the
-# owner's account/region. The ingestion side reads every External_* table with
-# an identity map, so the canonical attribute names below are consumed as-is.
+# owner's account/region. The ingestion side reads the record by the canonical
+# attribute names below, so keep them as they are.
 #
 # ---------------------------------------------------------------------------
 # Quick start

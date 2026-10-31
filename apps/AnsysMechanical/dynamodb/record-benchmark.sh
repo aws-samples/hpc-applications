@@ -31,9 +31,9 @@
 #   core_solver_speedup, core_solver_efficiency, cores_per_node
 #
 # The record lands in a DynamoDB table named  External_<Source>_Mechanical  in
-# the owner's account/region. The ingestion side reads every External_* table
-# with an identity map, so the canonical attribute names below are consumed
-# as-is.
+# the owner's account/region. The ingestion side reads the record by
+# the canonical attribute names below, so keep them as they
+# are.
 #
 # ---------------------------------------------------------------------------
 # Quick start

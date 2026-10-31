@@ -32,8 +32,8 @@
 #   turbulence_model, solver_type, analysis_type, cell_type, fluent_version
 #
 # The record lands in a DynamoDB table named  External_<Source>_Fluent  in the
-# owner's account/region. The ingestion side reads every External_* table with
-# an identity map, so the canonical attribute names below are consumed as-is.
+# owner's account/region. The ingestion side reads the record by the canonical
+# attribute names below, so keep them as they are.
 #
 # Fluent reports per-iteration timing in the solver .out/.trn:
 #   "Solver wall time per iteration" -> --time-per-iteration
