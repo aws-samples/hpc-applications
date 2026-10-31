@@ -9,7 +9,7 @@ Generate the OpenRadioss performance charts:
    as 2 x the 2N time.
 
 Benchmark: Ford Taurus (10M cells, SIM_TIME=0.01 = 50,253 cycles)
-Metric: Radioss engine ELAPSED TIME, mean of 3 replicas.
+Metric: Radioss engine ELAPSED TIME, mean of 3 replicas (8N m8g: 1).
 
 Usage:
     python3 generate_charts.py
@@ -27,7 +27,8 @@ import numpy as np
 # decimals are the fewest with which the charts come out pixel for pixel as
 # when they were computed from the runs' times.
 # ---------------------------------------------------------------------------
-# All runs: 3 replicas each, mean reported. CV = coefficient of variation.
+# All runs: 3 replicas each (8N m8g: 1), mean reported. CV = coefficient of
+# variation.
 # x86: GCC 11.5 + OpenMPI 4.1.7 + EFA, -march=x86-64-v4 -mtune=znver4
 # Arm: GCC 11.5 + OpenMPI 5.0.9 + EFA, -mcpu=neoverse-v{1,2} -mtune=...
 # Pure MPI: 1 OpenMP thread per rank, 192 cores/node (64 on c7gn)
@@ -124,7 +125,8 @@ ax.set_xticks(x_pos)
 ax.set_xticklabels([f"{n}N" for n in nodes_arm])
 ax.set_xlabel("Number of nodes  (c7gn: 64 c/n, m8g: 192 c/n)")
 ax.set_ylabel("Speedup vs 1 node c7gn  (higher is better)")
-ax.set_title("OpenRadioss — Ford Taurus 10M  (engine elapsed, mean of 3 replicas)",
+ax.set_title("OpenRadioss — Ford Taurus 10M  "
+             "(engine elapsed, mean of 3 replicas unless marked)",
              fontsize=12)
 ax.grid(True, axis='y', linestyle='--', alpha=0.5)
 ax.legend(loc='upper left')
@@ -132,6 +134,10 @@ ax.set_ylim(0, max(su_m8g.max(), su_c7gn.max()) * 1.15)
 
 # Note for the estimated bar
 ax.text(0 - BAR_W/2, -0.07, "(est. 2 × 2N)",
+        ha='center', va='top', fontsize=7, style='italic', color='gray',
+        transform=ax.get_xaxis_transform())
+# Note for the 1-replica bar (8N m8g)
+ax.text(3 + BAR_W/2, -0.07, "(1 replica)",
         ha='center', va='top', fontsize=7, style='italic', color='gray',
         transform=ax.get_xaxis_transform())
 

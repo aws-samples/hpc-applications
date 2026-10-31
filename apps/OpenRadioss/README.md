@@ -167,7 +167,7 @@ The scaling numbers reported below use `SIM_TIME=0.01` (50,253 cycles). This is 
 
 ## Performance
 
-All performance charts use the same methodology: **Ford Taurus 10M**, `SIM_TIME=0.01` (50,253 cycles), pure MPI (1 OpenMP thread per rank), 3 replicas per data point. Performance is expressed as **speedup over a 1-node baseline** computed from the Radioss-reported engine `ELAPSED TIME`.
+All performance charts use the same methodology: **Ford Taurus 10M**, `SIM_TIME=0.01` (50,253 cycles), pure MPI (1 OpenMP thread per rank), 3 replicas per data point (1 for 8N m8g). Performance is expressed as **speedup over a 1-node baseline** computed from the Radioss-reported engine `ELAPSED TIME`.
 
 ### x86 — hpc8a (Zen5) vs hpc7a (Zen4)
 
@@ -199,7 +199,7 @@ The Graviton3E runs used `c7gn.16xlarge`, which EC2 lists with the same 64 cores
 | 1 | *1.00× (est. 2 × 2N)* | **3.31×** |
 | 2 | 2.00× | 6.00× |
 | 4 | 3.83× | **10.41×** |
-| 8 | 6.65× | 12.75× |
+| 8 | 6.65× | 12.75× (1 replica) |
 
 Key takeaways:
 
