@@ -516,7 +516,7 @@ The launcher extracts:
 | File | Description |
 |------|-------------|
 | `record-benchmark.sh` | Contribution recorder the launchers call after every successful run (see [Contribute your results](#contribute-your-results)) |
-| `record_to_dynamodb.sh` | Optional helper that records each benchmark run to a centralised DynamoDB table |
+| `record_to_dynamodb.sh` | Optional helper that records each successful benchmark run to a centralised DynamoDB table |
 | `scan_sweep.sh` | Pull per-cell `ns/day` runs and means from `Gromacs_Benchmarks` (`us-east-1`): the input of the chart generators' relative values |
 | `README.md` | Table schema, IAM permissions, and setup instructions — see [`dynamodb/README.md`](dynamodb/README.md) |
 
@@ -524,6 +524,6 @@ The launcher extracts:
 
 The benchmark scripts in this folder call [`dynamodb/record-benchmark.sh`](dynamodb/record-benchmark.sh) after every successful run: for the x86 and Arm launchers and the GPU single-simulation launcher, a run whose `md.log` gives a positive ns/day. The recorder saves the run as a small JSON record (`<record_id>.json`) and adds it to the shared AI-Powered HPC benchmark dataset when you have write access to it. That dataset trains a model that predicts HPC performance on AWS, so every result you share helps. Set `SOURCE=<YourOrg>` to tag your runs, and see [BENCHMARK-RECORDERS.md](../BENCHMARK-RECORDERS.md) for the options and how to send the record in.
 
-This is separate from the optional `record_to_dynamodb.sh` uploader described above, which stays off unless you enable it. To point the launchers at another copy of the contribution recorder, set `CONTRIB_RECORDER`.
+This is separate from the optional `record_to_dynamodb.sh` uploader described above, which stays off unless you enable it. Once enabled, it records only the runs that pass the same check: `md.log` gives a positive ns/day. To point the launchers at another copy of the contribution recorder, set `CONTRIB_RECORDER`.
 
 The x86 and Arm launchers also hand the recorder the run length, whether PME tuning was left on and the OpenMP threads per rank, under the names the dataset already uses for them (`--metric nsteps=<nsteps> --char pme_tuning=on|off --metric threads_per_rank=<n>`; `off` means mdrun ran with `-notunepme`), so that records of runs made with other settings stay apart.
