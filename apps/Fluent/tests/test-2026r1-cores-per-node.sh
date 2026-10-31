@@ -13,18 +13,19 @@
 #   * both requests to the instance metadata give up within 5 seconds, and
 #     use -f;
 #   * when the instance type cannot be read (no answer in time, an HTTP error,
-#     an empty answer, or an answer that is not an instance type name, also
-#     one that holds a type name inside other text or is in capitals), a count
-#     outside the set is refused, with the counts named, on an AMD node with
+#     an answer cut off at the time limit, an empty answer, or an answer that
+#     is not an instance type name, also one that holds a type name inside
+#     other text or is in capitals), a count outside the set is refused, with
+#     the counts named, on an AMD node with
 #     192 cores (lscpu, flat or indented, read in English in any locale:
 #     sockets x cores per socket), and runs on any other node (Intel with 192
 #     cores, AMD with 96 on one or two sockets, also with 2 threads per core,
 #     AMD with 2 x 128, no lscpu output), with a one-line NOTE that the check
 #     was skipped; a supported count, and an instance type that reads (also in
 #     a Turkish locale, where [a-z] leaves out i), run without lscpu or a NOTE;
-#   * after an HTTP error, and after an answer that is not an instance type
-#     name (a proxy's page), the run directory's name holds no instance type,
-#     and none of the page.
+#   * after an HTTP error, an answer cut off at the time limit, and an answer
+#     that is not an instance type name (a proxy's page), the run directory's
+#     name holds no instance type, and none of the page.
 #
 #   apps/Fluent/tests/test-2026r1-cores-per-node.sh
 # =============================================================================
@@ -177,6 +178,20 @@ quiet "an HTTP error, 2 nodes x 96"
 case "${WORKDIR}" in
     */4242-2x-192-*) ok "an HTTP error, 2 nodes x 96 -> no instance type in the run directory's name" ;;
     *) bad "an HTTP error, 2 nodes x 96 -> no instance type in the run directory's name" \
+           ".../4242-2x-192-<date>" "${WORKDIR}" ;;
+esac
+# An answer cut off at the time limit (the start of the type name,
+# hpc8a.96x, then curl's exit 28) counts as none, though what came through has
+# the shape of a type name.
+run_2026r1 cutoff-amd192 STUB_IMDS=cut-off STUB_CPU="${AMD_192}" SLURM_NPROCS=200 SLURM_NTASKS=200
+refused "an answer cut off at the time limit, an AMD node with 2 x 96 cores, 2 nodes x 100" "${ON_AMD_192}"
+run_2026r1 cutoff-intel192 STUB_IMDS=cut-off STUB_CPU="${INTEL_192}" SLURM_NPROCS=200 SLURM_NTASKS=200
+ran_with_note "an answer cut off at the time limit, an Intel node with 2 x 96 cores, 2 nodes x 100"
+run_2026r1 cutoff-96 STUB_IMDS=cut-off STUB_CPU="${AMD_192}" SLURM_NPROCS=192 SLURM_NTASKS=192
+ran "an answer cut off at the time limit, 2 nodes x 96"
+case "${WORKDIR}" in
+    */4242-2x-192-*) ok "an answer cut off at the time limit, 2 nodes x 96 -> no instance type in the run directory's name" ;;
+    *) bad "an answer cut off at the time limit, 2 nodes x 96 -> no instance type in the run directory's name" \
            ".../4242-2x-192-<date>" "${WORKDIR}" ;;
 esac
 # An answer that is not an instance type name counts as none too: at a

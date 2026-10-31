@@ -5,10 +5,11 @@
 # It defines the PASS/FAIL counters, writes the stubs, and defines run_2026r1,
 # which runs the script ASSEMBLED, in an empty environment (env -i) whose PATH
 # starts with the stubs:
-#   curl      IMDS: a token, then STUB_INSTANCE_TYPE as the instance type; it
-#             logs the arguments of each call, and STUB_IMDS=no-answer or
-#             http-error stands for metadata that gives no answer or an
-#             HTTP error
+#   curl      IMDS: a token, then STUB_INSTANCE_TYPE as the instance type (and
+#             STUB_INSTANCE_ID as the instance id); it logs the arguments of
+#             each call, and STUB_IMDS=no-answer, http-error or cut-off stands
+#             for metadata that gives no answer, an HTTP error, or an answer
+#             cut off at the time limit
 #   lscpu     the summary of a node with STUB_CPU="<vendor id> <sockets>
 #             <cores per socket> [<threads per core>] [indented]" (default
 #             "AuthenticAMD 2 96", one thread per core), or none, with German
@@ -65,23 +66,34 @@ mkdir -p "${WORK}/bin"
 # ---------------------------------------------------------------------------
 cat > "${WORK}/bin/curl" <<'EOF'
 #!/bin/bash
-# IMDS: the token request, then the instance-type lookup. Nothing else answers.
-# Logs the arguments of each call to curl.log.
+# IMDS: the token request, then the instance-type lookup (STUB_INSTANCE_TYPE)
+# or the instance-id lookup (STUB_INSTANCE_ID, i-0123456789abcdef0 if unset).
+# Nothing else answers. Logs the arguments of each call to curl.log.
 #   STUB_IMDS=no-answer   no answer within curl's time limit: no output, exit 28
-#   STUB_IMDS=http-error  an HTTP 401 for the instance type, which curl -f
+#   STUB_IMDS=http-error  an HTTP 401 for the instance type or id, which curl -f
 #                         (alone or in a group, such as -fs) or --fail turns
 #                         into no output and exit 22, and plain curl into the
 #                         error page and exit 0
+#   STUB_IMDS=cut-off     for the instance type or id, its first characters
+#                         (the answer less its last five), then exit 28, as
+#                         curl ends a transfer at its time limit
 printf '%s\n' "$*" >> "${STUB_STATE}/curl.log"
 [ "${STUB_IMDS:-}" = no-answer ] && exit 28
 case "$*" in
     *api/token*)     echo "stub-token" ;;
-    *instance-type*)
+    *instance-type*|*instance-id*)
+        case "$*" in
+            *instance-type*) answer="${STUB_INSTANCE_TYPE-}" ;;
+            *)               answer="${STUB_INSTANCE_ID-i-0123456789abcdef0}" ;;
+        esac
         if [ "${STUB_IMDS:-}" = http-error ]; then
             for a in "$@"; do case "${a}" in --fail) exit 22 ;; --*) ;; -*f*) exit 22 ;; esac; done
             printf '%s' "<html><title>401 - Unauthorized</title></html>"
+        elif [ "${STUB_IMDS:-}" = cut-off ]; then
+            printf '%s' "${answer%?????}"
+            exit 28
         else
-            printf '%s' "${STUB_INSTANCE_TYPE-}"
+            printf '%s' "${answer}"
         fi ;;
 esac
 exit 0
