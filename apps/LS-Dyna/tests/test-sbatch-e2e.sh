@@ -258,9 +258,10 @@ is "IMDS silent on a full node: runs (compact needs no type)" "${RC}" "0"
 # capitals or inside other text), and an answer cut off at the time limit, count
 # as no answer: at 144 ranks per node on this 192-core AMD node the run gets the
 # list for 144, as with no answer, and a full node runs; the run directory and the
-# job log say "unknown".
+# job log say "unknown". A proxy's line that ends in a host name ends in a
+# type-shaped token, and only the type test's ^ refuses it.
 for answer in '<html><body>Request not allowed by proxy.example.com</body></html>' HPC8A.96XLARGE \
-              'hpc8a.96xlarge: not found'; do
+              'hpc8a.96xlarge: not found' 'Request not allowed by proxy.example.com'; do
     run_case notatype STUB_ITYPE="${answer}" -- "${LSTC}" "${T}/model/deck.k"
     is "the answer '${answer}' at 144 ranks per node: exit 0" "${RC}" "0"
     has "the answer '${answer}' at 144: the job log says unknown" "${T}/notatype.out" "Instance type: unknown;"
