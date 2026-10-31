@@ -63,7 +63,7 @@ Eleven applications (all but Abaqus and Quantum ESPRESSO) ship a small, self-con
 
 ## AWS HPC products and services being used
  * [AWS ParallelCluster](https://aws.amazon.com/hpc/parallelcluster/) and its [Documentation](https://docs.aws.amazon.com/parallelcluster/latest/ug/what-is-aws-parallelcluster.html)
- * [AWS Parallel Computing Service (PCS)](https://aws.amazon.com/pcs/) and its [Documentation](https://docs.aws.amazon.com/pcs/latest/userguide/what-is.html)
+ * [AWS Parallel Computing Service (PCS)](https://aws.amazon.com/pcs/) and its [Documentation](https://docs.aws.amazon.com/pcs/latest/userguide/what-is-service.html)
  * [Elastic Fabric Adapter](https://aws.amazon.com/hpc/efa/) (EFA) and its [Documentation](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa.html)
  * [Amazon FSx for Lustre](https://aws.amazon.com/fsx/lustre/) and its [Documentation](https://docs.aws.amazon.com/fsx/latest/LustreGuide/what-is.html)
  * [Amazon EFS](https://aws.amazon.com/efs/) and its [Documentation](https://docs.aws.amazon.com/efs/latest/ug/whatisefs.html)
