@@ -93,8 +93,8 @@ Both build scripts transparently patch or work around a handful of issues in the
 
 Two benchmark models from the [OpenRadioss example library](https://openradioss.atlassian.net/wiki/spaces/OPENRADIOSS/pages/47546369/Example+Models) are supported via the `MODEL` environment variable:
 
-- `neon1m` — **Chrysler Neon 1M cells** crash test. ~1M elements, finishes in a few minutes on a single node. Good for smoke tests and per-rank tuning but saturates at 2 nodes — use Taurus for scaling studies.
-- `taurus10m` — **Ford Taurus 10M cells** front-impact crash test. ~10M elements, runs for hours. This is the model used in the scaling charts below.
+- `neon1m` — **Chrysler Neon 1M cells** crash test. ~1M elements, a short run on a single node. Good for smoke tests and per-rank tuning but saturates at 2 nodes — use Taurus for scaling studies.
+- `taurus10m` — **Ford Taurus 10M cells** front-impact crash test. ~10M elements, a much longer run. This is the model used in the scaling charts below.
 
 Both models are fetched from the OpenRadioss Atlassian wiki on first run and cached under `/fsx/openradioss/models/`.
 
@@ -159,9 +159,9 @@ Taurus' recommended simulation times (from the OpenRadioss benchmark documentati
 
 | `SIM_TIME` | Cycles | Intended use |
 |------------|--------|--------------|
-| `0.00201` | ~10,000 | Cluster smoke test (~5 min at 2N) |
-| `0.01001` | ~50,000 | **Performance / scaling studies** (~30 min at 4N hpc8a) |
-| `0.12001` | ~600,000 | Full 120 ms simulation (many hours even on 8 nodes) |
+| `0.00201` | ~10,000 | Cluster smoke test |
+| `0.01001` | ~50,000 | **Performance / scaling studies** |
+| `0.12001` | ~600,000 | Full 120 ms simulation |
 
 The scaling numbers reported below use `SIM_TIME=0.01` (50,253 cycles). This is long enough that the engine dominates total wall time at all node counts and short enough to fit 3 replicas per node count in a reasonable queue-time budget.
 
@@ -203,18 +203,18 @@ Both Arm builds use OpenMPI 5.0.9 (required for Graviton4 at 192 rpn) and CPU-tu
 
 Key takeaways:
 
-- The **1N hpc7g engine run does not fit in a 4 h SLURM wall-time limit**; the 1N baseline is estimated as 2 × the 2N time (the same convention as the WRF Arm chart in this repo)
+- The **1N hpc7g point is not measured**: the 1N baseline is estimated as 2 × the 2N time (the same convention as the WRF Arm chart in this repo)
 - A single m8g node delivers **3.31×** the performance of a single (estimated) hpc7g node — consistent with the 3× core-count ratio (192 vs 64) and the larger L2/L3 caches on Neoverse V2
 - At 4 nodes m8g reaches **10.41×** vs **3.83×** for hpc7g (both relative to the estimated 1N hpc7g baseline)
 - **hpc7g scales near-linearly all the way to 8 nodes (6.65× at 8N, 512 ranks)**
 - **m8g 8N continues to improve over m8g 4N** (12.75× vs 10.41×)
-- A single m8g node outperforms roughly **3.3 hpc7g nodes** for this workload — useful when capacity or interconnect cost is a concern
+- A single m8g node outperforms roughly **3.3 hpc7g nodes** for this workload — useful when the node count or the interconnect cost matters
 
 ## Key metrics
 
 - **Radioss ELAPSED TIME** (from `engine.log`) — the primary scaling metric; this is Radioss' internal wall-clock measurement inside the time-integration loop, excluding MPI startup and file I/O
 - **Engine time** — the total wall time spent in `mpirun ... engine_*` as measured by the launcher, including MPI startup and final I/O
-- **Starter time** — the single-node mesh-partitioning phase; grows super-linearly with `NSPMD` (the number of subdomains = MPI ranks the engine will use). For Taurus 10M the starter is negligible at 1–2 nodes but reaches ~74 minutes at 8 nodes × 192 rpn on m8g. If you plan many engine runs on the same decomposition, run starter once and re-use the `.rst` files.
+- **Starter time** — the single-node mesh-partitioning phase; grows super-linearly with `NSPMD` (the number of subdomains = MPI ranks the engine will use). For Taurus 10M the starter is negligible at 1–2 nodes, but at 8 nodes × 192 rpn on m8g it takes about four times as long as the engine's `ELAPSED TIME` at `SIM_TIME=0.01`. If you plan many engine runs on the same decomposition, run starter once and re-use the `.rst` files.
 
 ## Files
 
