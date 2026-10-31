@@ -86,7 +86,7 @@ Before the solve, the script drops the page cache and sets transparent huge page
 
 ### Pinning on Hpc8a and Hpc7a
 
-`hpc8a.96xlarge` and `hpc7a.96xlarge` have 24 CCDs of 8 cores (one L3 each). With fewer than 192 ranks per node, the script pins the ranks with the official list from [Utils/flexible-cores](../../Utils/flexible-cores), which puts the same number of ranks on every CCD, and refuses any count that list does not cover (24, 48, 72, 96, 120, 144, 168 or 192 per node) before the solve starts. A full node runs one rank per core in order (`I_MPI_PIN_ORDER=compact`); other instance types below their core count use Intel MPI's own placement.
+`hpc8a.96xlarge` and `hpc7a.96xlarge` have 24 CCDs of 8 cores (one L3 each). With fewer than 192 ranks per node, the script pins the ranks with the official list from [Utils/flexible-cores](../../Utils/flexible-cores), which puts the same number of ranks on every CCD, and refuses any count that list does not cover (24, 48, 72, 96, 120, 144, 168 or 192 per node) before the solve starts. A full node runs one rank per core in order (`I_MPI_PIN_ORDER=compact`); other instance types below their core count use Intel MPI's own placement. With fewer ranks than cores and no instance type from the instance metadata (no answer within a few seconds, an error, or an answer that is not an instance type name), a node that `lscpu` shows with 192 AMD cores could be an `hpc8a.96xlarge` or an `hpc7a.96xlarge`, so it gets the same list or refusal, and any other node runs with Intel MPI's own placement and a one-line NOTE on stderr that the check is skipped.
 
 On car2car with R13.1 on `hpc8a.96xlarge`, 3 runs each:
 
