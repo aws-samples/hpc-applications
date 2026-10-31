@@ -38,6 +38,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=stubs.sh
 source "${HERE}/stubs.sh"
+# A Turkish-locale case checks something only where tr_TR.UTF-8 is installed:
+# elsewhere bash falls back to the C locale, where [a-z] holds i anyway, so each
+# such case is skipped there, with a SKIP line.
+TR=""
+if grep -qiE '^tr_TR\.utf-?8$' <<< "$(locale -a 2>/dev/null)"; then TR=1; fi
 UTILS="$(cd "${OF_APP}/../../Utils/flexible-cores" && pwd)"
 X86=(x86/openfoam-benchmark-openmpi.sbatch x86/openfoam-benchmark-intelmpi.sbatch)
 # curl for an IMDS that gives no instance type, put first in PATH; each call is
@@ -304,6 +309,10 @@ for s in "${X86[@]}"; do
     # type is read in the C locale, so it still reads.
     for tl in hpc6id.32xlarge:LANG c8i.96xlarge:LC_ALL; do
         t="${tl%:*}"; l="${tl#*:}=tr_TR.UTF-8"
+        if [ -z "${TR}" ]; then
+            skipt "${t} from a Turkish locale (${l}), 64 ranks per node" "the tr_TR.UTF-8 locale is not installed"
+            continue
+        fi
         job=$((job + 1)); run_script "${s}" "${job}" STUB_INSTANCE_TYPE="${t}" SLURM_NTASKS_PER_NODE=64 "${l}"
         completes "${t} from a Turkish locale (${l}), 64 ranks per node" "${job}"
         placed "${t} from a Turkish locale (${l}), 64 ranks per node: no list" "${s}" "${job}" ""

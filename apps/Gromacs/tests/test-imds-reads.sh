@@ -96,6 +96,11 @@ quiet() {
     fi
 }
 
+# A Turkish-locale case checks something only where tr_TR.UTF-8 is installed:
+# elsewhere bash falls back to the C locale, where [a-z] holds i anyway, so each
+# such case is skipped there, with a SKIP line.
+TR=""
+if grep -qiE '^tr_TR\.utf-?8$' <<< "$(locale -a 2>/dev/null)"; then TR=1; fi
 for arch in Arm GPU; do
     case "${arch}" in
         Arm) itype=m8g.48xlarge; caps=M8G.48XLARGE ;;
@@ -126,9 +131,13 @@ for arch in Arm GPU; do
     # The type names only the run directory and the job log, so both launchers get
     # the same type name with an i.
     echo "== ${arch}/gromacs-benchmark.sbatch: a type name with an i, in a Turkish locale =="
-    launch "${arch}" STUB_INSTANCE_TYPE=im4gn.16xlarge LANG=tr_TR.UTF-8
-    runs "im4gn.16xlarge in a Turkish locale"
-    named "im4gn.16xlarge in a Turkish locale" im4gn.16xlarge
+    if [ -n "${TR}" ]; then
+        launch "${arch}" STUB_INSTANCE_TYPE=im4gn.16xlarge LANG=tr_TR.UTF-8
+        runs "im4gn.16xlarge in a Turkish locale"
+        named "im4gn.16xlarge in a Turkish locale" im4gn.16xlarge
+    else
+        skipt "${arch}: im4gn.16xlarge in a Turkish locale" "the tr_TR.UTF-8 locale is not installed"
+    fi
 done
 
 echo "== the stubs kept AWS and the network out of it =="

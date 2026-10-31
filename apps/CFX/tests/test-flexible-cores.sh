@@ -37,9 +37,15 @@ if [ -z "${SBATCH}" ]; then
     done
 fi
 
-pass=0; fail=0
+pass=0; fail=0; skip=0
 ok()  { printf '  \033[32mPASS\033[0m %s\n' "$1"; pass=$((pass+1)); }
 bad() { printf '  \033[31mFAIL\033[0m %s\n       expected: %s\n       actual:   %s\n' "$1" "$2" "$3"; fail=$((fail+1)); }
+skipt() { printf '  \033[33mSKIP\033[0m %s (%s)\n' "$1" "$2"; skip=$((skip+1)); }
+# A Turkish-locale case checks something only where tr_TR.UTF-8 is installed:
+# elsewhere bash falls back to the C locale, where [a-z] holds i anyway, so each
+# such case is skipped there, with a SKIP line.
+TR=""
+if grep -qiE '^tr_TR\.utf-?8$' <<< "$(locale -a 2>/dev/null)"; then TR=1; fi
 
 if [ -z "${SBATCH}" ] || [ ! -f "${SBATCH}" ]; then
     echo "ERROR: no CFX sbatch example found next to ${HERE}" >&2
@@ -286,9 +292,13 @@ quiet "c8i.96xlarge -> no NOTE, and lscpu not run"
 run m7a-1x64 m7a.48xlarge 1 64 STUB_LSCPU=amd-2x96
 accepted "m7a.48xlarge, named by the instance metadata, on 192 AMD cores, 1 node x 64 cores -> runs"
 quiet "m7a.48xlarge -> no NOTE, and lscpu not run"
-run tr-c8i-1x64 c8i.96xlarge 1 64 LC_ALL= LC_CTYPE= LC_COLLATE= LANG=tr_TR.UTF-8
-accepted "c8i.96xlarge, a Turkish locale, 1 node x 64 cores -> runs"
-quiet "c8i.96xlarge, a Turkish locale -> no NOTE, and lscpu not run"
+if [ -n "${TR}" ]; then
+    run tr-c8i-1x64 c8i.96xlarge 1 64 LC_ALL= LC_CTYPE= LC_COLLATE= LANG=tr_TR.UTF-8
+    accepted "c8i.96xlarge, a Turkish locale, 1 node x 64 cores -> runs"
+    quiet "c8i.96xlarge, a Turkish locale -> no NOTE, and lscpu not run"
+else
+    skipt "c8i.96xlarge, a Turkish locale, 1 node x 64 cores" "the tr_TR.UTF-8 locale is not installed"
+fi
 
 # ---------------------------------------------------------------------------
 # 4. No instance type from the instance metadata, on a node without 192 AMD
@@ -336,5 +346,5 @@ refused "no instance metadata, AMD 2 sockets x 96 cores, a German locale (lscpu 
     "$(amd_uneven 64)"
 
 echo
-printf 'flexible-cores tests: %d passed, %d failed\n' "${pass}" "${fail}"
+printf 'flexible-cores tests: %d passed, %d failed, %d skipped\n' "${pass}" "${fail}" "${skip}"
 [ "${fail}" -eq 0 ]

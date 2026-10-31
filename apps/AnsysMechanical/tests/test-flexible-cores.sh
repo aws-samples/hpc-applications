@@ -40,9 +40,15 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FIX="${HERE}/fixtures"
 SBATCH="${HERE}/../AnsysMechanical.sbatch"
 
-pass=0; fail=0
+pass=0; fail=0; skip=0
 ok()  { printf '  \033[32mPASS\033[0m %s\n' "$1"; pass=$((pass+1)); }
 bad() { printf '  \033[31mFAIL\033[0m %s\n       expected: %s\n       actual:   %s\n' "$1" "$2" "$3"; fail=$((fail+1)); }
+skipt() { printf '  \033[33mSKIP\033[0m %s (%s)\n' "$1" "$2"; skip=$((skip+1)); }
+# A Turkish-locale case checks something only where tr_TR.UTF-8 is installed:
+# elsewhere bash falls back to the C locale, where [a-z] holds i anyway, so each
+# such case is skipped there, with a SKIP line.
+TR=""
+if grep -qiE '^tr_TR\.utf-?8$' <<< "$(locale -a 2>/dev/null)"; then TR=1; fi
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
@@ -385,10 +391,14 @@ fc_case hpc6id-2x64 hpc6id.32xlarge 2 "64(x2)" 128
 runs "hpc6id.32xlarge, 2 nodes x 64 cores per node (the sbatch's own layout) -> runs"
 skip_note "hpc6id.32xlarge: its type was read, so no NOTE about a skipped check" no
 lscpu_asked "hpc6id.32xlarge: its type was read, so lscpu is not asked" no
-fc_case tr-hpc6id hpc6id.32xlarge 2 "64(x2)" 128 LANG=tr_TR.UTF-8
-runs "hpc6id.32xlarge in a Turkish locale, 2 nodes x 64 cores per node -> runs"
-skip_note "hpc6id.32xlarge in a Turkish locale: its type reads ([a-z] tested in the C locale), so no NOTE" no
-lscpu_asked "hpc6id.32xlarge in a Turkish locale: its type reads, so lscpu is not asked" no
+if [ -n "${TR}" ]; then
+    fc_case tr-hpc6id hpc6id.32xlarge 2 "64(x2)" 128 LANG=tr_TR.UTF-8
+    runs "hpc6id.32xlarge in a Turkish locale, 2 nodes x 64 cores per node -> runs"
+    skip_note "hpc6id.32xlarge in a Turkish locale: its type reads ([a-z] tested in the C locale), so no NOTE" no
+    lscpu_asked "hpc6id.32xlarge in a Turkish locale: its type reads, so lscpu is not asked" no
+else
+    skipt "hpc6id.32xlarge in a Turkish locale" "the tr_TR.UTF-8 locale is not installed"
+fi
 
 fc_case hpc7a48-1x32 hpc7a.48xlarge 1 32 32
 runs "hpc7a.48xlarge, 1 node x 32 cores -> runs"
@@ -530,5 +540,5 @@ refused "no answer, a 192-core AMD node in a German locale, 1 node x 64 cores ->
     64 "${BOTH}" 64
 
 echo
-printf 'flexible-cores tests: %d passed, %d failed\n' "${pass}" "${fail}"
+printf 'flexible-cores tests: %d passed, %d failed, %d skipped\n' "${pass}" "${fail}" "${skip}"
 [ "${fail}" -eq 0 ] || exit 1

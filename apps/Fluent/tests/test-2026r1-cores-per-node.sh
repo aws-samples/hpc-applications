@@ -229,8 +229,17 @@ run_2026r1 m8a-amd192 STUB_INSTANCE_TYPE=m8a.48xlarge STUB_CPU="${AMD_192}" SLUR
 ran "m8a.48xlarge, an AMD node with 2 x 96 cores, 2 nodes x 100"
 quiet "m8a.48xlarge, 2 nodes x 100"
 # A type name with an i reads as one in a Turkish locale too, where [a-z] leaves out i.
-run_2026r1 tr-c8i STUB_INSTANCE_TYPE=c8i.96xlarge STUB_CPU="${INTEL_192}" LANG=tr_TR.UTF-8 SLURM_NPROCS=200 SLURM_NTASKS=200
-ran "c8i.96xlarge, a Turkish locale, 2 nodes x 100"
-quiet "c8i.96xlarge, a Turkish locale, 2 nodes x 100"
+# A Turkish-locale case checks something only where tr_TR.UTF-8 is installed:
+# elsewhere bash falls back to the C locale, where [a-z] holds i anyway, so each
+# such case is skipped there, with a SKIP line.
+TR=""
+if grep -qiE '^tr_TR\.utf-?8$' <<< "$(locale -a 2>/dev/null)"; then TR=1; fi
+if [ -n "${TR}" ]; then
+    run_2026r1 tr-c8i STUB_INSTANCE_TYPE=c8i.96xlarge STUB_CPU="${INTEL_192}" LANG=tr_TR.UTF-8 SLURM_NPROCS=200 SLURM_NTASKS=200
+    ran "c8i.96xlarge, a Turkish locale, 2 nodes x 100"
+    quiet "c8i.96xlarge, a Turkish locale, 2 nodes x 100"
+else
+    skipt "c8i.96xlarge, a Turkish locale, 2 nodes x 100" "the tr_TR.UTF-8 locale is not installed"
+fi
 
 summary "2026 R1 script: ranks per node"

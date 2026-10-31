@@ -31,6 +31,11 @@ pass=0; fail=0; skip=0
 ok()   { printf '  \033[32mPASS\033[0m %s\n' "$1"; pass=$((pass+1)); }
 bad()  { printf '  \033[31mFAIL\033[0m %s\n       expected: %s\n       actual:   %s\n' "$1" "$2" "$3"; fail=$((fail+1)); }
 skipt(){ printf '  \033[33mSKIP\033[0m %s (%s)\n' "$1" "$2"; skip=$((skip+1)); }
+# A Turkish-locale case checks something only where tr_TR.UTF-8 is installed:
+# elsewhere bash falls back to the C locale, where [a-z] holds i anyway, so each
+# such case is skipped there, with a SKIP line.
+TR=""
+if grep -qiE '^tr_TR\.utf-?8$' <<< "$(locale -a 2>/dev/null)"; then TR=1; fi
 
 if [ -z "${SBATCH}" ] || [ ! -f "${SBATCH}" ]; then
     echo "ERROR: no CFX sbatch example found next to ${HERE}" >&2
@@ -499,9 +504,13 @@ for imds in down timeout cut-off http-error not-a-type two-lines; do
     named_dir "instance metadata ${imds}: the run goes on, and its run directory's name has no instance type" ""
     bounded "instance metadata ${imds}: both requests carry -f and both time limits"
 done
-EXTRA_ENV="STUB_INSTANCE_TYPE=c8i.96xlarge LC_ALL= LC_CTYPE= LC_COLLATE= LANG=tr_TR.UTF-8" \
-    run_case imds-turkish 0 "${FIX}/steady-10-iterations.out"
-named_dir "c8i.96xlarge in a Turkish locale: it names the run directory" c8i.96xlarge
+if [ -n "${TR}" ]; then
+    EXTRA_ENV="STUB_INSTANCE_TYPE=c8i.96xlarge LC_ALL= LC_CTYPE= LC_COLLATE= LANG=tr_TR.UTF-8" \
+        run_case imds-turkish 0 "${FIX}/steady-10-iterations.out"
+    named_dir "c8i.96xlarge in a Turkish locale: it names the run directory" c8i.96xlarge
+else
+    skipt "c8i.96xlarge in a Turkish locale" "the tr_TR.UTF-8 locale is not installed"
+fi
 
 echo
 printf 'sbatch e2e tests: %d passed, %d failed, %d skipped\n' "${pass}" "${fail}" "${skip}"

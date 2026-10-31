@@ -23,6 +23,11 @@ pass=0; fail=0; skip=0
 ok()   { printf '  \033[32mPASS\033[0m %s\n' "$1"; pass=$((pass+1)); }
 bad()  { printf '  \033[31mFAIL\033[0m %s\n       expected: %s\n       actual:   %s\n' "$1" "$2" "$3"; fail=$((fail+1)); }
 skipt(){ printf '  \033[33mSKIP\033[0m %s (%s)\n' "$1" "$2"; skip=$((skip+1)); }
+# A Turkish-locale case checks something only where tr_TR.UTF-8 is installed:
+# elsewhere bash falls back to the C locale, where [a-z] holds i anyway, so each
+# such case is skipped there, with a SKIP line.
+TR=""
+if grep -qiE '^tr_TR\.utf-?8$' <<< "$(locale -a 2>/dev/null)"; then TR=1; fi
 
 SCRIPTS=(x86/wrf-benchmark.sbatch
          x86/wrf-benchmark-intel.sbatch
@@ -703,6 +708,10 @@ for s in "${SCRIPTS[@]}"; do
     for c in hpc7a.48xlarge c8i.96xlarge c7a.48xlarge m8a.48xlarge "hpc6id.32xlarge LANG=tr_TR.UTF-8" \
              "c8i.96xlarge LANG=tr_TR.UTF-8"; do
         read -r t loc <<<"${c}"
+        if [ -n "${loc}" ] && [ -z "${TR}" ]; then
+            skipt "${s}: 64 ranks per node on ${t} (${loc})" "the tr_TR.UTF-8 locale is not installed"
+            continue
+        fi
         per_node "${s}" 64 IMDS_INSTANCE_TYPE="${t}" STUB_LSCPU=amd-2x96 ${loc:+"${loc}"}
         ran "${s}: 64 ranks per node on ${t}${loc:+ (${loc})} run"
         lacks "${s}: ${t}${loc:+ (${loc})}: no NOTE" "${SKIPPED}"
@@ -820,8 +829,12 @@ for k in IMDS_MODE=down IMDS_MODE=cut-off IMDS_MODE=http-error IMDS_INSTANCE_TYP
 done
 per_node "${ARM}" 4 IMDS_MODE=down
 imds_calls "${ARM}: no answer: both requests carry -f and give up after 5 seconds, 2 to connect"
-per_node "${ARM}" 4 IMDS_INSTANCE_TYPE=im4gn.16xlarge LANG=tr_TR.UTF-8
-arm_dir "${ARM}: im4gn.16xlarge in a Turkish locale names the run directory" im4gn.16xlarge
+if [ -n "${TR}" ]; then
+    per_node "${ARM}" 4 IMDS_INSTANCE_TYPE=im4gn.16xlarge LANG=tr_TR.UTF-8
+    arm_dir "${ARM}: im4gn.16xlarge in a Turkish locale names the run directory" im4gn.16xlarge
+else
+    skipt "${ARM}: im4gn.16xlarge in a Turkish locale" "the tr_TR.UTF-8 locale is not installed"
+fi
 
 echo "== the stubs kept AWS out of it =="
 [ -s "${STUBS}/aws-calls.log" ] && bad "no AWS call" "none" "$(head -1 "${STUBS}/aws-calls.log")" \
