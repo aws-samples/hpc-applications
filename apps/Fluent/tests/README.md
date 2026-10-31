@@ -41,9 +41,10 @@ Fluent and of the 2026 R1 harness, in one install tree. The `fluentbench.pl`
 stub writes a fixture where `fluentbench.pl` writes its output of the case and
 core count, `<case>-<cores>.out`: `fixtures/fluentbench-rated.out` has the
 fields that this repository's parsers read from that file, with synthetic
-values. The Arm scripts name their install as `/fsx/ansys_inc`, so they run
-from a copy that names the stub tree instead and differs from the script in
-that line alone.
+values. A test can also have it write a session transcript where Fluent writes
+its own, `fluent-<date>-<pid>.trn`. The Arm scripts name their install as
+`/fsx/ansys_inc`, so they run from a copy that names the stub tree instead and
+differs from the script in that line alone.
 
 ## Adding a case
 

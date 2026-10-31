@@ -98,8 +98,12 @@ if [ -z "${_rating}" ]; then
          "rating on a \"Solver rating =\" line." >&2
     echo "NOTE: no solver rating found in the benchmark output; skipping benchmark recording." >&2
 elif [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
+    # The case and the method too: without them, the recorder takes both from the
+    # run dir's first .trn file, which can be Fluent's own session transcript
+    # (fluent-<date>-<pid>.trn).
     FLUENT_VERSION="${fluentversion}" RUN_DIR="${workdir}" SOLVER_RATING="${_rating}" \
-        TIME_PER_ITERATION="${_time_per_iteration}" SOLVER_SPEED="${_solver_speed}" "${_recorder}" \
+        TIME_PER_ITERATION="${_time_per_iteration}" SOLVER_SPEED="${_solver_speed}" \
+        BENCHMARK_CASE="${benchmark_file%.*}" BENCHMARK_METHOD="fluentbench" "${_recorder}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 else
     echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2
