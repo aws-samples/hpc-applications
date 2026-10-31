@@ -233,6 +233,8 @@ The GPU launcher dispatches to one of three execution paths based on `GPU_COUNT`
 
 `GPU_COUNT` is validated to `1..min(8, nvidia-smi -L count)` at submit time — out-of-range values exit non-zero with a descriptive error before any binary launches. `nvidia-smi topo -m` is captured at job start and the inter-GPU fabric is classified as `NVLink`, `NVSwitch`, or `PCIe` and printed on a single `GPU topology:` line so log scrapers can match it literally.
 
+The job log and the results block give the CUDA toolkit's version from `nvcc --version` (the env script puts `nvcc` on the `PATH` when it loads the CUDA toolkit), and the contribution record carries it as `cuda_version`. Without a version from `nvcc`, both say `unknown` and the record has no CUDA version: `nvidia-smi` names the driver's version and the newest CUDA that driver supports, not the toolkit's.
+
 ```bash
 # benchMEM on g6e (L40S), 1 GPU — Thread_MPI auto-selected
 sbatch -p g6e --gres=gpu:1 GPU/gromacs-benchmark.sbatch

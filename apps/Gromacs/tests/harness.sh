@@ -238,7 +238,10 @@ ENV
 #   a stub L40S build, laid out as build_gromacs_gpu.sbatch lays it out, whose env
 #               scripts GPU_TMPI_ENV and GPU_OMPI_ENV name (a test gives the run one as
 #               GROMACS_ENV). As the build's env scripts load the CUDA toolkit, these put
-#               STUBS/cuda/bin on the PATH, with an nvcc whose --version names CUDA 13.0.
+#               STUBS/cuda/bin on the PATH, with an nvcc whose --version names CUDA 13.0,
+#               unless STUB_CUDA=none (a node where no CUDA toolkit loads). STUB_NVCC=
+#               no-release makes nvcc print no release line, and not-a-number a release
+#               that is not a version number.
 gpu_stubs() {
     cat > "${STUBS}/bin/nvidia-smi" <<'EOF'
 #!/bin/bash
@@ -261,8 +264,14 @@ EOF
     mkdir -p "${STUBS}/cuda/bin"
     cat > "${STUBS}/cuda/bin/nvcc" <<'EOF'
 #!/bin/bash
-# nvcc stub: --version names CUDA 13.0, as the toolkit prints it.
-printf '%s\n' 'nvcc: NVIDIA (R) Cuda compiler driver' 'Cuda compilation tools, release 13.0, V13.0.48'
+# nvcc stub: --version names CUDA 13.0, as the toolkit prints it. STUB_NVCC=no-release
+# prints no release line, and STUB_NVCC=not-a-number a release that is not a number.
+echo 'nvcc: NVIDIA (R) Cuda compiler driver'
+case "${STUB_NVCC:-}" in
+  no-release)   ;;
+  not-a-number) echo 'Cuda compilation tools, release beta, Vbeta';;
+  *)            echo 'Cuda compilation tools, release 13.0, V13.0.48';;
+esac
 EOF
     chmod +x "${STUBS}/bin/nvidia-smi" "${STUBS}/cuda/bin/nvcc"
     make_install "${STUBS}" x86_64-cuda13-l40s gromacs-v2024.4-tmpi-env.sh gromacs-v2024.4-ompi-env.sh
@@ -273,7 +282,7 @@ EOF
     GPU_OMPI_ENV="${STUBS}/x86_64-cuda13-l40s/v2024.4/gromacs-v2024.4-ompi-env.sh"
     local env_script
     for env_script in "${GPU_TMPI_ENV}" "${GPU_OMPI_ENV}"; do
-        echo "export PATH=\"${STUBS}/cuda/bin:\${PATH}\"" >> "${env_script}"
+        echo "[ \"\${STUB_CUDA:-}\" = none ] || export PATH=\"${STUBS}/cuda/bin:\${PATH}\"" >> "${env_script}"
     done
 }
 

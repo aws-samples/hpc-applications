@@ -22,8 +22,9 @@ stub describes the CPU `STUB_LSCPU` names and logs each call, so the test host's
 never decides a case. The tests that run the GPU single-simulation launcher,
 `GPU/gromacs-benchmark.sbatch`, run it the same way, with the GPU stubs of `harness.sh`
 (`gpu_stubs`) added: an `nvidia-smi` that shows `STUB_GPUS` NVIDIA L40S GPUs (one by
-default), and a stub L40S build whose env scripts put an `nvcc` stub (CUDA 13.0) on the
-`PATH`, as the real build's env scripts load the CUDA toolkit.
+default), and a stub L40S build whose env scripts put an `nvcc` stub (CUDA 13.0, or
+the answer `STUB_NVCC` names) on the `PATH`, as the real build's env scripts load the
+CUDA toolkit, unless `STUB_CUDA=none`.
 The stubs touch nothing on the host: the cache drop and the THP setting are
 swallowed, a download is refused (and its URL logged), and the `aws` stub refuses
 every call. The `gmx` and `gmx_mpi` stubs log each `mdrun` command line with its
