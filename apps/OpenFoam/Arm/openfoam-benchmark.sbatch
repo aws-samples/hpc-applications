@@ -53,8 +53,15 @@ esac
 # ---------------------------------------------------------------------------
 # Working directory (follows Fluent convention; all output on FSx Lustre)
 # ---------------------------------------------------------------------------
-TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-instanceType=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
+# The instance type, from IMDS, for the run directory's name and the job log
+# only. Each request gives up after 5 seconds (2 to connect), and -f turns an
+# HTTP error into no answer. No answer, an answer cut off at that limit, or an
+# answer that is not an instance type name (checked in the C locale) leaves
+# it empty, and the job goes on: the run directory's name then has no
+# instance type, as on the x86 scripts.
+TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") || TOKEN=""
+instanceType=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type) || instanceType=""
+if ! ( LC_ALL=C; [[ "${instanceType}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ); then instanceType=""; fi
 workdir="${basedir}/Run/${SLURM_JOB_NAME%.*}/${SLURM_CLUSTER_NAME}/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${instanceType}-${TOTAL_CORES}-$(date "+%d-%m-%Y-%H-%M")"
 
 echo "=== OCC DrivAer, the case and mesh in ${CASE_SRC} — OpenMPI (Arm) ==="

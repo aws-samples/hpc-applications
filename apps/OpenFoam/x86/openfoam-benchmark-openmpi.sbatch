@@ -26,10 +26,11 @@ esac
 # Working directory (follows Fluent convention)
 # ---------------------------------------------------------------------------
 # The instance type, from IMDS. No answer within a few seconds, an HTTP error,
-# or an answer that is not an instance type name (checked in the C locale)
-# leaves it empty: see "Rank placement" for what is checked then.
-TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" || true)
-instanceType=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type || true)
+# an answer cut off at that limit, or an answer that is not an instance type
+# name (checked in the C locale) leaves it empty: see "Rank placement" for
+# what is checked then.
+TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") || TOKEN=""
+instanceType=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type) || instanceType=""
 if ! ( LC_ALL=C; [[ "${instanceType}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ); then instanceType=""; fi
 
 # ---------------------------------------------------------------------------
