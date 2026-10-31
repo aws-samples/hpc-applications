@@ -197,10 +197,11 @@ echo "Run Fluent Benchmark: ${APP_BIN_PATH} ${fluent_args[*]}"
 # line. A rating only in another case's or core count's output, in this job's
 # output.<jobid>.out or in a link to a file shipped with the dataset does not
 # count, so failed solves don't pollute the data. The recorder gets that file's
-# rating, time per iteration and solver speed, as SOLVER_RATING,
-# TIME_PER_ITERATION and SOLVER_SPEED. Override the recorder's path with
-# DYNAMODB_RECORDER; set SOURCE=<YourOrg> to tag your contributions. See
-# apps/Fluent/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
+# rating and, where that file gives them, its time per iteration and solver
+# speed, as SOLVER_RATING, TIME_PER_ITERATION and SOLVER_SPEED. Override the
+# recorder's path with DYNAMODB_RECORDER; set SOURCE=<YourOrg> to tag your
+# contributions. See apps/Fluent/dynamodb/README.md and
+# apps/BENCHMARK-RECORDERS.md.
 _case_out="${benchmark_name}-${SLURM_NPROCS}.out"
 # _case_value <name>: the first word after "=" on that file's last "<name> =" line
 _case_value() {

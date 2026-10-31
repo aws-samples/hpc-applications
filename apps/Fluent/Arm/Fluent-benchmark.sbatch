@@ -67,11 +67,11 @@ mpirun -n $SLURM_JOB_NUM_NODES --map-by ppr:1:node /bin/bash -c "sudo yum -y ins
 # run dir, must give the case's rating, a positive number on its "Solver rating ="
 # line. A rating only in another case's or core count's output, in the job's own
 # output or in a link to a file shipped with the dataset does not count, so
-# failed solves don't pollute the data. The recorder gets that file's rating,
-# time per iteration and solver speed, as SOLVER_RATING, TIME_PER_ITERATION and
-# SOLVER_SPEED. Override the recorder's path with DYNAMODB_RECORDER; set
-# SOURCE=<YourOrg> to tag your contributions. See apps/Fluent/dynamodb/README.md
-# and apps/BENCHMARK-RECORDERS.md.
+# failed solves don't pollute the data. The recorder gets that file's rating
+# and, where that file gives them, its time per iteration and solver speed, as
+# SOLVER_RATING, TIME_PER_ITERATION and SOLVER_SPEED. Override the recorder's
+# path with DYNAMODB_RECORDER; set SOURCE=<YourOrg> to tag your contributions.
+# See apps/Fluent/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
 _case_out="${benchmark_file%.*}-${SLURM_NPROCS}.out"
 # _case_value <name>: the first word after "=" on that file's last "<name> =" line
 _case_value() {
