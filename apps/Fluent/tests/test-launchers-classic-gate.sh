@@ -10,8 +10,11 @@
 #     and SOLVER_SPEED, also from an output file with CRLF line ends, and this
 #     directory's recorder in --dry-run would store the three;
 #   * the three are that file's also when the dataset ships another output
-#     file, linked into the run directory, with other values, which the
-#     recorder would read first;
+#     file with other values, linked into the run directory: one that the
+#     recorder would read first, or one that sorts after the case's own, so
+#     that reading every output file and keeping the last match would take
+#     its values; with either, an output file with no rating line is not
+#     recorded;
 #   * nothing is recorded, a NOTE names the file and a second NOTE says the
 #     recording is skipped, when the output file has no rating line, a rating
 #     line with no number, a rating of 0.00, nan or -1.50, or is missing, and
@@ -80,15 +83,41 @@ cp -r "${WORK}/dataset/bench" "${WORK}/dataset-shipped/"
 cp "${FIX}/fluentbench-rated.out" "${WORK}/dataset-shipped/bench/fluent/v6/sedan_4m/cas_dat/sedan_4m-384.out"
 tar cf "${WORK}/s3-shipped/sedan_4m.tar" -C "${WORK}/dataset-shipped" bench
 # The case's archive, with another output file of other values in the files that are linked into the run
-# directory: sedan_4m-1.out, which comes before sedan_4m-384.out in the recorder's own search (each value from
-# the first *.out file that has its line).
-mkdir -p "${WORK}/s3-other" "${WORK}/dataset-other"
-cp -r "${WORK}/dataset/bench" "${WORK}/dataset-other/"
-sed -e 's/^\(Solver wall time per iteration[[:space:]]*=\)[[:space:]]*[0-9.]*/\1 9.999/' \
-    -e 's/^\(Solver speed[[:space:]]*=\)[[:space:]]*[0-9.]*/\1 8640.0/' \
-    -e 's/^\(Solver rating[[:space:]]*=\).*/\1 111.1/' \
-    "${FIX}/fluentbench-rated.out" > "${WORK}/dataset-other/bench/fluent/v6/sedan_4m/cas_dat/sedan_4m-1.out"
-tar cf "${WORK}/s3-other/sedan_4m.tar" -C "${WORK}/dataset-other" bench
+# directory. In s3-other it is sedan_4m-1.out, which comes before sedan_4m-384.out in the recorder's own search
+# (each value from the first *.out file that has its line); in s3-after it is sedan_4m-768.out, which comes after
+# it, so that reading every *.out file and keeping the last match would take its values.
+OTHER_ARCHIVES=(s3-other:sedan_4m-1.out s3-after:sedan_4m-768.out)
+for other in "${OTHER_ARCHIVES[@]}"; do
+    a="${other%%:*}"; f="${other#*:}"
+    mkdir -p "${WORK}/${a}" "${WORK}/dataset-${a}"
+    cp -r "${WORK}/dataset/bench" "${WORK}/dataset-${a}/"
+    sed -e 's/^\(Solver wall time per iteration[[:space:]]*=\)[[:space:]]*[0-9.]*/\1 9.999/' \
+        -e 's/^\(Solver speed[[:space:]]*=\)[[:space:]]*[0-9.]*/\1 8640.0/' \
+        -e 's/^\(Solver rating[[:space:]]*=\).*/\1 111.1/' \
+        "${FIX}/fluentbench-rated.out" > "${WORK}/dataset-${a}/bench/fluent/v6/sedan_4m/cas_dat/${f}"
+    tar cf "${WORK}/${a}/sedan_4m.tar" -C "${WORK}/dataset-${a}" bench
+done
+# The other file's three values differ from the case's own (fluentbench-rated.out's), so that the checks below
+# tell the two files apart.
+# field_value <file> <name>: the first word after "=" on the file's last "<name> =" line, as the scripts read it
+field_value() {
+    awk -v name="$2" '$0 ~ "^[[:space:]]*" name "[[:space:]]*=" {
+                          v = $0; sub(/^[^=]*=[[:space:]]*/, "", v); split(v, f, /[[:space:]]+/); r = f[1] }
+                      END { print r }' "$1"
+}
+for other in "${OTHER_ARCHIVES[@]}"; do
+    a="${other%%:*}"; f="${other#*:}"
+    for name in "Solver rating" "Solver wall time per iteration" "Solver speed"; do
+        case_value="$(field_value "${FIX}/fluentbench-rated.out" "${name}")"
+        other_value="$(field_value "${WORK}/dataset-${a}/bench/fluent/v6/sedan_4m/cas_dat/${f}" "${name}")"
+        if [ -n "${case_value}" ] && [ -n "${other_value}" ] && [ "${case_value}" != "${other_value}" ]; then
+            ok "${f}'s \"${name}\" (${other_value}) differs from the case's (${case_value})"
+        else
+            bad "${f}'s \"${name}\" differs from the case's" "two values that differ" \
+                "case '${case_value}', ${f} '${other_value}'"
+        fi
+    done
+done
 
 # item_stores <description> <attribute>...: the item this directory's recorder would store in the last run
 # has each attribute
@@ -143,15 +172,22 @@ for s in "${BENCHMARK_SCRIPTS[@]}"; do
     not_recorded "${s}: a rating only in a file shipped with the dataset"
     # -----------------------------------------------------------------------
     # 4. Another output file of the dataset, with other values, in the run
-    #    directory: the values recorded are still the case's own file's.
+    #    directory, before the case's own file or after it: the values
+    #    recorded are still the case's own file's, and a case file with no
+    #    rating line is not recorded.
     # -----------------------------------------------------------------------
-    run_launcher "${s}" "${n}-other-values" STUB_S3_DIR="${WORK}/s3-other"
-    if [ -L "${WORKDIR}/sedan_4m-1.out" ]; then
-        ok "${s}: the dataset's other output file is linked into the run directory"
-    else
-        bad "${s}: the dataset's other output file is linked into the run directory" "a link sedan_4m-1.out" "none"
-    fi
-    recorded "${s}: another output file, with other values, in the run directory"
+    for other in "${OTHER_ARCHIVES[@]}"; do
+        a="${other%%:*}"; f="${other#*:}"
+        run_launcher "${s}" "${n}-${a}" STUB_S3_DIR="${WORK}/${a}"
+        if [ -L "${WORKDIR}/${f}" ]; then
+            ok "${s}: the dataset's ${f} is linked into the run directory"
+        else
+            bad "${s}: the dataset's ${f} is linked into the run directory" "a link ${f}" "none"
+        fi
+        recorded "${s}: the dataset's ${f}, with other values, in the run directory"
+        run_launcher "${s}" "${n}-${a}-no-rating" STUB_S3_DIR="${WORK}/${a}" STUB_OUT="${WORK}/no-rating.out"
+        not_recorded "${s}: the dataset's ${f}, with a rating, and an output file with no rating line"
+    done
     # -----------------------------------------------------------------------
     # 5. This directory's recorder, in --dry-run: the item it would store.
     # -----------------------------------------------------------------------
@@ -159,11 +195,14 @@ for s in "${BENCHMARK_SCRIPTS[@]}"; do
     item_stores "${s}" '"solver_rating": {"N": "3456.0"}' '"time_per_iteration_seconds": {"N": "1.000"}' \
         '"solver_speed": {"N": "86400.0"}' '"benchmark_case": {"S": "sedan_4m"}' '"num_cores": {"N": "384"}' \
         '"num_instances": {"N": "2"}'
-    run_launcher "${s}" "${n}-real-recorder-other" STUB_S3_DIR="${WORK}/s3-other" \
-        DYNAMODB_RECORDER="${WORK}/bin/real-recorder"
-    item_stores "${s}: another output file, with other values, in the run directory" \
-        '"solver_rating": {"N": "3456.0"}' '"time_per_iteration_seconds": {"N": "1.000"}' \
-        '"solver_speed": {"N": "86400.0"}'
+    for other in "${OTHER_ARCHIVES[@]}"; do
+        a="${other%%:*}"; f="${other#*:}"
+        run_launcher "${s}" "${n}-real-recorder-${a}" STUB_S3_DIR="${WORK}/${a}" \
+            DYNAMODB_RECORDER="${WORK}/bin/real-recorder"
+        item_stores "${s}: the dataset's ${f}, with other values, in the run directory" \
+            '"solver_rating": {"N": "3456.0"}' '"time_per_iteration_seconds": {"N": "1.000"}' \
+            '"solver_speed": {"N": "86400.0"}'
+    done
 done
 
 # ---------------------------------------------------------------------------
