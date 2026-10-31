@@ -49,10 +49,12 @@ EOF
 cat > "${T}/bin/curl" <<'EOF'
 #!/bin/bash
 # IMDS: a token, then the instance type (STUB_ITYPE; empty means IMDS does not answer).
+# STUB_ITYPE_EXIT is the instance-type request's exit status after its answer: 28,
+# curl's at its --max-time, makes STUB_ITYPE an answer cut off at that limit.
 [ -n "${STUB_ITYPE:-}" ] || exit 28
 case "$*" in
   *api/token*)     echo stub-token ;;
-  *instance-type*) echo "${STUB_ITYPE}" ;;
+  *instance-type*) echo "${STUB_ITYPE}"; exit "${STUB_ITYPE_EXIT:-0}" ;;
 esac
 EOF
 cat > "${T}/bin/lscpu" <<'EOF'
@@ -188,6 +190,32 @@ is "IMDS silent at 144 ranks per node: exit 1" "${RC}" "1"
 hasnt "IMDS silent at 144: no mpirun" "${T}/noimds.log" "ARGS:"
 run_case noimdsfull STUB_ITYPE= SLURM_NTASKS_PER_NODE=192 SLURM_TASKS_PER_NODE=192 -- "${LSTC}" "${T}/model/deck.k"
 is "IMDS silent on a full node: runs (compact needs no type)" "${RC}" "0"
+# An answer that is not an instance type name (a proxy's page, a type name in
+# capitals or inside other text), and an answer cut off at the time limit, count
+# as no answer: below a full node the run is refused, and a full node runs, in a
+# run directory named "unknown".
+for answer in '<html><body>Request not allowed by proxy.example.com</body></html>' HPC8A.96XLARGE \
+              'hpc8a.96xlarge: not found'; do
+    run_case notatype STUB_ITYPE="${answer}" -- "${LSTC}" "${T}/model/deck.k"
+    is "the answer '${answer}' at 144 ranks per node: exit 1" "${RC}" "1"
+    hasnt "the answer '${answer}' at 144: no mpirun" "${T}/notatype.log" "ARGS:"
+    has "the answer '${answer}' at 144: the reason" "${T}/notatype.out" "cannot read the instance type from IMDS"
+done
+run_case cutoff STUB_ITYPE=hpc8a.96x STUB_ITYPE_EXIT=28 -- "${LSTC}" "${T}/model/deck.k"
+is "an answer cut off at the time limit, at 144 ranks per node: exit 1" "${RC}" "1"
+hasnt "a cut-off answer at 144: no mpirun" "${T}/cutoff.log" "ARGS:"
+run_case pagefull STUB_ITYPE='<html><body>Request not allowed by proxy.example.com</body></html>' \
+    SLURM_NTASKS_PER_NODE=192 SLURM_TASKS_PER_NODE=192 -- "${LSTC}" "${T}/model/deck.k"
+is "a proxy's page on a full node: runs (compact needs no type)" "${RC}" "0"
+W="$(workdir_of pagefull)"
+case "${W}" in */deck/Run/4242-1xunknown-192-*) ok "a proxy's page on a full node: the run directory says unknown" ;;
+               *) bad "a proxy's page: the run directory" "*/deck/Run/4242-1xunknown-192-*" "${W}" ;; esac
+has "a proxy's page on a full node: the job log says unknown" "${T}/pagefull.out" "Instance type: unknown;"
+# A type name with an i reads as one in a Turkish locale too, where [a-z] leaves out i.
+run_case turkish STUB_ITYPE=c8i.96xlarge LANG=tr_TR.UTF-8 -- "${LSTC}" "${T}/model/deck.k"
+is "c8i.96xlarge in a Turkish locale, at 144 ranks per node: runs, with Intel MPI's own placement" "${RC}" "0"
+has "c8i.96xlarge in a Turkish locale: no list" "${T}/turkish.log" "I_MPI_PIN_PROCESSOR_LIST=<unset>"
+has "c8i.96xlarge in a Turkish locale: the job log names the type" "${T}/turkish.out" "Instance type: c8i.96xlarge;"
 mkdir -p "${T}/dirty"; cp "${T}/model/deck.k" "${T}/dirty/"; : > "${T}/dirty/d3hsp"
 run_case dirty -- "${LSTC}" "${T}/dirty/deck.k"
 is "an earlier run's output beside the deck: exit 1" "${RC}" "1"

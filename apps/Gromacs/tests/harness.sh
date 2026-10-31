@@ -39,7 +39,9 @@ cat > "${STUBS}/bin/curl" <<'EOF'
 #   none          no answer: nothing printed, exit 28, as curl when its time limit ends;
 #   http-error    HTTP 401 to every request: with -f (--fail) nothing printed and
 #                 exit 22, as curl does; without it, the error page and exit 0;
-#   not-a-type    an HTML page, with status 200, for the instance type.
+#   not-a-type    an HTML page, with status 200, for the instance type;
+#   cut-off       for the instance type, its first characters (the type less its last
+#                 five), then exit 28, as curl ends a transfer at its time limit.
 # Each IMDS call's arguments are logged to IMDS_LOG, so a test can check its time limits.
 # Any other URL is a download: refused, with the URL logged, so no test reaches the
 # network.
@@ -58,6 +60,10 @@ case "$*" in
       not-a-type)
         case "$*" in *meta-data/instance-type*)
           printf '%s\n' '<html><body><h1>Instance metadata</h1></body></html>'; exit 0;;
+        esac;;
+      cut-off)
+        case "$*" in *meta-data/instance-type*)
+          t="${STUB_INSTANCE_TYPE:-hpc8a.96xlarge}"; printf '%s' "${t%?????}"; exit 28;;
         esac;;
     esac;;
 esac
@@ -78,7 +84,8 @@ cat > "${STUBS}/bin/lscpu" <<'EOF'
 #   amd-1x96             AuthenticAMD, 1 socket x 96 cores;
 #   amd-256              AuthenticAMD, 2 sockets x 128 cores;
 #   none                 nothing printed, exit 1.
-# Each call is logged to LSCPU_LOG.
+# Each call is logged to LSCPU_LOG. In a German locale (LC_ALL, else LC_MESSAGES,
+# else LANG: de_DE.UTF-8) the labels are German, as lscpu prints them there.
 printf '%s\n' "lscpu $*" >> "${LSCPU_LOG:-/dev/null}"
 sockets=2
 case "${STUB_LSCPU:-intel-192}" in
@@ -88,6 +95,13 @@ case "${STUB_LSCPU:-intel-192}" in
   amd-256)  vendor=AuthenticAMD; per_socket=128;;
   none)     exit 1;;
   *)        vendor=GenuineIntel; per_socket=96;;
+esac
+case "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}" in
+  de|de[_.@]*)
+    printf '%-26s%s\n' "Architektur:" x86_64 "CPU(s):" "$(( sockets * per_socket ))" \
+        "Anbieterkennung:" "${vendor}" "  BIOS-Anbieterkennung:" "Amazon EC2" "  Modellname:" "stub CPU" \
+        "    Thread(s) pro Kern:" 1 "    Kern(e) pro Sockel:" "${per_socket}" "    Sockel:" "${sockets}"
+    exit 0;;
 esac
 cat <<OUT
 Architecture:             x86_64

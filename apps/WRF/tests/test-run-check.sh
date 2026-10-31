@@ -147,7 +147,7 @@ out "${d}" "$(h 02:00)"
 check "FRAMES_PER_OUTFILE in capitals: with the 1st and the 3rd write's files, passes" "${d}" 0
 # In a Turkish locale awk lowercases I to a dotless ı, so the key in capitals is
 # read there only because the check runs awk in the C locale.
-if locale -a 2>/dev/null | grep -qiE '^tr_TR\.utf-?8$'; then
+if grep -qiE '^tr_TR\.utf-?8$' <<< "$(locale -a 2>/dev/null)"; then
     d="$(run frames-turkish 4.0 H00:00 H01:00 H02:00 S)"
     namelist "${d}" 'FRAMES_PER_OUTFILE = 2,'
     out "${d}" "$(h 00:00)"
@@ -292,7 +292,7 @@ namelist "${d}" $'frames_per_outfile = 0,\n io_form_history = pnetcdf,'
 check "neither key readable: both named, frames_per_outfile first" "${d}" 1 \
     "cannot read frames_per_outfile from namelist.input ('frames_per_outfile = 0,')
 cannot read io_form_history from namelist.input ('io_form_history = pnetcdf,')"
-if locale -a 2>/dev/null | grep -qiE '^tr_TR\.utf-?8$'; then
+if grep -qiE '^tr_TR\.utf-?8$' <<< "$(locale -a 2>/dev/null)"; then
     namelist "${d}" $'frames_per_outfile = 1,\n IO_FORM_HISTORY = 11,'
     got="$(LC_ALL=tr_TR.UTF-8 wrf_run_check "${d}")"; rc=$?
     if [ "${rc}" -eq 0 ] && [ -z "${got}" ]; then

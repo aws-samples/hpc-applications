@@ -335,17 +335,25 @@ esac
 # <ranks>x<threads> token so a 4-GPU sweep is distinguishable from an
 # 8-GPU sweep at a glance.
 # ---------------------------------------------------------------------------
-TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-    -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-INSTANCE_TYPE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
-    http://169.254.169.254/latest/meta-data/instance-type)
+# Instance metadata (IMDSv2), for the run directory's name and the job log
+# only. Each read gives up after a few seconds and never ends the job: no
+# answer, an HTTP error or an answer that is not an instance type name (an
+# error page, for example; the name is tested in the C locale) leaves
+# INSTANCE_TYPE empty, and the run directory and the job log then name the
+# type "unknown".
+IMDS_CURL=(curl -fs --connect-timeout 2 --max-time 5)
+TOKEN=$("${IMDS_CURL[@]}" -X PUT "http://169.254.169.254/latest/api/token" \
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") || TOKEN=""
+INSTANCE_TYPE=$("${IMDS_CURL[@]}" -H "X-aws-ec2-metadata-token: ${TOKEN}" \
+    http://169.254.169.254/latest/meta-data/instance-type) || INSTANCE_TYPE=""
+( LC_ALL=C; [[ "${INSTANCE_TYPE}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || INSTANCE_TYPE=""
 # REGION is referenced by the optional DynamoDB recorder block at the
 # bottom of this file (commented out by default).
 # shellcheck disable=SC2034
-REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
-    http://169.254.169.254/latest/meta-data/placement/region)
+REGION=$("${IMDS_CURL[@]}" -H "X-aws-ec2-metadata-token: ${TOKEN}" \
+    http://169.254.169.254/latest/meta-data/placement/region) || REGION=""
 
-WORKDIR="${BASE_DIR}/Run/${SLURM_JOB_NAME}/${MODEL}/${SLURM_CLUSTER_NAME:-cluster}/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${INSTANCE_TYPE}-${GPU_COUNT}g${GPU_TARGET_TAG}-$(date '+%d-%m-%Y-%H-%M')"
+WORKDIR="${BASE_DIR}/Run/${SLURM_JOB_NAME}/${MODEL}/${SLURM_CLUSTER_NAME:-cluster}/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${INSTANCE_TYPE:-unknown}-${GPU_COUNT}g${GPU_TARGET_TAG}-$(date '+%d-%m-%Y-%H-%M')"
 
 if [ -e "${WORKDIR}" ]; then
     echo "ERROR: workdir already exists: ${WORKDIR}" >&2
@@ -360,7 +368,7 @@ echo "=== GROMACS GPU benchmark ==="
 echo "Date:          $(date)"
 echo "SLURM Job ID:  ${SLURM_JOB_ID}"
 echo "Model:         ${MODEL} (${TPR_FILE})"
-echo "Nodes:         ${SLURM_JOB_NUM_NODES} x ${INSTANCE_TYPE}"
+echo "Nodes:         ${SLURM_JOB_NUM_NODES} x ${INSTANCE_TYPE:-unknown}"
 echo "GPUs/node:     ${GPUS_PER_NODE}"
 echo "GPU_COUNT:     ${GPU_COUNT}"
 echo "GPU target:    ${GPU_TARGET_TAG}"
@@ -832,7 +840,7 @@ GROMACS GPU benchmark results
 Date:             $(date)
 SLURM Job ID:     ${SLURM_JOB_ID}
 Model:            ${MODEL}
-Nodes:            ${SLURM_JOB_NUM_NODES} x ${INSTANCE_TYPE}
+Nodes:            ${SLURM_JOB_NUM_NODES} x ${INSTANCE_TYPE:-unknown}
 GPUs:             ${GPU_COUNT} (${GPU_TARGET_TAG})
 GPU topology:     ${GPU_TOPO_CLASS}
 MPI ranks:        ${NRANK_TOTAL} (${NRANK_PER_NODE}/node)

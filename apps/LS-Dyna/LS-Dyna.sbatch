@@ -90,10 +90,17 @@ if ! RPN="$(lsdyna_ranks_per_node)"; then
     exit 1
 fi
 NP=$(( NODES * RPN ))
+# The instance type, from the instance metadata (IMDSv2): each request gives up
+# after 5 seconds (2 to connect), and -f turns an HTTP error into no answer. An
+# answer cut off at that limit, or one that is not an instance type name (tested
+# in the C locale: in some locales [a-z] leaves out i), a proxy's page for
+# example, counts as none: the pinning below then takes the node for one whose
+# instance type is unknown, and the run directory and the job log say "unknown".
 TOKEN="$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" \
-    -H "X-aws-ec2-metadata-token-ttl-seconds: 300" 2>/dev/null)"
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 300" 2>/dev/null)" || TOKEN=""
 INSTANCE_TYPE="$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: ${TOKEN}" \
-    http://169.254.169.254/latest/meta-data/instance-type 2>/dev/null)"
+    http://169.254.169.254/latest/meta-data/instance-type 2>/dev/null)" || INSTANCE_TYPE=""
+( LC_ALL=C; [[ "${INSTANCE_TYPE}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || INSTANCE_TYPE=""
 CORES="$(lscpu -p=CORE,SOCKET 2>/dev/null | grep -v '^#' | sort -u | wc -l)"
 [ "${CORES:-0}" -gt 0 ] || CORES="$(nproc)"
 
