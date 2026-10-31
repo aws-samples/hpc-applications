@@ -12,37 +12,21 @@
 # because IMDS did not answer. On both launchers a type name with an i reads as
 # one in a Turkish locale too, where [a-z] leaves out i.
 #
-# The GPU launcher runs with the stubs of harness.sh and two of its own: an
-# nvidia-smi that shows one GPU, and a stub GPU build whose env script it is
-# given (GROMACS_ENV).
+# The GPU launcher runs with the stubs of harness.sh, its GPU stubs (gpu_stubs)
+# included, on one GPU, given the stub GPU build's env script (GROMACS_ENV).
 #
 #   ./tests/test-imds-reads.sh
 # =============================================================================
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
 
-# nvidia-smi, for the GPU launcher: one GPU (-L), a topology matrix (topo -m),
-# the GPU's name (--query-gpu) and, with no argument, a banner with the CUDA
-# version.
-cat > "${STUBS}/bin/nvidia-smi" <<'EOF'
-#!/bin/bash
-case "$*" in
-  -L)            echo "GPU 0: NVIDIA L40S (UUID: GPU-00000000-0000-0000-0000-000000000000)" ;;
-  "topo -m")     printf '\tGPU0\tCPU Affinity\nGPU0\t X \t0-3\n' ;;
-  --query-gpu=*) echo "NVIDIA L40S" ;;
-  *)             echo "| NVIDIA-SMI 580.00    Driver Version: 580.00    CUDA Version: 13.0 |" ;;
-esac
-EOF
-chmod +x "${STUBS}/bin/nvidia-smi"
-# A stub GPU build, laid out as build_gromacs_gpu.sbatch lays out an L40S build.
-make_install "${STUBS}" x86_64-cuda13-l40s gromacs-v2024.4-tmpi-env.sh gromacs-v2024.4-ompi5-env.sh
-GPU_ENV="${STUBS}/x86_64-cuda13-l40s/v2024.4/gromacs-v2024.4-tmpi-env.sh"
+gpu_stubs
 
 # launch <Arm|GPU> [NAME=value...]: run_launcher on one node, the GPU launcher with the stub GPU build
 launch() {
     ARCH="$1"; shift
     if [ "${ARCH}" = GPU ]; then
-        run_launcher GPU GROMACS_ENV="${GPU_ENV}" "$@"
+        run_launcher GPU GROMACS_ENV="${GPU_TMPI_ENV}" "$@"
     else
         run_launcher Arm "$@"
     fi

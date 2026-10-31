@@ -15,14 +15,15 @@ The suite runs **the launch scripts themselves**, `x86/gromacs-benchmark.sbatch`
 `Arm/gromacs-benchmark.sbatch`, with `curl` (IMDS), `lscpu`, `scontrol`, `srun`,
 `sudo`, `fi_info`, `mpirun`, `ldd`, `aws`, `gmx` and `gmx_mpi` replaced by the stubs of
 `harness.sh`, so the assembled script executes from its checks to its results block.
-`test-imds-reads.sh` also runs `GPU/gromacs-benchmark.sbatch` that way, with an
-`nvidia-smi` stub and a stub GPU build of its own.
 The `curl` stub answers IMDS as `STUB_IMDS` says (an instance type by default; no
 answer, an answer cut off at the time limit, an HTTP error, or a page that is not
 an instance type name), and the `lscpu`
 stub describes the CPU `STUB_LSCPU` names and logs each call, so the test host's CPU
-never decides a case. `test-gpu-gate.sh` runs the GPU single-simulation launcher,
-`GPU/gromacs-benchmark.sbatch`, the same way, with `nvidia-smi` and `nvcc` stubs added.
+never decides a case. The tests that run the GPU single-simulation launcher,
+`GPU/gromacs-benchmark.sbatch`, run it the same way, with the GPU stubs of `harness.sh`
+(`gpu_stubs`) added: an `nvidia-smi` that shows `STUB_GPUS` NVIDIA L40S GPUs (one by
+default), and a stub L40S build whose env scripts put an `nvcc` stub (CUDA 13.0) on the
+`PATH`, as the real build's env scripts load the CUDA toolkit.
 The stubs touch nothing on the host: the cache drop and the THP setting are
 swallowed, a download is refused (and its URL logged), and the `aws` stub refuses
 every call. The `gmx` and `gmx_mpi` stubs log each `mdrun` command line with its
