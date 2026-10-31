@@ -188,13 +188,13 @@ Key takeaways:
 - hpc8a maintains a consistent **38–44 %** advantage over hpc7a at every node count
 - The chart stops at 4 nodes. From 4N to 8N (1536 ranks), hpc7a ran 1.25× as fast (3 runs at each node count) and hpc8a 1.30× as fast (one run at each), 63 % and 65 % of linear scaling, while "Contact sorting" grew from 18–20 % to 26–30 % of the CPU time (the CPU time summary at the end of `engine.log`). On hpc7a, the parallel efficiency against 1N falls from 75 % at 4N to 47 % at 8N.
 
-### Arm — Graviton3E (hpc7g) vs Graviton4 (m8g)
+### Arm — Graviton3E (c7gn) vs Graviton4 (m8g)
 
-Both Arm builds use OpenMPI 5.0.9 (required for Graviton4 at 192 rpn) and CPU-tuned flags (`-mcpu=neoverse-v1` on hpc7g, `-mcpu=neoverse-v2` on m8g). hpc7g runs 64 ranks/node; m8g runs 192 ranks/node. Performance is normalised to a single `hpc7g.16xlarge` node — higher is better.
+The Graviton3E runs used `c7gn.16xlarge`, which EC2 lists with the same 64 cores, clock, memory and EFA network bandwidth as `hpc7g.16xlarge`. Both Arm builds use OpenMPI 5.0.9 (required for Graviton4 at 192 rpn) and CPU-tuned flags (`-mcpu=neoverse-v1` on c7gn, `-mcpu=neoverse-v2` on m8g). c7gn runs 64 ranks/node; m8g runs 192 ranks/node. Performance is normalised to a single `c7gn.16xlarge` node — higher is better.
 
 ![OpenRadioss Taurus 10M Graviton3E vs Graviton4](https://github.com/aws-samples/hpc-applications/blob/main/Doc/img/OpenRadioss/OpenRadioss-Taurus10M-Graviton3VsGraviton4.png?raw=true)
 
-| Nodes | hpc7g (64 c/n) | m8g (192 c/n) |
+| Nodes | c7gn (64 c/n) | m8g (192 c/n) |
 |------:|---------------:|--------------:|
 | 1 | *1.00× (est. 2 × 2N)* | **3.31×** |
 | 2 | 2.00× | 6.00× |
@@ -203,12 +203,12 @@ Both Arm builds use OpenMPI 5.0.9 (required for Graviton4 at 192 rpn) and CPU-tu
 
 Key takeaways:
 
-- The **1N hpc7g point is not measured**: the 1N baseline is estimated as 2 × the 2N time (the same convention as the WRF Arm chart in this repo)
-- A single m8g node delivers **3.31×** the performance of a single (estimated) hpc7g node — consistent with the 3× core-count ratio (192 vs 64) and the larger L2/L3 caches on Neoverse V2
-- At 4 nodes m8g reaches **10.41×** vs **3.83×** for hpc7g (both relative to the estimated 1N hpc7g baseline)
-- **hpc7g scales near-linearly all the way to 8 nodes (6.65× at 8N, 512 ranks)**
+- The **1N c7gn point is not measured**: the 1N baseline is estimated as 2 × the 2N time (the same convention as the WRF Arm chart in this repo)
+- A single m8g node delivers **3.31×** the performance of a single (estimated) c7gn node — consistent with the 3× core-count ratio (192 vs 64) and the larger L2/L3 caches on Neoverse V2
+- At 4 nodes m8g reaches **10.41×** vs **3.83×** for c7gn (both relative to the estimated 1N c7gn baseline)
+- **c7gn scales near-linearly all the way to 8 nodes (6.65× at 8N, 512 ranks)**
 - **m8g 8N continues to improve over m8g 4N** (12.75× vs 10.41×)
-- A single m8g node outperforms roughly **3.3 hpc7g nodes** for this workload — useful when the node count or the interconnect cost matters
+- A single m8g node outperforms roughly **3.3 c7gn nodes** for this workload — useful when the node count or the interconnect cost matters
 
 ## Key metrics
 
