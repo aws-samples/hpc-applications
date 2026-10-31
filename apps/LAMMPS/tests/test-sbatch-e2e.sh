@@ -218,6 +218,13 @@ cat > "${STUBS}/bin/recorder-stub.sh" <<'EOF'
 } >> "${RECORDER_LOG}"
 exit 0
 EOF
+
+cat > "${STUBS}/bin/uploader-stub.sh" <<'EOF'
+#!/bin/bash
+# Stands in for dynamodb/record_to_dynamodb.sh: logs values the launcher exports to it.
+echo "MODEL=${MODEL:-} SCALE=${SCALE:-} LOOP_STEPS=${LOOP_STEPS:-}" >> "${UPLOADER_LOG}"
+exit 0
+EOF
 chmod +x "${STUBS}"/bin/* "${STUBS}/lmp-bin/lmp"
 
 cat > "${STUBS}/lammps-env.sh" <<EOF
@@ -248,13 +255,16 @@ declare -A WANT_STEPS=([lj]=15000 [rhodo]=6000 [rhodo_scaled]=6000 [eam]=30000)
 declare -A WANT_ATOMS=([lj]=16384000 [rhodo]=32000 [rhodo_scaled]=2048000 [eam]=2048000)
 
 # run_script <script> <model> [<deck file to cache instead of the synthetic one>] [NAME=value...]
-# Runs one benchmark script in a clean environment, with the model's files in
-# the benchmark cache. Sets OUT (stdout and stderr), RC, BASE (BASE_DIR),
-# CACHED (the cached deck), RUNDECK (the run directory's deck, if any),
-# LMPLOG, MPILOG, CURLLOG, IMDSLOG, LSCPULOG, RECLOG and ERRLOG (the script's
-# stderr alone).
+# Runs one benchmark script (under apps/LAMMPS, or an absolute path) in a
+# clean environment, with the model's files in the benchmark cache. Sets OUT
+# (stdout and stderr), RC, BASE (BASE_DIR), CACHED (the cached deck), RUNDECK
+# (the run directory's deck, if any), LMPLOG, MPILOG, CURLLOG, IMDSLOG,
+# LSCPULOG, RECLOG, UPLOADLOG (the DynamoDB uploader stub's calls) and ERRLOG
+# (the script's stderr alone).
 run_script() {
   local script="$1" model="$2" deck_src="$3"; shift 3
+  local path="${LAMMPS_APP}/${script}"
+  case "${script}" in /*) path="${script}";; esac
   BASE="$(mktemp -d "${STUBS}/case.XXXXXX")"
   local cache="${BASE}/benchmarks/${model}" f
   mkdir -p "${cache}"
@@ -263,19 +273,20 @@ run_script() {
   CACHED="${cache}/${DECK[${model}]}"
   LMPLOG="${BASE}/lmp.log"; MPILOG="${BASE}/mpirun.log"; CURLLOG="${BASE}/curl.log"; RECLOG="${BASE}/recorder.log"
   IMDSLOG="${BASE}/imds.log"; LSCPULOG="${BASE}/lscpu.log"; ERRLOG="${BASE}/stderr.log"
+  UPLOADLOG="${BASE}/uploader.log"
   : > "${LMPLOG}"; : > "${MPILOG}"; : > "${CURLLOG}"; : > "${RECLOG}"; : > "${IMDSLOG}"; : > "${LSCPULOG}"
-  : > "${ERRLOG}"
+  : > "${ERRLOG}"; : > "${UPLOADLOG}"
   OUT="$(cd "${BASE}" && env -i \
       PATH="${STUBS}/bin:/usr/local/bin:/usr/bin:/bin" HOME="${BASE}" LANG=C \
       LAMMPS_ENV="${STUBS}/lammps-env.sh" BASE_DIR="${BASE}" MODEL="${model}" \
       LMP_LOG="${LMPLOG}" MPIRUN_LOG="${MPILOG}" CURL_LOG="${CURLLOG}" RECORDER_LOG="${RECLOG}" \
-      IMDS_LOG="${IMDSLOG}" LSCPU_LOG="${LSCPULOG}" \
+      IMDS_LOG="${IMDSLOG}" LSCPU_LOG="${LSCPULOG}" UPLOADER_LOG="${UPLOADLOG}" \
       CONTRIB_RECORDER="${STUBS}/bin/recorder-stub.sh" \
       SLURM_JOB_ID=4242 SLURM_JOB_NAME=lammps SLURM_CLUSTER_NAME=test \
       SLURM_JOB_NUM_NODES=2 SLURM_NTASKS_PER_NODE=4 SLURM_NTASKS=8 SLURM_NODELIST="node[1-2]" \
       SLURM_SUBMIT_DIR="${BASE}" \
       "$@" \
-      bash "${LAMMPS_APP}/${script}" 2> >(tee "${ERRLOG}"))"
+      bash "${path}" 2> >(tee "${ERRLOG}"))"
   RC=$?
   RUNDECK="$(find "${BASE}/Run" -name "${DECK[${model}]}" -type f 2>/dev/null | head -1)"
 }
@@ -296,6 +307,22 @@ lmp_args_have() {
 
 # The one line of the run directory's deck that differs from the cached deck
 changed_lines() { diff "${CACHED}" "${RUNDECK}" | grep -E '^[<>]' | tr '\n' '|'; }
+
+# uncomment_uploader <script> <copy>: writes to <copy> the script with its
+# optional DynamoDB block uncommented as dynamodb/README.md says, the leading
+# '# ' stripped from each line, from the one after the block's header to the
+# blank line that ends it. Prints the first and last line it changed; fails if
+# there is no such block, or a line of it does not start with '# '.
+uncomment_uploader() {
+  awk -v out="$2" '
+    state == 2 && /^$/ { state = 3; last = NR - 1 }
+    state == 2 { if (substr($0, 1, 2) != "# ") bad = 1; $0 = substr($0, 3); if (!first) first = NR }
+    { print > out }
+    state == 1 && /^# -+$/ { state = 2 }
+    state == 0 && $0 == "# Optional: record the result to DynamoDB." { state = 1 }
+    END { if (state != 3 || bad) exit 1; print first, last }
+  ' "$1"
+}
 
 for s in "${SCRIPTS[@]}"; do
   echo "== ${s} =="
@@ -359,6 +386,39 @@ for s in "${SCRIPTS[@]}"; do
     fi
   done
 
+  # The optional DynamoDB block, uncommented as dynamodb/README.md says, takes
+  # the same gate: it is called for a run the contribution recorder records,
+  # and for no other, where the gate's NOTE says why.
+  copy="${STUBS}/uploader-${s%%/*}.sbatch"
+  if span="$(uncomment_uploader "${LAMMPS_APP}/${s}" "${copy}")" && bash -n "${copy}" \
+      && [ "$(diff "${LAMMPS_APP}/${s}" "${copy}" | grep -E '^[0-9]')" = "${span/ /,}c${span/ /,}" ]; then
+    ok "the DynamoDB block uncommented: the copy differs from the script in that block alone"
+  else
+    bad "the DynamoDB block uncommented: the copy differs from the script in that block alone" \
+        "the block's lines, each without its leading '# ', and nothing else" \
+        "lines ${span:-none}; $(diff "${LAMMPS_APP}/${s}" "${copy}" 2>&1 | grep -E '^[0-9]' | tr '\n' '|')"
+  fi
+  run_script "${copy}" lj "" DYNAMODB_RECORDER="${STUBS}/bin/uploader-stub.sh"
+  if [ "${RC}" -eq 0 ] && [ "$(grep -c . "${UPLOADLOG}")" = 1 ] \
+      && grep -qxF "MODEL=lj SCALE=8 LOOP_STEPS=15000" "${UPLOADLOG}" && [ "$(grep -c '^ARGS' "${RECLOG}")" = 1 ]; then
+    ok "the DynamoDB block uncommented, a run that ends as asked: recorded once, as the contribution recorder records it"
+  else
+    bad "the DynamoDB block uncommented, a run that ends as asked: recorded once" \
+        "exit 0; one DynamoDB call, MODEL=lj SCALE=8 LOOP_STEPS=15000; one contribution recorder call" \
+        "exit ${RC}; $(tr '\n' '|' < "${UPLOADLOG}"); contribution recorder calls $(grep -c '^ARGS' "${RECLOG}")"
+  fi
+  for mode in no-loop short no-total; do
+    run_script "${copy}" lj "" DYNAMODB_RECORDER="${STUBS}/bin/uploader-stub.sh" STUB_LMP_LOG="${mode}"
+    if [ "${RC}" -eq 0 ] && [ ! -s "${UPLOADLOG}" ] && [ ! -s "${RECLOG}" ] \
+        && grep -qxF -- "${gate_note[${mode}]}" <<<"${OUT}" && ! grep -q 'DynamoDB recorder not found' <<<"${OUT}"; then
+      ok "the DynamoDB block uncommented, lmp log ${mode}: neither recorder is called, and the gate's NOTE says why"
+    else
+      bad "the DynamoDB block uncommented, lmp log ${mode}: neither recorder is called" \
+          "exit 0; no DynamoDB call; no contribution recorder call; '${gate_note[${mode}]}'" \
+          "exit ${RC}; DynamoDB calls $(grep -c . "${UPLOADLOG}"); contribution recorder calls $(grep -c '^ARGS' "${RECLOG}"); $(grep -E '^NOTE|DynamoDB' <<<"${OUT}" | head -2 | tr '\n' '|')"
+    fi
+  done
+
   # Explicit overrides
   run_script "${s}" lj "" TIMESTEPS=500
   lmp_args_have "TIMESTEPS=500: lmp gets -var nsteps 500" -var nsteps 500
@@ -375,6 +435,24 @@ for s in "${SCRIPTS[@]}"; do
   lmp_args_have "SCALE=6 TIMESTEPS=9000 together" -var x 6 -var y 6 -var z 6 -var nsteps 9000
   run_script "${s}" rhodo "" SCALE=4
   has "MODEL=rhodo, SCALE=4: still 32,000 atoms (in.rhodo has no replicate)" "Atoms:            32000"
+  # in.rhodo reads no scale, so the run is labelled with the one it has, 1, and a NOTE says so.
+  has "MODEL=rhodo, SCALE=4: the results give scale 1" "Scale factor:     1"
+  lmp_args_have "MODEL=rhodo, SCALE=4: lmp gets -var x 1" -var x 1 -var y 1 -var z 1
+  grep -qF -- "--char scale=1 " "${RECLOG}" && ok "MODEL=rhodo, SCALE=4: the recorder gets scale 1" \
+    || bad "MODEL=rhodo, SCALE=4: the recorder gets scale 1" "--char scale=1" "$(tr '\n' '|' < "${RECLOG}")"
+  rundir="$(find "${BASE}/Run" -mindepth 4 -maxdepth 4 -type d 2>/dev/null | head -1)"
+  [[ "${rundir##*/}" == *-s1-* ]] && ok "MODEL=rhodo, SCALE=4: the run directory's name gives scale 1" \
+    || bad "MODEL=rhodo, SCALE=4: the run directory's name gives scale 1" "...-s1-..." "${rundir##*/}"
+  rhodo_note="NOTE: MODEL=rhodo runs in.rhodo's 32,000 atoms whatever SCALE is, so SCALE=4 is replaced by 1; to scale the rhodopsin model, use MODEL=rhodo_scaled."
+  grep -qxF -- "${rhodo_note}" "${ERRLOG}" && ok "MODEL=rhodo, SCALE=4: a NOTE on stderr says so" \
+    || bad "MODEL=rhodo, SCALE=4: a NOTE on stderr says so" "${rhodo_note}" "$(grep '^NOTE' "${ERRLOG}" | head -2 | tr '\n' '|')"
+  notes=0
+  for scale_arg in "" SCALE=1; do
+    run_script "${s}" rhodo "" ${scale_arg:+"${scale_arg}"}
+    grep -q '^NOTE: MODEL=rhodo' "${ERRLOG}" && notes=$(( notes + 1 ))
+  done
+  [ "${notes}" = 0 ] && ok "MODEL=rhodo at its default scale, and with SCALE=1: no such NOTE" \
+    || bad "MODEL=rhodo at its default scale, and with SCALE=1: no such NOTE" "no NOTE" "${notes} run(s) with the NOTE"
 
   # A run length that is not a whole number from 1 to 10,000,000 stops the job before any launch.
   for t in 0 -5 abc 1e4 10.5 "1 000" 007 10000001 99999999999999999999; do

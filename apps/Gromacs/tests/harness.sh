@@ -2,7 +2,7 @@
 # =============================================================================
 # Shared stubs for the GROMACS shell tests (sourced by test-*.sh).
 # =============================================================================
-# run_launcher runs a CPU benchmark launcher (x86/ or Arm/gromacs-benchmark.sbatch)
+# run_launcher runs a benchmark launcher (x86/, Arm/ or GPU/gromacs-benchmark.sbatch)
 # as Slurm would, with curl, lscpu, scontrol, srun, sudo, fi_info, mpirun, ldd, aws
 # and the GROMACS binaries replaced by stubs, so the whole script executes. The gmx
 # and gmx_mpi stubs log their arguments and OpenMP environment and write a synthetic
@@ -228,8 +228,8 @@ ENV
     done
 }
 
-# run_launcher <x86|Arm> [NAME=value...]
-# Runs one CPU launcher in a clean environment (1 node, 192 tasks per node,
+# run_launcher <x86|Arm|GPU> [NAME=value...]
+# Runs one launcher in a clean environment (1 node, 192 tasks per node,
 # MODEL=benchMEM unless overridden) with a fresh BASE_DIR holding stub installs and
 # a staged .tpr for every MODEL. Sets OUT (stdout, then stderr), ERR (stderr), RC,
 # BASE, and the logs GMXLOG (one BIN/ARGS/ENV block per mdrun), MPILOG (mpirun

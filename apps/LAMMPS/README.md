@@ -101,7 +101,7 @@ Four models from the upstream LAMMPS [`bench/`](https://github.com/lammps/lammps
 | `eam` | `in.eam` | Cu metal | EAM many-body | 4 | 2,048,000 | 30,000 |
 | `rhodo` | `in.rhodo` | Rhodopsin protein in water | CHARMM + PPPM | — | 32,000 | 6,000 |
 
-The atom count is 32,000 × `SCALE`³: `in.lj`, `in.eam` and `in.rhodo.scaled` replicate their box `SCALE` times along each axis, which makes `SCALE` the knob for weak-scaling studies. `in.rhodo` has no `replicate` command, so `MODEL=rhodo` runs its 32,000 atoms whatever `SCALE` is; to scale the rhodopsin model, use `MODEL=rhodo_scaled` (at `SCALE=1` it is the same 32,000 atoms). For `eam` at `SCALE=1` (32,000 atoms), the EAM neighbour-list build does not parallelise well past about 64 ranks: use `SCALE=2` or more at higher rank counts.
+The atom count is 32,000 × `SCALE`³: `in.lj`, `in.eam` and `in.rhodo.scaled` replicate their box `SCALE` times along each axis, which makes `SCALE` the knob for weak-scaling studies. `in.rhodo` has no `replicate` command, so `MODEL=rhodo` runs its 32,000 atoms whatever `SCALE` is: with another `SCALE`, the launchers run, name and record the run with `SCALE=1`, and a `NOTE:` says so. To scale the rhodopsin model, use `MODEL=rhodo_scaled` (at `SCALE=1` it is the same 32,000 atoms). For `eam` at `SCALE=1` (32,000 atoms), the EAM neighbour-list build does not parallelise well past about 64 ranks: use `SCALE=2` or more at higher rank counts.
 
 Input decks are tiny (~1 KB each) and are auto-fetched from the LAMMPS GitHub repo on first run, then cached on FSx at `/fsx/lammps/benchmarks/<model>/`.
 
@@ -171,7 +171,7 @@ On `hpc8a.96xlarge` and `hpc7a.96xlarge` the x86 launcher takes 24, 48, 72, 96, 
 | `BASE_DIR` | `/fsx/lammps` | Root for run output directories |
 | `EFA_VERBOSE` | `0` | Set to `1` to add `--mca mtl_base_verbose 5 --mca pml_base_verbose 5` — useful once to confirm the EFA path, very noisy |
 
-To record each run to a centralised DynamoDB table, see [`dynamodb/`](dynamodb/) — the launchers ship with the recorder block commented out so DynamoDB is opt-in.
+To record each successful run to a centralised DynamoDB table, see [`dynamodb/`](dynamodb/) — the launchers ship with the recorder block commented out so DynamoDB is opt-in.
 
 ## Performance
 
@@ -276,4 +276,4 @@ At a run length where the loop dominates (see [Run length](#run-length)), `Loop 
 
 The benchmark scripts in this folder call [`dynamodb/record-benchmark.sh`](dynamodb/record-benchmark.sh) after every successful run: one whose `log.lammps` reports the requested `TIMESTEPS` on its `Loop time` line and ends with LAMMPS's `Total wall time`. For any other run the job log says `NOTE: not recorded: <why>` and the contribution recorder is not called; the job's exit status and results block are unchanged. The recorder saves the run as a small JSON record (`<record_id>.json`) and adds it to the shared AI-Powered HPC benchmark dataset when you have write access to it. That dataset trains a model that predicts HPC performance on AWS, so every result you share helps. Set `SOURCE=<YourOrg>` to tag your runs, and see [BENCHMARK-RECORDERS.md](../BENCHMARK-RECORDERS.md) for the options and how to send the record in. Each record carries the model, its `SCALE` and atom count, and the timesteps LAMMPS ran, so that runs of different sizes and lengths stay apart.
 
-This is separate from the optional `record_to_dynamodb.sh` uploader described above, which stays off unless you enable it. To point the launchers at another copy of the contribution recorder, set `CONTRIB_RECORDER`.
+This is separate from the optional `record_to_dynamodb.sh` uploader described above, which stays off unless you enable it. Once enabled, it records only the runs the contribution recorder records, after the same check. To point the launchers at another copy of the contribution recorder, set `CONTRIB_RECORDER`.

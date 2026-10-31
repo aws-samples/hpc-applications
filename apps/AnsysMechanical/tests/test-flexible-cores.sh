@@ -9,8 +9,8 @@
 # an ERROR that names those counts and an example layout that sets --ntasks,
 # before the run directory, the scratch check and the solve; above 192 the ERROR
 # says the tasks exceed the node's 192 cores. A placement that is not a count is
-# left to the sbatch's -machines check. Other instance types and sizes are not
-# checked.
+# left to the sbatch's -machines check, which refuses it before the run directory
+# and the scratch check too. Other instance types and sizes are not checked.
 #
 # The instance metadata is read with curl -fs and timeouts of 2 seconds to
 # connect and 5 in all. When it gives no instance type (no answer, an HTTP error,
@@ -353,6 +353,14 @@ else
     bad "hpc8a.96xlarge, SLURM_TASKS_PER_NODE=abc" \
         "exit 1 and the -machines ERROR (cannot determine the per-host task placement); no CCDs line, solve or row" \
         "exit ${RC}; solve $(ran "${STATE}/mapdl.log"); stderr: $(tr '\n' '|' < "${STATE}/stderr")"
+fi
+if [ ! -e "${BASE}/AnsysMechanical" ] && [ ! -s "${STATE}/srun.log" ] \
+   && ! grep -q 'NVMe scratch check' "${STATE}/stdout"; then
+    ok "hpc8a.96xlarge, SLURM_TASKS_PER_NODE=abc -> refused before the run directory and the scratch check"
+else
+    bad "hpc8a.96xlarge, SLURM_TASKS_PER_NODE=abc: refused before the run directory and the scratch check" \
+        "no run directory, no scratch check" \
+        "run directory $([ -e "${BASE}/AnsysMechanical" ] && echo made || echo 'not made'); scratch check $(ran "${STATE}/srun.log")"
 fi
 
 echo "== hpc7a.96xlarge: the same rule =="

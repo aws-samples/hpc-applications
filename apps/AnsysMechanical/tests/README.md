@@ -110,7 +110,8 @@ really executes rather than only passing `bash -n`. It asserts:
     submission, and the placeholder `1055@<license-server>` when it is not set;
     no `<port>@<IPv4 address>` is written anywhere in the sbatch;
   * a placement Slurm cannot describe (unset or unparseable `SLURM_TASKS_PER_NODE`)
-    aborts rather than being invented;
+    aborts rather than being invented, and so does a `-machines` list that does not
+    total `SLURM_NPROCS`, each before the run directory is made;
   * a heterogeneous `43,42` allocation records `task_placement`, not a uniform
     `cores_per_node` — asserted twice: once on the launcher's arguments via the
     recorder stub, and once on the **production recorder's emitted JSON** (via a
@@ -174,7 +175,8 @@ asserts:
     216 and 384 the ERROR says the tasks exceed the node's 192 cores, and for
     191 that they load the CCDs unevenly;
   * a placement that is not a count (`abc`) is left to the sbatch's `-machines`
-    check, which ends the job with its own ERROR;
+    check, which ends the job with its own ERROR, also before the scratch check
+    and the run directory;
   * both requests to the instance metadata use `curl -fs --connect-timeout 2
     --max-time 5`;
   * other instance types and sizes (hpc6id.32xlarge, also in a Turkish locale,

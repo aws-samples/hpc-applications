@@ -482,7 +482,9 @@ fi
 
 echo "== placement that Slurm cannot describe must fail closed, not be invented =="
 
-run_case_env() {   # <SLURM_TASKS_PER_NODE> <nodelist> <nprocs> <nodes>
+# run_case_env <SLURM_TASKS_PER_NODE> <nodelist> <nprocs> <nodes>: sets OUT, RC and
+# RUN_DIR_MADE (yes when the job made its run directory)
+run_case_env() {
     local base; base="$(mktemp -d)"
     local vdir="${base}/ansys_inc/v261/ansys/bin"
     mkdir -p "${vdir}" "${base}/inputs"
@@ -498,7 +500,13 @@ run_case_env() {   # <SLURM_TASKS_PER_NODE> <nodelist> <nprocs> <nodes>
       bash "${SBATCH}" v261 "${base}/inputs/V26direct-5.dat" 2>&1
     )"
     RC=$?
+    RUN_DIR_MADE=no; [ -e "${base}/AnsysMechanical" ] && RUN_DIR_MADE=yes
     rm -rf "${base}"
+}
+
+# no_run_dir <label>: the job stopped before making its run directory
+no_run_dir() {
+    [ "${RUN_DIR_MADE}" = no ] && ok "$1" || bad "$1" "no run directory" "a run directory under BASE_DIR"
 }
 
 run_case_env "" "node1,node2" 128 2
@@ -507,6 +515,7 @@ if [ "${RC}" -ne 0 ] && grep -q 'cannot determine the per-host task placement' <
 else
     bad "unset TASKS_PER_NODE fails closed" "non-zero + explanation" "rc=${RC}"
 fi
+no_run_dir "unset SLURM_TASKS_PER_NODE: refused before the run directory is made"
 
 run_case_env "garbage" "node1,node2" 128 2
 if [ "${RC}" -ne 0 ] && grep -q 'cannot determine the per-host task placement' <<<"${OUT}"; then
@@ -514,6 +523,16 @@ if [ "${RC}" -ne 0 ] && grep -q 'cannot determine the per-host task placement' <
 else
     bad "unparseable TASKS_PER_NODE fails closed" "non-zero + explanation" "rc=${RC}"
 fi
+no_run_dir "unparseable SLURM_TASKS_PER_NODE: refused before the run directory is made"
+
+run_case_env "64(x2)" "node1,node2" 100 2
+if [ "${RC}" -ne 0 ] && grep -qF 'ERROR: -machines totals 128 cores but Slurm allocated 100.' <<<"${OUT}"; then
+    ok "-machines totalling 128 cores against SLURM_NPROCS=100 aborts instead of over-subscribing"
+else
+    bad "-machines total against SLURM_NPROCS fails closed" "non-zero + 'ERROR: -machines totals 128 cores but Slurm allocated 100.'" \
+        "rc=${RC}; $(grep -E '^ERROR' <<<"${OUT}" | head -1)"
+fi
+no_run_dir "-machines totalling 128 cores against SLURM_NPROCS=100: refused before the run directory is made"
 
 echo "== heterogeneous placement is not recorded as a uniform cores_per_node =="
 

@@ -86,10 +86,31 @@ echo "Run Fluent Benchmark: ${APP_BIN_PATH} ${benchmark_file%.*} -t${SLURM_NPROC
 
 # --- Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal) ---
 # The recorder self-collects host info from the environment and parses the Fluent
-# solver log in this run dir, so it needs no arguments and NEVER fails the job
-# (the `|| echo` keeps it non-fatal, even under `set -e`). Override its path with
+# solver log in this run dir, and NEVER fails the job (the `|| echo` keeps it
+# non-fatal, even under `set -e`). We only record a SUCCESSFUL benchmark:
+# fluentbench.pl's output of this case and core count, <case>-<cores>.out in this
+# run dir, must give the case's rating, a positive number on its "Solver rating ="
+# line. A rating only in another case's or core count's output, in this job's
+# output.<jobid>.out or in a link to a file shipped with the dataset does not
+# count, so failed solves don't pollute the data. The recorder gets that file's
+# rating, time per iteration and solver speed, as SOLVER_RATING,
+# TIME_PER_ITERATION and SOLVER_SPEED. Override the recorder's path with
 # DYNAMODB_RECORDER; set SOURCE=<YourOrg> to tag your contributions. See
 # apps/Fluent/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
+_case_out="${benchmark_file%.*}-${SLURM_NPROCS}.out"
+# _case_value <name>: the first word after "=" on that file's last "<name> =" line
+_case_value() {
+    awk -v name="$1" '$0 ~ "^[[:space:]]*" name "[[:space:]]*=" {
+                          v = $0; sub(/^[^=]*=[[:space:]]*/, "", v); split(v, f, /[[:space:]]+/); r = f[1] }
+                      END { print r }' "${workdir}/${_case_out}" 2>/dev/null
+}
+_rating=""; _time_per_iteration=""; _solver_speed=""
+if [ -f "${workdir}/${_case_out}" ] && [ ! -L "${workdir}/${_case_out}" ]; then
+    _rating="$(_case_value "Solver rating")"
+    _time_per_iteration="$(_case_value "Solver wall time per iteration")"
+    _solver_speed="$(_case_value "Solver speed")"
+fi
+[[ "${_rating}" =~ ^[0-9]+([.][0-9]+)?$ && "${_rating}" =~ [1-9] ]] || _rating=""
 _recorder="${DYNAMODB_RECORDER:-}"
 for _c in "${_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
@@ -97,8 +118,13 @@ for _c in "${_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/apps/Fluent/dynamodb/record-benchmark.sh"; do
     if [ -n "${_c}" ] && [ -x "${_c}" ]; then _recorder="${_c}"; break; fi
 done
-if [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
-    FLUENT_VERSION="${fluentversion}" RUN_DIR="${workdir}" "${_recorder}" \
+if [ -z "${_rating}" ]; then
+    echo "NOTE: ${_case_out}, fluentbench.pl's output of this case and core count, gives no positive" \
+         "rating on a \"Solver rating =\" line." >&2
+    echo "NOTE: no solver rating found in the benchmark output; skipping benchmark recording." >&2
+elif [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
+    FLUENT_VERSION="${fluentversion}" RUN_DIR="${workdir}" SOLVER_RATING="${_rating}" \
+        TIME_PER_ITERATION="${_time_per_iteration}" SOLVER_SPEED="${_solver_speed}" "${_recorder}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 else
     echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2

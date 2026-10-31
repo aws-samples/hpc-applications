@@ -21,7 +21,8 @@ The `curl` stub answers IMDS as `STUB_IMDS` says (an instance type by default; n
 answer, an answer cut off at the time limit, an HTTP error, or a page that is not
 an instance type name), and the `lscpu`
 stub describes the CPU `STUB_LSCPU` names and logs each call, so the test host's CPU
-never decides a case.
+never decides a case. `test-gpu-gate.sh` runs the GPU single-simulation launcher,
+`GPU/gromacs-benchmark.sbatch`, the same way, with `nvidia-smi` and `nvcc` stubs added.
 The stubs touch nothing on the host: the cache drop and the THP setting are
 swallowed, a download is refused (and its URL logged), and the `aws` stub refuses
 every call. The `gmx` and `gmx_mpi` stubs log each `mdrun` command line with its

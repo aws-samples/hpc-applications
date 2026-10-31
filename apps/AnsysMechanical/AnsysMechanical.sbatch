@@ -263,6 +263,79 @@ if [ -n "${_fc_types}" ]; then
     done
 fi
 
+# ---------------------------------------------------------------------------
+# -machines host:cores list.
+#
+# Take the per-host task counts from Slurm itself (SLURM_TASKS_PER_NODE, e.g.
+# "64(x2)" or "43,42") instead of dividing --ntasks by --nodes. A plain division
+# only agrees with the real placement when the allocation is homogeneous and
+# divisible; ceiling division would hand MAPDL MORE cores than were allocated
+# (oversubscribing the nodes and over-drawing HPC licence tokens), while floor
+# division would silently drop ranks. The recommended layouts in Readme.md are
+# all homogeneous and divisible, so this normally reproduces the simple result -
+# it just stays correct when they are not.
+#
+# This runs before the run directory and the scratch check, so a placement it
+# refuses leaves neither behind.
+# ---------------------------------------------------------------------------
+expand_tasks_per_node() {   # "64(x2),32" -> "64 64 32"
+    local spec="$1" part count reps r out=""
+    [ -n "${spec}" ] || return 1
+    local IFS=','
+    for part in ${spec}; do
+        if   [[ "${part}" =~ ^([0-9]+)\(x([0-9]+)\)$ ]]; then
+            count="${BASH_REMATCH[1]}"; reps="${BASH_REMATCH[2]}"
+        elif [[ "${part}" =~ ^([0-9]+)$ ]]; then
+            count="${part}"; reps=1
+        else
+            return 1
+        fi
+        for (( r = 0; r < reps; r++ )); do out="${out} ${count}"; done
+    done
+    printf '%s\n' "${out# }"
+}
+
+mapfile -t _hosts < <(scontrol show hostnames="${SLURM_JOB_NODELIST}")
+read -r -a _tpn <<< "$(expand_tasks_per_node "${SLURM_TASKS_PER_NODE:-}" || true)"
+
+# FAIL CLOSED if Slurm's placement cannot be read. Redistributing the tasks
+# ourselves would INVENT a placement rather than learn it, and guessing wrong means
+# oversubscribed nodes and over-drawn licence tokens.
+if [ "${#_tpn[@]}" -ne "${#_hosts[@]}" ]; then
+    echo "ERROR: cannot determine the per-host task placement from Slurm." >&2
+    echo "       SLURM_TASKS_PER_NODE='${SLURM_TASKS_PER_NODE:-unset}' expands to ${#_tpn[@]} entry/entries" >&2
+    echo "       but SLURM_JOB_NODELIST='${SLURM_JOB_NODELIST:-unset}' has ${#_hosts[@]} host(s)." >&2
+    echo "       Refusing to guess: an invented -machines list oversubscribes nodes and" >&2
+    echo "       over-draws HPC licence tokens. Submit with an explicit homogeneous layout" >&2
+    echo "       (--nodes=N --ntasks-per-node=C) so Slurm reports the placement, or query" >&2
+    echo "       it authoritatively (e.g. scontrol show job \"\$SLURM_JOB_ID\")." >&2
+    exit 1
+fi
+
+machines=""; _tpn_sum=0; _tpn_uniform=1
+for _i in "${!_hosts[@]}"; do
+    machines="${machines}:${_hosts[$_i]}:${_tpn[$_i]}"
+    _tpn_sum=$(( _tpn_sum + _tpn[_i] ))
+    [ "${_tpn[$_i]}" = "${_tpn[0]}" ] || _tpn_uniform=0
+done
+machines="${machines:1}"
+
+if [ "${_tpn_sum}" -ne "${SLURM_NPROCS}" ]; then
+    echo "ERROR: -machines totals ${_tpn_sum} cores but Slurm allocated ${SLURM_NPROCS}." >&2
+    echo "       Refusing to run rather than over- or under-subscribing the allocation." >&2
+    exit 1
+fi
+# Per-node count, meaningful ONLY when the allocation is homogeneous. Left empty
+# for a heterogeneous layout so nothing downstream records one node's share as if
+# it applied to all of them.
+if [ "${_tpn_uniform}" -eq 1 ]; then
+    export cores_x_node="${_tpn[0]}"
+else
+    export cores_x_node=""
+    echo "NOTE: heterogeneous task placement (${machines}); cores_per_node is not a single value."
+fi
+echo "Task placement: ${machines} (total ${_tpn_sum} cores over ${#_hosts[@]} node(s); uniform=${_tpn_uniform})"
+
 run_tag="${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${instanceType}-${SLURM_NPROCS}-$(date "+%d-%m-%Y-%H-%M")"
 shared_dir="$(readlink -m "${basedir}/${SLURM_JOB_NAME%.*}")/Run/${run_tag}"
 if ! mkdir -p "${shared_dir}"; then
@@ -346,76 +419,6 @@ if [ "${scratch_mode}" != "shared" ]; then
 fi
 echo "Execution directory is: ${workdir} (scratch: ${scratch_mode}; logs: ${shared_dir})"
 cd "${workdir}"
-
-# ---------------------------------------------------------------------------
-# -machines host:cores list.
-#
-# Take the per-host task counts from Slurm itself (SLURM_TASKS_PER_NODE, e.g.
-# "64(x2)" or "43,42") instead of dividing --ntasks by --nodes. A plain division
-# only agrees with the real placement when the allocation is homogeneous and
-# divisible; ceiling division would hand MAPDL MORE cores than were allocated
-# (oversubscribing the nodes and over-drawing HPC licence tokens), while floor
-# division would silently drop ranks. The recommended layouts in Readme.md are
-# all homogeneous and divisible, so this normally reproduces the simple result -
-# it just stays correct when they are not.
-# ---------------------------------------------------------------------------
-expand_tasks_per_node() {   # "64(x2),32" -> "64 64 32"
-    local spec="$1" part count reps r out=""
-    [ -n "${spec}" ] || return 1
-    local IFS=','
-    for part in ${spec}; do
-        if   [[ "${part}" =~ ^([0-9]+)\(x([0-9]+)\)$ ]]; then
-            count="${BASH_REMATCH[1]}"; reps="${BASH_REMATCH[2]}"
-        elif [[ "${part}" =~ ^([0-9]+)$ ]]; then
-            count="${part}"; reps=1
-        else
-            return 1
-        fi
-        for (( r = 0; r < reps; r++ )); do out="${out} ${count}"; done
-    done
-    printf '%s\n' "${out# }"
-}
-
-mapfile -t _hosts < <(scontrol show hostnames="${SLURM_JOB_NODELIST}")
-read -r -a _tpn <<< "$(expand_tasks_per_node "${SLURM_TASKS_PER_NODE:-}" || true)"
-
-# FAIL CLOSED if Slurm's placement cannot be read. Redistributing the tasks
-# ourselves would INVENT a placement rather than learn it, and guessing wrong means
-# oversubscribed nodes and over-drawn licence tokens.
-if [ "${#_tpn[@]}" -ne "${#_hosts[@]}" ]; then
-    echo "ERROR: cannot determine the per-host task placement from Slurm." >&2
-    echo "       SLURM_TASKS_PER_NODE='${SLURM_TASKS_PER_NODE:-unset}' expands to ${#_tpn[@]} entry/entries" >&2
-    echo "       but SLURM_JOB_NODELIST='${SLURM_JOB_NODELIST:-unset}' has ${#_hosts[@]} host(s)." >&2
-    echo "       Refusing to guess: an invented -machines list oversubscribes nodes and" >&2
-    echo "       over-draws HPC licence tokens. Submit with an explicit homogeneous layout" >&2
-    echo "       (--nodes=N --ntasks-per-node=C) so Slurm reports the placement, or query" >&2
-    echo "       it authoritatively (e.g. scontrol show job \"\$SLURM_JOB_ID\")." >&2
-    exit 1
-fi
-
-machines=""; _tpn_sum=0; _tpn_uniform=1
-for _i in "${!_hosts[@]}"; do
-    machines="${machines}:${_hosts[$_i]}:${_tpn[$_i]}"
-    _tpn_sum=$(( _tpn_sum + _tpn[_i] ))
-    [ "${_tpn[$_i]}" = "${_tpn[0]}" ] || _tpn_uniform=0
-done
-machines="${machines:1}"
-
-if [ "${_tpn_sum}" -ne "${SLURM_NPROCS}" ]; then
-    echo "ERROR: -machines totals ${_tpn_sum} cores but Slurm allocated ${SLURM_NPROCS}." >&2
-    echo "       Refusing to run rather than over- or under-subscribing the allocation." >&2
-    exit 1
-fi
-# Per-node count, meaningful ONLY when the allocation is homogeneous. Left empty
-# for a heterogeneous layout so nothing downstream records one node's share as if
-# it applied to all of them.
-if [ "${_tpn_uniform}" -eq 1 ]; then
-    export cores_x_node="${_tpn[0]}"
-else
-    export cores_x_node=""
-    echo "NOTE: heterogeneous task placement (${machines}); cores_per_node is not a single value."
-fi
-echo "Task placement: ${machines} (total ${_tpn_sum} cores over ${#_hosts[@]} node(s); uniform=${_tpn_uniform})"
 
 cp "$0" "${shared_dir}/" 2>/dev/null
 # inputs are read only by the master rank; symlinks into the workdir suffice

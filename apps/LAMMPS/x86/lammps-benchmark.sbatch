@@ -105,6 +105,13 @@ case "${MODEL}" in
 esac
 
 SCALE="${SCALE:-${DEFAULT_SCALE}}"
+# in.rhodo reads no scale, so a SCALE override would only mislabel the run:
+# its directory name, its results and its record would give a scale it did not
+# run at. Such a run is labelled with the scale it has, 1, and a NOTE says so.
+if [ "${MODEL}" = rhodo ] && [ "${SCALE}" != 1 ]; then
+    echo "NOTE: MODEL=rhodo runs in.rhodo's 32,000 atoms whatever SCALE is, so SCALE=${SCALE} is replaced by 1; to scale the rhodopsin model, use MODEL=rhodo_scaled." >&2
+    SCALE=1
+fi
 TIMESTEPS="${TIMESTEPS:-${DEFAULT_TIMESTEPS}}"
 # At most 8 digits before the arithmetic test, so a long value cannot overflow it.
 if ! [[ "${TIMESTEPS}" =~ ^[1-9][0-9]{0,7}$ ]] || (( TIMESTEPS > 10000000 )); then
@@ -459,6 +466,23 @@ Wall time:        ${WALL_TIME}s
 REPORT
 
 # ---------------------------------------------------------------------------
+# The success gate, for both recorders below: record only a run that LAMMPS
+# ended normally (log.lammps has its closing "Total wall time:" line) after the
+# timesteps asked for (its "Loop time of ..." line reports TIMESTEPS steps).
+# mpirun exited 0 to get here (set -e and pipefail). Otherwise neither records
+# it, a NOTE says why, and the job's exit status and the results block above
+# are as they were.
+# ---------------------------------------------------------------------------
+_not_recorded=""
+if [ -z "${LOOP_LINE}" ]; then
+    _not_recorded="log.lammps has no 'Loop time of ...' line"
+elif [ "${LOOP_STEPS}" != "${TIMESTEPS}" ]; then
+    _not_recorded="LAMMPS ran ${LOOP_STEPS} timesteps, not the ${TIMESTEPS} requested"
+elif ! grep -qE '^Total wall time:' log.lammps; then
+    _not_recorded="log.lammps has no 'Total wall time:' line, so LAMMPS did not end normally"
+fi
+
+# ---------------------------------------------------------------------------
 # Optional: record the result to DynamoDB.
 #
 # Disabled by default so customers who only want to run LAMMPS aren't
@@ -475,7 +499,9 @@ REPORT
 #     MPI_STACK="openmpi-4"
 # fi
 # DYNAMODB_RECORDER="${DYNAMODB_RECORDER:-/fsx/lammps/scripts/dynamodb/record_to_dynamodb.sh}"
-# if [ -x "${DYNAMODB_RECORDER}" ]; then
+# if [ -n "${_not_recorded}" ]; then
+#     :   # not recorded: the NOTE below says why
+# elif [ -x "${DYNAMODB_RECORDER}" ]; then
 #     export SLURM_JOB_ID SLURM_JOB_NUM_NODES SLURM_CLUSTER_NAME
 #     export MODEL SCALE
 #     export NRANK_TOTAL NRANK_PER_NODE THREADS_PER_RANK
@@ -508,19 +534,6 @@ _steps="${LOOP_STEPS:-}";       [ "${_steps}" != "0" ] || _steps=""
 _atoms_m=""
 if [ -n "${ATOMS:-}" ] && [ "${ATOMS}" != "0" ]; then
     _atoms_m="$(awk -v x="${ATOMS}" 'BEGIN{if (x+0>0) printf "%.6g", x/1000000}' 2>/dev/null || true)"
-fi
-# The success gate: record only a run that LAMMPS ended normally (log.lammps
-# has its closing "Total wall time:" line) after the timesteps asked for (its
-# "Loop time of ..." line reports TIMESTEPS steps). mpirun exited 0 to get
-# here (set -e and pipefail). Otherwise a NOTE says why, and the job's exit
-# status and the results block above are as they were.
-_not_recorded=""
-if [ -z "${LOOP_LINE}" ]; then
-    _not_recorded="log.lammps has no 'Loop time of ...' line"
-elif [ "${LOOP_STEPS}" != "${TIMESTEPS}" ]; then
-    _not_recorded="LAMMPS ran ${LOOP_STEPS} timesteps, not the ${TIMESTEPS} requested"
-elif ! grep -qE '^Total wall time:' log.lammps; then
-    _not_recorded="log.lammps has no 'Total wall time:' line, so LAMMPS did not end normally"
 fi
 _contrib_recorder="${CONTRIB_RECORDER:-}"
 for _c in "${_contrib_recorder}" \
