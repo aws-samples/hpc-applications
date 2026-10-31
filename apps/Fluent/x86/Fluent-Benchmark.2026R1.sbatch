@@ -181,6 +181,7 @@ harness_args+=(-cflush "-mpiopt=-genv I_MPI_DEBUG 5" -peth.efa -cnf=./hostfile -
 echo "Fluent version: ${fluentversion} | CPU solver via 2026R1 harness | cores: ${SLURM_NPROCS}"
 echo "Run: ${FLUENT_PYTHON_PATH} ${APP_BIN_PATH} ${harness_args[*]}"
 "${FLUENT_PYTHON_PATH}" "${APP_BIN_PATH}" "${harness_args[@]}" | tee output.$SLURM_JOBID.out
+_rec_rc=${PIPESTATUS[0]}
 
 # --- Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal) ---
 # The recorder self-collects host info from the environment, reads the case
@@ -235,3 +236,7 @@ else
          "MIUPS on a \"Million Cell Iteration Per Wall Second =\" line." >&2
     echo "NOTE: no MIUPS result found in transcripts; skipping benchmark recording." >&2
 fi
+# The job ends with the 2026 R1 harness's own exit status (not tee's), whatever
+# the recording did, as the CFX and OptiStruct scripts and the STAR-CCM+ batch
+# scripts end with their solver's.
+exit "${_rec_rc}"

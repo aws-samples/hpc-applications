@@ -22,7 +22,8 @@
 #     count's, the job's own output (output.<job>.out, where the script tees
 #     it) or a file shipped with the dataset and linked into the run
 #     directory;
-#   * the job's exit status does not change.
+#   * the job ends with fluentbench.pl's exit status: 0, or 1 where it writes
+#     no output file (test-launchers-exit-status.sh tests the status itself).
 # x86/Fluent-Benchmark.OMPI.sbatch names the case BENCHMARK_NAME, and also
 # takes a directory that holds the case's files. With such a directory named
 # otherwise than the case, the run is recorded from the case's output file,
@@ -57,7 +58,8 @@ recorded() {  # <description>: the last run was recorded once, with the values o
         ok "$1 -> no NOTE about the rating"
     fi
 }
-not_recorded() {  # <description>: the last run was not recorded, both NOTEs say why, the job exits 0
+not_recorded() {  # <description> [<status>]: not recorded, both NOTEs say why, the job exits <status> (0)
+    local want="${2:-0}"
     [ "$(recorder_calls)" = "0" ] && ok "$1 -> not recorded" \
         || bad "$1 -> not recorded" "no recorder call" "$(recorder_calls) call(s)"
     if has_line "${ERR}" "${NOTE_OUT}" && has_line "${ERR}" "${NOTE_SKIP}"; then
@@ -66,8 +68,8 @@ not_recorded() {  # <description>: the last run was not recorded, both NOTEs say
         bad "$1 -> a NOTE names the output file, then the NOTE that skips the recording" \
             "${NOTE_OUT} / ${NOTE_SKIP}" "${ERR}"
     fi
-    [ "${RC}" -eq 0 ] && ok "$1 -> the job's exit status is unchanged (0)" \
-        || bad "$1 -> the job's exit status is unchanged" "exit 0" "exit ${RC}"
+    [ "${RC}" -eq "${want}" ] && ok "$1 -> the job exits ${want}, fluentbench.pl's status" \
+        || bad "$1 -> the job exits ${want}, fluentbench.pl's status" "exit ${want}" "exit ${RC}"
 }
 
 # Output files that give no rating, cut or edited from the rated one.
@@ -153,7 +155,7 @@ for s in "${BENCHMARK_SCRIPTS[@]}"; do
         not_recorded "${s}: a rating of ${v}"
     done
     run_launcher "${s}" "${n}-no-out" STUB_OUT= STUB_RC=1
-    not_recorded "${s}: no output file"
+    not_recorded "${s}: no output file" 1
     # -----------------------------------------------------------------------
     # 3. A rating, but not in fluentbench.pl's output of this case and core count.
     # -----------------------------------------------------------------------

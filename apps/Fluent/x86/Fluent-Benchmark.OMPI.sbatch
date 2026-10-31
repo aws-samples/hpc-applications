@@ -187,6 +187,7 @@ fi
 
 echo "Run Fluent Benchmark: ${APP_BIN_PATH} ${fluent_args[*]}"
 "${APP_BIN_PATH}" "${fluent_args[@]}" | tee output.$SLURM_JOBID.out
+_rec_rc=${PIPESTATUS[0]}
 
 # --- Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal) ---
 # The recorder self-collects host info from the environment and parses the Fluent
@@ -238,3 +239,7 @@ elif [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
 else
     echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2
 fi
+# The job ends with fluentbench.pl's own exit status (not tee's), whatever the
+# recording did, as the CFX and OptiStruct scripts and the STAR-CCM+ batch
+# scripts end with their solver's.
+exit "${_rec_rc}"

@@ -83,3 +83,7 @@ elif [ "${_rec_rc}" -ne 0 ]; then
 else
     echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2
 fi
+# The job ends with Fluent's own exit status (not tee's), whatever the recording
+# did, as the CFX and OptiStruct scripts and the STAR-CCM+ batch scripts end
+# with their solver's.
+exit "${_rec_rc}"

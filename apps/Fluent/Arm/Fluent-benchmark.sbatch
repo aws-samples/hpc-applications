@@ -58,6 +58,7 @@ echo "Install missing libraries"
 mpirun -n $SLURM_JOB_NUM_NODES --map-by ppr:1:node /bin/bash -c "sudo yum -y install libXtst libXtst-devel libvorbis libvorbis-devel"
 
 "${APP_BIN_PATH}" ${benchmark_file%.*} -t${SLURM_NPROCS}  -cnf=hostfile -part=4 -nosyslog -noloadchk -ssh -peth.efa -mpi=openmpi
+_rec_rc=$?
 
 # --- Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal) ---
 # The recorder self-collects host info from the environment and parses the Fluent
@@ -108,3 +109,7 @@ elif [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
 else
     echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2
 fi
+# The job ends with fluentbench.pl's own exit status, whatever the recording
+# did, as the CFX and OptiStruct scripts and the STAR-CCM+ batch scripts end
+# with their solver's.
+exit "${_rec_rc}"
