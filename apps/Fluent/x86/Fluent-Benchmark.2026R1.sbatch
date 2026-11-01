@@ -78,11 +78,11 @@ benchmark_file=$(basename ${benchmark_uri})
 
 # The instance type, from the instance metadata (IMDSv2). Each request gives
 # up after 5 seconds (2 to connect), and -f turns an HTTP error into no answer.
-# An answer that is not an instance type name (tested in the C locale: in some
-# locales [a-z] leaves out i), a proxy's page for example, counts as none, so
-# it never names the run directory.
-TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-instanceType=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
+# An answer cut off at that limit, or one that is not an instance type name
+# (tested in the C locale: in some locales [a-z] leaves out i), a proxy's page
+# for example, counts as none, so it never names the run directory.
+TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") || TOKEN=""
+instanceType=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type) || instanceType=""
 ( LC_ALL=C; [[ "${instanceType}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || instanceType=""
 
 # Ranks per node on hpc8a.96xlarge and hpc7a.96xlarge: only the counts that put
@@ -91,12 +91,12 @@ instanceType=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-
 # node runs SLURM_NPROCS / SLURM_JOB_NUM_NODES of them. Any other count, or a
 # total that does not divide evenly, stops the job here, before the run
 # directory and Fluent. Other instance types and sizes are not checked. When
-# the instance type cannot be read (no answer in time, an HTTP error, or an
-# answer that is not an instance type name), a count outside the set is
-# refused only on an AMD node with 192 cores (lscpu: sockets x cores per
-# socket), which could be one of those two. Any other node runs, with a NOTE
-# that the check was skipped: no run is refused only because the instance
-# metadata did not answer.
+# the instance type cannot be read (no answer in time, an HTTP error, an
+# answer cut off at the time limit, or an answer that is not an instance type
+# name), a count outside the set is refused only on an AMD node with 192 cores
+# (lscpu: sockets x cores per socket), which could be one of those two. Any
+# other node runs, with a NOTE that the check was skipped: no run is refused
+# only because the instance metadata did not answer.
 ranks_per_node=""
 if [[ "${SLURM_NPROCS:-}" =~ ^[1-9][0-9]{0,6}$ && "${SLURM_JOB_NUM_NODES:-}" =~ ^[1-9][0-9]{0,6}$ ]] \
         && (( SLURM_NPROCS % SLURM_JOB_NUM_NODES == 0 )); then

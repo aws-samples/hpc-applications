@@ -9,8 +9,9 @@
 # message that names those counts, before the run directory exists and before
 # cfx5solve starts. Other instance types and sizes are not checked.
 #
-# When the instance metadata gives no instance type (no answer, an error, or an
-# answer that is not an instance type name, capitals included), lscpu decides.
+# When the instance metadata gives no instance type (no answer, an error, an
+# answer cut off at the time limit, or an answer that is not an instance type
+# name, capitals included), lscpu decides.
 # A node with 192 AMD cores could be one of those two types: such a count is
 # refused there the same way, with a message that names both types and why. Any
 # other node runs, with a one-line NOTE on stderr that the check was skipped.
@@ -36,9 +37,15 @@ if [ -z "${SBATCH}" ]; then
     done
 fi
 
-pass=0; fail=0
+pass=0; fail=0; skip=0
 ok()  { printf '  \033[32mPASS\033[0m %s\n' "$1"; pass=$((pass+1)); }
 bad() { printf '  \033[31mFAIL\033[0m %s\n       expected: %s\n       actual:   %s\n' "$1" "$2" "$3"; fail=$((fail+1)); }
+skipt() { printf '  \033[33mSKIP\033[0m %s (%s)\n' "$1" "$2"; skip=$((skip+1)); }
+# A Turkish-locale case checks something only where tr_TR.UTF-8 is installed:
+# elsewhere bash falls back to the C locale, where [a-z] holds i anyway, so each
+# such case is skipped there, with a SKIP line.
+TR=""
+if grep -qiE '^tr_TR\.utf-?8$' <<< "$(locale -a 2>/dev/null)"; then TR=1; fi
 
 if [ -z "${SBATCH}" ] || [ ! -f "${SBATCH}" ]; then
     echo "ERROR: no CFX sbatch example found next to ${HERE}" >&2
@@ -69,6 +76,9 @@ mkdir -p "${WORK}/bin" "${WORK}/root/ansys_inc/v261/CFX/bin" "${WORK}/case"
 # STUB_IMDS gives another answer, as curl reports it:
 #   down        no answer: the connection is refused (exit 7);
 #   timeout     no answer within the call's --max-time (exit 28);
+#   cut-off     for the instance type, its first characters (the type less
+#               its last five; hpc8a.96x when STUB_INSTANCE_TYPE is empty),
+#               then exit 28, as curl ends a transfer at its --max-time;
 #   http-error  an HTTP error: no output and exit 22 with -f (--fail), the
 #               error page and exit 0 without it;
 #   not-a-type  an answer that is not an instance type name, such as a web
@@ -83,6 +93,10 @@ echo "curl $*" >> "${STUB_STATE}/curl.log"
 case "${STUB_IMDS:-up}" in
     down)    exit 7 ;;
     timeout) exit 28 ;;
+    cut-off)
+        case "$*" in
+            *instance-type*) t="${STUB_INSTANCE_TYPE:-hpc8a.96xlarge}"; printf '%s' "${t%?????}"; exit 28 ;;
+        esac ;;
     http-error)
         for _a in "$@"; do
             case "${_a}" in --fail) exit 22;; --*) ;; -*f*) exit 22;; esac
@@ -278,16 +292,20 @@ quiet "c8i.96xlarge -> no NOTE, and lscpu not run"
 run m7a-1x64 m7a.48xlarge 1 64 STUB_LSCPU=amd-2x96
 accepted "m7a.48xlarge, named by the instance metadata, on 192 AMD cores, 1 node x 64 cores -> runs"
 quiet "m7a.48xlarge -> no NOTE, and lscpu not run"
-run tr-c8i-1x64 c8i.96xlarge 1 64 LC_ALL= LC_CTYPE= LC_COLLATE= LANG=tr_TR.UTF-8
-accepted "c8i.96xlarge, a Turkish locale, 1 node x 64 cores -> runs"
-quiet "c8i.96xlarge, a Turkish locale -> no NOTE, and lscpu not run"
+if [ -n "${TR}" ]; then
+    run tr-c8i-1x64 c8i.96xlarge 1 64 LC_ALL= LC_CTYPE= LC_COLLATE= LANG=tr_TR.UTF-8
+    accepted "c8i.96xlarge, a Turkish locale, 1 node x 64 cores -> runs"
+    quiet "c8i.96xlarge, a Turkish locale -> no NOTE, and lscpu not run"
+else
+    skipt "c8i.96xlarge, a Turkish locale, 1 node x 64 cores" "the tr_TR.UTF-8 locale is not installed"
+fi
 
 # ---------------------------------------------------------------------------
 # 4. No instance type from the instance metadata, on a node without 192 AMD
 #    cores (lscpu: Intel, 2 sockets x 48 cores, unless set): runs, with a NOTE.
 #    A supported count needs no instance type.
 # ---------------------------------------------------------------------------
-for imds in down timeout http-error not-a-type two-lines; do
+for imds in down timeout cut-off http-error not-a-type two-lines; do
     run "noread-${imds}-2x64" "" 2 128 STUB_IMDS="${imds}"
     noted "instance metadata ${imds}, an Intel node, 2 nodes x 64 cores per node -> runs, with the NOTE" 64
 done
@@ -306,7 +324,7 @@ done
 #    which could be hpc8a.96xlarge or hpc7a.96xlarge: the same rule, and the
 #    same refusal, naming both types and why.
 # ---------------------------------------------------------------------------
-for imds in down timeout http-error not-a-type two-lines; do
+for imds in down timeout cut-off http-error not-a-type two-lines; do
     run "amd-${imds}-2x64" "" 2 128 STUB_IMDS="${imds}" STUB_LSCPU=amd-2x96
     refused "instance metadata ${imds}, AMD 2 sockets x 96 cores, 2 nodes x 64 cores per node -> refused" \
         "$(amd_uneven 64)"
@@ -328,5 +346,5 @@ refused "no instance metadata, AMD 2 sockets x 96 cores, a German locale (lscpu 
     "$(amd_uneven 64)"
 
 echo
-printf 'flexible-cores tests: %d passed, %d failed\n' "${pass}" "${fail}"
+printf 'flexible-cores tests: %d passed, %d failed, %d skipped\n' "${pass}" "${fail}" "${skip}"
 [ "${fail}" -eq 0 ]

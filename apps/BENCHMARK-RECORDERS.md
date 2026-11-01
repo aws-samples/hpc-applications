@@ -127,9 +127,12 @@ for training:
 The model rejects a row that is missing any of:
 `instance_type`, `operating_system`, `num_cores`, `num_instances`, `libraries`.
 
-On a cluster these are auto-detected. Off-cluster, pass `--instance-type`,
-`--os`, `--num-cores`, `--num-nodes`, and at least one of `--mpi` / `--version`
-(so the `libraries` list can be composed).
+On a cluster these are auto-detected. The instance type comes from the EC2
+instance metadata: each request gives up after 2 seconds, and an answer that is
+not an instance type name counts as none, so where the metadata gives none, pass
+`--instance-type`. Off-cluster, pass `--instance-type`, `--os`, `--num-cores`,
+`--num-nodes`, and at least one of `--mpi` / `--version` (so the `libraries`
+list can be composed).
 
 ### App-specific result & size fields
 

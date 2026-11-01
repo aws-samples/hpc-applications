@@ -32,19 +32,20 @@ export ANSYSLMD_LICENSE_FILE=${ANSYSLMD_LICENSE_FILE:-"1055@<license-server>"}
 # evenly leave the nodes with two counts (shown as, for example, "143-144"),
 # one of them outside the set, so they are refused there too. Other instance
 # types and sizes are not checked. The instance metadata gives the type; no
-# answer within a few seconds, an error, or an answer that is not an instance
-# type name (tested in the C locale) leaves it unknown. A node with 192 AMD
-# cores (lscpu) could then be one of those two, so such a count is refused
-# there too; any other node runs, with a NOTE that the check was skipped.
+# answer within a few seconds, an error, an answer cut off at that limit, or an
+# answer that is not an instance type name (tested in the C locale) leaves it
+# unknown. A node with 192 AMD cores (lscpu) could then be one of those two, so
+# such a count is refused there too; any other node runs, with a NOTE that the
+# check was skipped.
 # ---------------------------------------------------------------------------
 cores_x_node=$(( ${SLURM_NPROCS:-0} / ${SLURM_JOB_NUM_NODES:-1} ))
 [ $(( ${SLURM_NPROCS:-0} % ${SLURM_JOB_NUM_NODES:-1} )) -eq 0 ] || cores_x_node="${cores_x_node}-$(( cores_x_node + 1 ))"
 case "${cores_x_node}" in
     24|48|72|96|120|144|168|192) ;;
     *)  _fc_token=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" \
-            -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+            -H "X-aws-ec2-metadata-token-ttl-seconds: 60") || _fc_token=""
         _fc_type=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: ${_fc_token}" \
-            http://169.254.169.254/latest/meta-data/instance-type)
+            http://169.254.169.254/latest/meta-data/instance-type) || _fc_type=""
         ( LC_ALL=C; [[ "${_fc_type}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || _fc_type=""
         _fc_on=""; _fc_why=""
         case "${_fc_type}" in

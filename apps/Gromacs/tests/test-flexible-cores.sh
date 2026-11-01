@@ -145,10 +145,19 @@ for spec in hpc6a.48xlarge:64:amd-96 hpc7a.48xlarge:64:amd-96 c8i.96xlarge:100:i
     runs "${itype}, ${count} cores per node (no list on this type)"
     no_note "${itype}"
 done
-run_launcher x86 STUB_INSTANCE_TYPE=c8i.96xlarge STUB_LSCPU=intel-192 SLURM_NTASKS_PER_NODE=100 LANG=tr_TR.UTF-8
-runs "c8i.96xlarge in a Turkish locale, 100 cores per node (the type reads)"
-no_note "c8i.96xlarge in a Turkish locale"
-no_lscpu "c8i.96xlarge in a Turkish locale"
+# A Turkish-locale case checks something only where tr_TR.UTF-8 is installed:
+# elsewhere bash falls back to the C locale, where [a-z] holds i anyway, so each
+# such case is skipped there, with a SKIP line.
+TR=""
+if grep -qiE '^tr_TR\.utf-?8$' <<< "$(locale -a 2>/dev/null)"; then TR=1; fi
+if [ -n "${TR}" ]; then
+    run_launcher x86 STUB_INSTANCE_TYPE=c8i.96xlarge STUB_LSCPU=intel-192 SLURM_NTASKS_PER_NODE=100 LANG=tr_TR.UTF-8
+    runs "c8i.96xlarge in a Turkish locale, 100 cores per node (the type reads)"
+    no_note "c8i.96xlarge in a Turkish locale"
+    no_lscpu "c8i.96xlarge in a Turkish locale"
+else
+    skipt "c8i.96xlarge in a Turkish locale, 100 cores per node" "the tr_TR.UTF-8 locale is not installed"
+fi
 
 echo "== x86/gromacs-benchmark.sbatch: no instance type from IMDS =="
 for mode in none http-error not-a-type; do

@@ -15,8 +15,9 @@
 # type IMDS gives is taken as it is: no NOTE and no lscpu, also in a locale in
 # which [a-z] does not hold "i" (tr_TR.UTF-8, where it is installed).
 # When IMDS gives no instance type (no answer, an empty answer, an HTTP error
-# page for the token or for the instance type, or an answer that is not an
-# instance type name), lscpu decides, read in the C locale. It is a stub here,
+# page for the token or for the instance type, an answer cut off at the time
+# limit, or an answer that is not an instance type name), lscpu decides, read
+# in the C locale. It is a stub here,
 # so the host's CPU never decides a case:
 #   * a node with 192 AMD cores (2 x 96 or 1 x 192, with one or two threads per
 #     core, in either layout lscpu prints, and from a German locale) gets the
@@ -37,6 +38,11 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=stubs.sh
 source "${HERE}/stubs.sh"
+# A Turkish-locale case checks something only where tr_TR.UTF-8 is installed:
+# elsewhere bash falls back to the C locale, where [a-z] holds i anyway, so each
+# such case is skipped there, with a SKIP line.
+TR=""
+if grep -qiE '^tr_TR\.utf-?8$' <<< "$(locale -a 2>/dev/null)"; then TR=1; fi
 UTILS="$(cd "${OF_APP}/../../Utils/flexible-cores" && pwd)"
 X86=(x86/openfoam-benchmark-openmpi.sbatch x86/openfoam-benchmark-intelmpi.sbatch)
 # curl for an IMDS that gives no instance type, put first in PATH; each call is
@@ -46,10 +52,13 @@ X86=(x86/openfoam-benchmark-openmpi.sbatch x86/openfoam-benchmark-intelmpi.sbatc
 #                     request 401;
 #   imds-down         no answer: curl prints nothing and exits 28 (a timeout);
 #   imds-page         the instance-type request answers 200 with an HTML page
-#                     that holds a type's name, which -f does not make an error.
+#                     that holds a type's name, which -f does not make an error;
+#   imds-cut-off      the instance-type request is cut off at curl's time
+#                     limit: curl prints the start of a type name, hpc8a.96x,
+#                     and exits 28.
 # As curl does, an error page is printed with exit 0, unless curl is given -f
 # (--fail): then it prints nothing and exits 22.
-for mode in type-error token-error down page; do
+for mode in type-error token-error down page cut-off; do
     mkdir -p "${STUBS}/imds-${mode}"
     printf '#!/bin/bash\nmode=%s\n' "${mode}" > "${STUBS}/imds-${mode}/curl"
     cat >> "${STUBS}/imds-${mode}/curl" <<'EOF'
@@ -69,6 +78,7 @@ case "$*" in
   *)           if [ "${mode}" = page ]; then
                  printf '<!DOCTYPE html>\n<html><body><p>hpc8a.96xlarge</p></body></html>\n'; exit 0
                fi
+               if [ "${mode}" = cut-off ]; then printf 'hpc8a.96x'; exit 28; fi
                status="401 - Unauthorized";;
 esac
 [ -z "${fail}" ] || exit 22
@@ -299,6 +309,10 @@ for s in "${X86[@]}"; do
     # type is read in the C locale, so it still reads.
     for tl in hpc6id.32xlarge:LANG c8i.96xlarge:LC_ALL; do
         t="${tl%:*}"; l="${tl#*:}=tr_TR.UTF-8"
+        if [ -z "${TR}" ]; then
+            skipt "${t} from a Turkish locale (${l}), 64 ranks per node" "the tr_TR.UTF-8 locale is not installed"
+            continue
+        fi
         job=$((job + 1)); run_script "${s}" "${job}" STUB_INSTANCE_TYPE="${t}" SLURM_NTASKS_PER_NODE=64 "${l}"
         completes "${t} from a Turkish locale (${l}), 64 ranks per node" "${job}"
         placed "${t} from a Turkish locale (${l}), 64 ranks per node: no list" "${s}" "${job}" ""
@@ -312,12 +326,13 @@ for s in "${X86[@]}"; do
 
     echo "== ${s}: no instance type from IMDS =="
     # Each way IMDS can give no type, on a 192-core AMD node and on a 192-core Intel node.
-    for imds in down type-error token-error page; do
+    for imds in down type-error token-error page cut-off; do
         case "${imds}" in
             down)        what="no answer from IMDS" ;;
             type-error)  what="an IMDS error page for the instance type" ;;
             token-error) what="an IMDS error page for the token" ;;
             page)        what="an IMDS page that is not a type name" ;;
+            cut-off)     what="an IMDS answer cut off at the time limit" ;;
         esac
         untyped "${imds}" "${AMD}" 64
         refused_both "${what}, $(node "${AMD}"), 64 ranks per node" 64

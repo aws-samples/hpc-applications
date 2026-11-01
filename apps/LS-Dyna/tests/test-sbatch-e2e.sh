@@ -16,12 +16,20 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP="$(cd "${HERE}/.." && pwd)"
 SBATCH="${APP}/LS-Dyna.sbatch"
 
-pass=0; fail=0
+pass=0; fail=0; skip=0
 ok()  { printf '  \033[32mPASS\033[0m %s\n' "$1"; pass=$((pass+1)); }
 bad() { printf '  \033[31mFAIL\033[0m %s\n       expected: %s\n       actual:   %s\n' "$1" "$2" "$3"; fail=$((fail+1)); }
-is()  { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "$3" "$2"; fi; }
-has() { if grep -qF -- "$3" "$2" 2>/dev/null; then ok "$1"; else bad "$1" "a line with: $3" "$(cat "$2" 2>/dev/null)"; fi; }
-hasnt() { if grep -qF -- "$3" "$2" 2>/dev/null; then bad "$1" "no line with: $3" "$(grep -F -- "$3" "$2")"; else ok "$1"; fi; }
+skipt() { printf '  \033[33mSKIP\033[0m %s (%s)\n' "$1" "$2"; skip=$((skip+1)); }
+# A Turkish-locale case checks something only where tr_TR.UTF-8 is installed:
+# elsewhere bash falls back to the C locale, where [a-z] holds i anyway. There
+# run_case skips such a case, with a SKIP line, and is, has and hasnt skip its
+# checks, up to the next run_case.
+TR=""
+if grep -qiE '^tr_TR\.utf-?8$' <<< "$(locale -a 2>/dev/null)"; then TR=1; fi
+SKIPPED=""
+is()  { [ -z "${SKIPPED}" ] || return 0; if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "$3" "$2"; fi; }
+has() { [ -z "${SKIPPED}" ] || return 0; if grep -qF -- "$3" "$2" 2>/dev/null; then ok "$1"; else bad "$1" "a line with: $3" "$(cat "$2" 2>/dev/null)"; fi; }
+hasnt() { [ -z "${SKIPPED}" ] || return 0; if grep -qF -- "$3" "$2" 2>/dev/null; then bad "$1" "no line with: $3" "$(grep -F -- "$3" "$2")"; else ok "$1"; fi; }
 
 # Resolved, as the script resolves its run directory (readlink).
 T="$(readlink -f "$(mktemp -d)")"
@@ -138,6 +146,13 @@ run_case() {
     local -a vars=()
     while [ "$1" != "--" ]; do vars+=("$1"); shift; done
     shift
+    local v
+    SKIPPED=""
+    for v in "${vars[@]+"${vars[@]}"}"; do
+        case "${v}" in
+            *=tr_TR.UTF-8) [ -n "${TR}" ] || { SKIPPED=1; skipt "the case ${name}, in a Turkish locale" "the tr_TR.UTF-8 locale is not installed"; return 0; } ;;
+        esac
+    done
     rm -f "${T}/${name}.log"; : > "${T}/${name}.log"
     env -i HOME="${T}" PATH="${T}/bin:/usr/bin:/bin" STUB_LOG="${T}/${name}.log" \
         SLURM_JOB_ID=4242 SLURM_JOB_NAME=LS-Dyna.sbatch SLURM_JOB_NUM_NODES=1 \
@@ -342,5 +357,5 @@ is "no helpers anywhere: exit 1" "${RC}" "1"
 has "no helpers anywhere: the reason" "${T}/nolib.out" "cannot find lib/lsdyna-run.sh"
 
 echo
-echo "sbatch-e2e: ${pass} passed, ${fail} failed"
+echo "sbatch-e2e: ${pass} passed, ${fail} failed, ${skip} skipped"
 [ "${fail}" -eq 0 ]

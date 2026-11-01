@@ -52,8 +52,16 @@ GPU_MEM_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits |
 NUM_CORES=$(nproc)
 CORES_PER_GPU=$((NUM_CORES / NUM_GPUS_PER_NODE))
 
-# Instance type via IMDSv2
-INSTANCE_TYPE=$(TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") && curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
+# Instance type via IMDSv2: it names the run directory and picks the GPU
+# application clocks below. Each request gives up after 5 seconds (2 to
+# connect), and -f turns an HTTP error into no answer. An answer cut off at
+# that limit, or one that is not an instance type name (tested in the C
+# locale: in some locales [a-z] leaves out i), a proxy's page for example,
+# counts as none: the clocks are then left as they are, with a NOTE on stderr,
+# the run directory's name has no instance type, and the job goes on.
+TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") || TOKEN=""
+INSTANCE_TYPE=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type) || INSTANCE_TYPE=""
+( LC_ALL=C; [[ "${INSTANCE_TYPE}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || INSTANCE_TYPE=""
 
 echo "============================================"
 echo "HPL GPU | Job ${SLURM_JOB_ID}"
@@ -66,6 +74,7 @@ echo "============================================"
 # GPU optimization
 ############################################################
 case "$INSTANCE_TYPE" in
+    "")           echo "NOTE: the instance metadata gave no instance type, so the GPU application clocks are left as they are" >&2 ;;
     p3*|p3dn*)    sudo nvidia-smi -ac 877,1530 ;;
     p4d*)         sudo nvidia-smi -ac 1215,1410 ;;
     p4de*)        sudo nvidia-smi -ac 1593,1410 ;;

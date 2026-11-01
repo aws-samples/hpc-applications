@@ -23,9 +23,15 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAMMPS_APP="$(cd "${HERE}/.." && pwd)"
 
-pass=0; fail=0
+pass=0; fail=0; skip=0
 ok()  { printf '  \033[32mPASS\033[0m %s\n' "$1"; pass=$((pass+1)); }
 bad() { printf '  \033[31mFAIL\033[0m %s\n       expected: %s\n       actual:   %s\n' "$1" "$2" "$3"; fail=$((fail+1)); }
+skipt() { printf '  \033[33mSKIP\033[0m %s (%s)\n' "$1" "$2"; skip=$((skip+1)); }
+# A Turkish-locale case checks something only where tr_TR.UTF-8 is installed:
+# elsewhere bash falls back to the C locale, where [a-z] holds i anyway, so each
+# such case is skipped there, with a SKIP line.
+TR=""
+if grep -qiE '^tr_TR\.utf-?8$' <<< "$(locale -a 2>/dev/null)"; then TR=1; fi
 
 SCRIPTS=(x86/lammps-benchmark.sbatch Arm/lammps-benchmark.sbatch)
 
@@ -651,9 +657,13 @@ on_node hpc8a.96xlarge 96 192 STUB_IMDS=no-answer STUB_LSCPU=amd192 THREADS_PER_
 quiet "IMDS no-answer, a 192-core AMD node, 48 ranks x 2 threads (96 cores): hybrid, no NOTE, and lscpu is not run" \
     "--bind-to core --map-by ppr:48:node:PE=2"
 # A type name with an i reads as one in a Turkish locale too, where [a-z] leaves out i.
-on_node c8i.96xlarge 64 192 STUB_LSCPU=intel192 LANG=tr_TR.UTF-8
-quiet "c8i.96xlarge from IMDS, a Turkish locale, 64 cores per node: by slot, no NOTE, and lscpu is not run" \
-    "--bind-to core --map-by slot"
+if [ -n "${TR}" ]; then
+    on_node c8i.96xlarge 64 192 STUB_LSCPU=intel192 LANG=tr_TR.UTF-8
+    quiet "c8i.96xlarge from IMDS, a Turkish locale, 64 cores per node: by slot, no NOTE, and lscpu is not run" \
+        "--bind-to core --map-by slot"
+else
+    skipt "c8i.96xlarge from IMDS, a Turkish locale, 64 cores per node" "the tr_TR.UTF-8 locale is not installed"
+fi
 
 # Every IMDS call gives up within a few seconds and fails on an HTTP error;
 # and when IMDS gives the instance type, no NOTE is printed and lscpu is not run.
@@ -740,9 +750,13 @@ for answer in M8G.48XLARGE "Request denied by proxy.example.com" "m8g.48xlarge: 
   arm_runs "the answer '${answer}': the job runs, and nothing of it names the run directory or the job log" ""
 done
 # A type name with an i reads as one in a Turkish locale too, where [a-z] leaves out i.
-run_script "${ARM}" lj "" STUB_INSTANCE_TYPE=im4gn.16xlarge LANG=tr_TR.UTF-8
-arm_runs "im4gn.16xlarge from IMDS, a Turkish locale: it names the run directory and the job log" im4gn.16xlarge
+if [ -n "${TR}" ]; then
+    run_script "${ARM}" lj "" STUB_INSTANCE_TYPE=im4gn.16xlarge LANG=tr_TR.UTF-8
+    arm_runs "im4gn.16xlarge from IMDS, a Turkish locale: it names the run directory and the job log" im4gn.16xlarge
+else
+    skipt "im4gn.16xlarge from IMDS, a Turkish locale" "the tr_TR.UTF-8 locale is not installed"
+fi
 
 echo
-printf 'sbatch e2e tests: %d passed, %d failed\n' "${pass}" "${fail}"
+printf 'sbatch e2e tests: %d passed, %d failed, %d skipped\n' "${pass}" "${fail}" "${skip}"
 [ "${fail}" -eq 0 ] || exit 1

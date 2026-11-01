@@ -37,7 +37,9 @@ for s in "${SCRIPTS[@]}"; do
         has "${label}: the banner names the case and mesh in CASE_SRC" \
             "=== OCC DrivAer, the case and mesh in ${c} — ${mpi} ==="
         has "${label}: so does the report's heading" "OCC DrivAer, the case and mesh in ${c} — ${mpi} Results"
+        if [ "${c}" = "${M65}" ]; then
+            check "${label}: no line of the output names the 236M mesh" 0 "$(grep -c '236M' <<<"${OUT}")"
+        fi
     done
-    check "the 65M mesh: no line of the output names the 236M mesh" 0 "$(grep -c '236M' <<<"${OUT}")"
 done
 finish "banner"

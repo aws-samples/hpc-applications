@@ -184,9 +184,10 @@ asserts:
     and m7a.48xlarge on a node with 192 AMD cores) are not checked, and `lscpu`
     is not asked;
   * when the instance metadata gives no instance type (no answer, none within
-    `--max-time`, an HTTP error, a page that is not a type name, one that names
-    a host such as `proxy.example.com`, a type name followed by an HTML line, or
-    one in capitals), a node whose `lscpu` shows 192 AMD cores refuses an
+    `--max-time`, an answer cut off at `--max-time` (the start of a type name),
+    an HTTP error, a page that is not a type name, one that names a host such
+    as `proxy.example.com`, a type name followed by an HTML line, or one in
+    capitals), a node whose `lscpu` shows 192 AMD cores refuses an
     off-list count as above, with an ERROR that names both types and says why
     and no NOTE; any other node runs an off-list count, with the one-line NOTE
     that the check was skipped: an Intel node, also one with 192 cores, an AMD
@@ -194,8 +195,9 @@ asserts:
     one socket, one with 2 x 128 cores, and a node without `lscpu`. A supported
     count runs on every node with no NOTE, and `lscpu` is not asked. The 192 AMD
     cores are read from `lscpu`'s indented layout too, and in a German locale;
-  * after an HTTP error the run directory names no instance type, rather than
-    the error page; after an answer that is not a type name (a proxy's page)
+  * after an HTTP error, and after an answer cut off at `--max-time`, the run
+    directory names no instance type, rather than the error page or the start
+    of a type name; after an answer that is not a type name (a proxy's page)
     neither does the run directory, nor, at a supported count on local NVMe,
     the scratch directory.
 
