@@ -1,15 +1,15 @@
 """How the STAR-CCM+ 21.02 x86 submit scripts find the Region of the PoD key's Parameter Store lookup.
 
-With no key from -l or PODLIC, apps/StarCCM/scripts/21.02/x86/submit_batch.sbatch reads the key when the job starts,
-with `aws ssm get-parameter`, from the Parameter Store parameter that PODLIC_SSM_PARAMETER names. When neither
-AWS_REGION nor AWS_DEFAULT_REGION is set, it first reads the Region from the instance metadata (IMDSv2). Each request
-gives up after 5 seconds (2 to connect) and fails on an HTTP error (curl -f). A Region name becomes AWS_REGION for the
-lookup. No answer, an HTTP error, an answer cut off at the time limit, and an answer that is not a Region name (tested
-in the C locale), such as a proxy's page or a Region name inside other text, count as no answer: the script sets no
-Region, so the AWS CLI looks for one itself, and the job goes on. The key reaches STAR-CCM+ in LM_PROJECT only: no line
-prints, logs or stores it.
+With no key from -l or PODLIC, apps/StarCCM/scripts/21.02/x86/submit_batch.sbatch and submit_server.sbatch read the
+key when the job starts, with `aws ssm get-parameter`, from the Parameter Store parameter that PODLIC_SSM_PARAMETER
+names. When neither AWS_REGION nor AWS_DEFAULT_REGION is set, they first read the Region from the instance metadata
+(IMDSv2). Each request gives up after 5 seconds (2 to connect) and fails on an HTTP error (curl -f). A Region name
+becomes AWS_REGION for the lookup. No answer, an HTTP error, an answer cut off at the time limit, and an answer that is
+not a Region name (tested in the C locale), such as a proxy's page or a Region name inside other text, count as no
+answer: the script sets no Region, so the AWS CLI looks for one itself, and the job goes on. The key reaches STAR-CCM+
+in LM_PROJECT only: no line prints, logs or stores it.
 
-The script names STAR-CCM+'s install under /fsx and puts /opt/slurm/bin first on its PATH, so these tests run a copy
+Each script names STAR-CCM+'s install under /fsx and puts /opt/slurm/bin first on its PATH, so these tests run a copy
 of it that names temporary directories instead and differs from the script in those paths alone (checked here). They
 run it with stubs of curl (the instance metadata), aws (the lookup: it notes the Region it is given and answers a
 synthetic key), srun, STAR-CCM+ and the recorder, and a PATH that holds no other curl, aws, Slurm or sudo command: srun
@@ -31,7 +31,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT_DIR = REPO / "apps" / "StarCCM" / "scripts" / "21.02" / "x86"
-SCRIPTS = ("submit_batch.sbatch",)
+SCRIPTS = ("submit_batch.sbatch", "submit_server.sbatch")
 BASH = shutil.which("bash")
 pytestmark = pytest.mark.skipif(BASH is None, reason="needs bash")
 

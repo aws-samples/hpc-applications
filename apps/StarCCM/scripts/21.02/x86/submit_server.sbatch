@@ -49,11 +49,24 @@ SIM_BASENAME=$(basename ${SIM_FILE})
 # STAR-CCM+'s command line, which STAR-CCM+ writes into its log (and -benchmark into
 # its XML and HTML reports).
 if [ -z "${PODKEY}" ] && [ -n "${PODLIC_SSM_PARAMETER:-}" ]; then
+    # The lookup's Region, when AWS_REGION and AWS_DEFAULT_REGION are both unset
+    # or empty, comes from the instance metadata (IMDSv2). Each request gives up
+    # after 5 seconds (2 to connect), and -f turns an HTTP error into no answer.
+    # An answer cut off at that limit, or one that is not a Region name (tested in
+    # the C locale: in some locales [a-z] leaves out i), a proxy's page for
+    # example, counts as none. The script then sets no Region and leaves both
+    # variables as the job got them. If both are unset, the AWS CLI looks for a
+    # Region itself: in its configuration, then (AWS CLI v2) in the instance
+    # metadata. If either is set to an empty string, AWS CLI v2 takes that as the
+    # Region. With an empty Region, or with none, the lookup gives no key, and
+    # STAR-CCM+ starts without one.
     if [ -z "${AWS_REGION:-${AWS_DEFAULT_REGION:-}}" ]; then
-        _imds_token=$(curl -fsS --max-time 2 -X PUT "http://169.254.169.254/latest/api/token" \
-            -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
-        export AWS_REGION=$(curl -fsS --max-time 2 -H "X-aws-ec2-metadata-token: ${_imds_token}" \
-            "http://169.254.169.254/latest/meta-data/placement/region")
+        _imds_token=$(curl -fsS --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" \
+            -H "X-aws-ec2-metadata-token-ttl-seconds: 60") || _imds_token=""
+        _imds_region=$(curl -fsS --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: ${_imds_token}" \
+            "http://169.254.169.254/latest/meta-data/placement/region") || _imds_region=""
+        ( LC_ALL=C; [[ "${_imds_region}" =~ ^[a-z]{2}(-[a-z]+)+-[0-9]+$ ]] ) || _imds_region=""
+        [ -n "${_imds_region}" ] && export AWS_REGION="${_imds_region}"
     fi
     PODKEY=$(aws ssm get-parameter --name "${PODLIC_SSM_PARAMETER}" --with-decryption \
         --query Parameter.Value --output text)
