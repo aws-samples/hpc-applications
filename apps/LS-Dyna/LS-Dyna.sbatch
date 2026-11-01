@@ -114,7 +114,9 @@ export I_MPI_MULTIRAIL=1
 export FI_EFA_FORK_SAFE=1
 module load libfabric-aws
 export I_MPI_DEBUG=5   # prints each rank's core: check the placement in the job log
-# One rank per core: the flexible-cores list on an under-populated hpc8a/hpc7a.96xlarge.
+# One rank per core: the flexible-cores list on an under-populated hpc8a/hpc7a.96xlarge,
+# and, when the instance type is unknown, on a node that lscpu shows with their 192 AMD
+# cores (lib/lsdyna-run.sh).
 lsdyna_pinning "${INSTANCE_TYPE}" "${RPN}" "${CORES}" || exit 1
 
 # --- Licence, memory, the MPP remote shell ----------------------------------------------

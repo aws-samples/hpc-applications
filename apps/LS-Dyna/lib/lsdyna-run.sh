@@ -30,11 +30,14 @@ lsdyna_pin_list() {
 #   - a full node: I_MPI_PIN_ORDER=compact (one rank on every core, in order);
 #   - hpc8a/hpc7a.96xlarge at 24, 48, ..., 168 ranks per node: the official list;
 #   - any other instance type below its core count: Intel MPI's own placement.
+# With no instance type (""), a node below its core count that lscpu shows with
+# 192 AMD cores (lsdyna_amd_192_cores) could be an hpc8a/hpc7a.96xlarge, so it gets
+# their list, or their refusal; any other node gets Intel MPI's own placement, with
+# a one-line NOTE on stderr that the check is skipped. lscpu is read only then.
 # Returns 1, with the reason on stderr, for a count that would load the CCDs of an
-# hpc8a/hpc7a.96xlarge unevenly, for more ranks than cores, and for an
-# under-populated node whose instance type is unknown (it could be one of those).
+# hpc8a/hpc7a.96xlarge (or of such a node) unevenly, and for more ranks than cores.
 lsdyna_pinning() {
-    local itype="$1" rpn="$2" cores="$3" list
+    local itype="$1" rpn="$2" cores="$3" list node="$1" why="" flex=0
     unset I_MPI_PIN_PROCESSOR_LIST I_MPI_PIN_ORDER
     export I_MPI_PIN=1
     LSDYNA_PINNING=""
@@ -49,24 +52,48 @@ lsdyna_pinning() {
     fi
     case "${itype}" in
         hpc8a.96xlarge|hpc7a.96xlarge)
-            if ! list="$(lsdyna_pin_list "${rpn}")"; then
-                echo "ERROR: ${rpn} ranks per node load the 24 CCDs of ${itype} unevenly;" \
-                     "use 24, 48, 72, 96, 120, 144, 168 or 192 (Utils/flexible-cores)" >&2
-                return 1
-            fi
-            export I_MPI_PIN_PROCESSOR_LIST="${list}"
-            LSDYNA_PINNING="flexible-cores list for ${rpn} of 192 cores (the same number of ranks on every CCD)"
-            ;;
+            flex=1 ;;
         "")
-            echo "ERROR: cannot read the instance type from IMDS, so ${rpn} of ${cores} cores per node" \
-                 "cannot be checked; not starting" >&2
-            return 1
-            ;;
-        *)
-            LSDYNA_PINNING="Intel MPI's own placement for ${rpn} of ${cores} cores on ${itype}"
-            LSDYNA_PINNING+=" (no published list for this type; I_MPI_DEBUG=5 prints where each rank runs)"
-            ;;
+            if lsdyna_amd_192_cores; then
+                flex=1; node="hpc8a.96xlarge or hpc7a.96xlarge"
+                why="the instance metadata did not name the instance type, and this node has 192 AMD cores,"
+                why+=" as those two do"
+            else
+                echo "NOTE: the instance metadata did not name the instance type, and lscpu does not show the 192 AMD" \
+                     "cores of hpc8a.96xlarge and hpc7a.96xlarge, so their ranks-per-node check (Utils/flexible-cores)" \
+                     "is skipped for ${rpn} ranks per node" >&2
+            fi ;;
     esac
+    if [ "${flex}" -eq 1 ]; then
+        if ! list="$(lsdyna_pin_list "${rpn}")"; then
+            echo "ERROR: ${rpn} ranks per node load the 24 CCDs of ${node} unevenly${why:+ (${why})};" \
+                 "use 24, 48, 72, 96, 120, 144, 168 or 192 (Utils/flexible-cores)" >&2
+            return 1
+        fi
+        export I_MPI_PIN_PROCESSOR_LIST="${list}"
+        LSDYNA_PINNING="flexible-cores list for ${rpn} of 192 cores (the same number of ranks on every CCD)"
+        LSDYNA_PINNING+="${why:+, as on ${node} (${why})}"
+    elif [ -z "${itype}" ]; then
+        LSDYNA_PINNING="Intel MPI's own placement for ${rpn} of ${cores} cores on a node whose instance type is unknown"
+        LSDYNA_PINNING+=" (I_MPI_DEBUG=5 prints where each rank runs)"
+    else
+        LSDYNA_PINNING="Intel MPI's own placement for ${rpn} of ${cores} cores on ${itype}"
+        LSDYNA_PINNING+=" (no published list for this type; I_MPI_DEBUG=5 prints where each rank runs)"
+    fi
+}
+
+# lsdyna_amd_192_cores: returns 0 when lscpu shows an AMD processor (vendor
+# AuthenticAMD) with 192 cores (sockets x cores per socket), as hpc8a.96xlarge and
+# hpc7a.96xlarge have, and 1 otherwise, lscpu missing or unreadable included.
+# lscpu is read in the C locale: in other locales its labels are translated.
+lsdyna_amd_192_cores() {
+    [ "$(LC_ALL=C lscpu 2>/dev/null | awk -F: '
+        { k = $1; sub(/^[[:space:]]+/, "", k); v = $2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", v) }
+        k == "Vendor ID" { vendor = v }
+        k == "Socket(s)" { sockets = v }
+        k == "Core(s) per socket" { cores = v }
+        END { if (vendor == "AuthenticAMD" && sockets ~ /^[0-9]+$/ && cores ~ /^[0-9]+$/ &&
+                  sockets * cores == 192) print "yes" }')" = yes ]
 }
 
 # lsdyna_ranks_per_node: the ranks Slurm placed on every node, from

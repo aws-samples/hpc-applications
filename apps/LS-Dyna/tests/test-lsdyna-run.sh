@@ -20,6 +20,17 @@ is()  { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "$3" "$2"; fi; }
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 
+# A stub lscpu, first on the PATH: the summary lines lsdyna_amd_192_cores reads, for the
+# CPU STUB_CPU names ("<vendor> <sockets> <cores per socket>").
+mkdir -p "${TMP}/bin"
+cat > "${TMP}/bin/lscpu" <<'EOF'
+#!/bin/bash
+read -r vendor sockets per_socket <<< "${STUB_CPU:?}"
+printf '%-26s%s\n' "Vendor ID:" "${vendor}" "    Core(s) per socket:" "${per_socket}" "    Socket(s):" "${sockets}"
+EOF
+chmod +x "${TMP}/bin/lscpu"
+PATH="${TMP}/bin:${PATH}"
+
 echo "== the flexible-cores lists =="
 for n in 24 48 72 96 120 144 168; do
     list="$(lsdyna_pin_list "${n}")"
@@ -53,10 +64,54 @@ err="$(lsdyna_pinning hpc8a.96xlarge 64 192 2>&1 >/dev/null)"; rc=$?
 is "hpc8a at 64: refused" "${rc}" "1"
 case "${err}" in *unevenly*) ok "hpc8a at 64: the reason names the uneven CCDs";; *) bad "reason" "unevenly" "${err}";; esac
 lsdyna_pinning hpc7a.96xlarge 128 192 2>/dev/null; is "hpc7a at 128: refused" "$?" "1"
-lsdyna_pinning "" 144 192 2>/dev/null; is "unknown type at 144: refused" "$?" "1"
+# An unknown type below a full node: lscpu decides.
+STUB_CPU="AuthenticAMD 2 96" lsdyna_pinning "" 144 192 2>/dev/null
+is "unknown type, 192 AMD cores, 144: the 144 list" "$?/${I_MPI_PIN_PROCESSOR_LIST:-unset}" "0/$(lsdyna_pin_list 144)"
+err="$(STUB_CPU="AuthenticAMD 2 96" lsdyna_pinning "" 64 192 2>&1 >/dev/null)"; rc=$?
+is "unknown type, 192 AMD cores, 64: refused" "${rc}" "1"
+case "${err}" in
+    *"of hpc8a.96xlarge or hpc7a.96xlarge unevenly"*"use 24, 48, 72, 96, 120, 144, 168 or 192"*)
+        ok "unknown type, 192 AMD cores, 64: the reason names both types and the supported counts" ;;
+    *) bad "unknown type, 192 AMD cores, 64: the reason" "both types and the supported counts" "${err}" ;;
+esac
+STUB_CPU="GenuineIntel 2 96" lsdyna_pinning "" 64 192 2>"${TMP}/note" >"${TMP}/stdout"
+is "unknown type, 192 Intel cores, 64: Intel MPI's own placement" \
+    "$?/${I_MPI_PIN_PROCESSOR_LIST:-unset}/${I_MPI_PIN_ORDER:-unset}" "0/unset/unset"
+is "unknown type, 192 Intel cores, 64: one NOTE line on stderr, nothing on stdout" \
+    "$(grep -c '^NOTE: .* is skipped for 64 ranks per node$' "${TMP}/note")/$(grep -c '' "${TMP}/note")/$(grep -c '' "${TMP}/stdout")" \
+    "1/1/0"
 lsdyna_pinning hpc6a.48xlarge 48 96 2>/dev/null
 is "hpc6a at 48: Intel MPI's own placement" "$?/${I_MPI_PIN_PROCESSOR_LIST:-unset}/${I_MPI_PIN_ORDER:-unset}" "0/unset/unset"
 lsdyna_pinning hpc8a.96xlarge 200 192 2>/dev/null; is "more ranks than cores: refused" "$?" "1"
+# Exactly 192 AMD cores: a 2 x 128 AMD node is not an hpc8a/hpc7a.96xlarge.
+STUB_CPU="AuthenticAMD 2 128" lsdyna_pinning "" 144 256 2>"${TMP}/note256" >/dev/null
+is "unknown type, 256 AMD cores, 144: Intel MPI's own placement" \
+    "$?/${I_MPI_PIN_PROCESSOR_LIST:-unset}/${I_MPI_PIN_ORDER:-unset}" "0/unset/unset"
+is "unknown type, 256 AMD cores, 144: one NOTE line" \
+    "$(grep -c '^NOTE: .* is skipped for 144 ranks per node$' "${TMP}/note256")/$(grep -c '' "${TMP}/note256")" "1/1"
+# Sockets x cores per socket: one socket of 192 AMD cores counts as 192, one socket of 96 does not.
+STUB_CPU="AuthenticAMD 1 192" lsdyna_pinning "" 144 192 2>/dev/null
+is "unknown type, one socket of 192 AMD cores, 144: the 144 list" "$?/${I_MPI_PIN_PROCESSOR_LIST:-unset}" "0/$(lsdyna_pin_list 144)"
+STUB_CPU="AuthenticAMD 1 96" lsdyna_pinning "" 48 96 2>"${TMP}/note96" >/dev/null
+is "unknown type, one socket of 96 AMD cores, 48: Intel MPI's own placement and one NOTE line" \
+    "$?/${I_MPI_PIN_PROCESSOR_LIST:-unset}/${I_MPI_PIN_ORDER:-unset}/$(grep -c '^NOTE: .* is skipped for 48 ranks per node$' "${TMP}/note96")/$(grep -c '' "${TMP}/note96")" \
+    "0/unset/unset/1/1"
+# lscpu is read, and the NOTE printed, only for an unknown type below a full node.
+mkdir -p "${TMP}/bin2"
+printf '#!/bin/bash\necho called >> "%s"\nexec "%s" "$@"\n' "${TMP}/lscpu-calls" "${TMP}/bin/lscpu" > "${TMP}/bin2/lscpu"
+chmod +x "${TMP}/bin2/lscpu"
+STUB_CPU="GenuineIntel 2 96" lsdyna_pinning "" 192 192 2>"${TMP}/note-full" >/dev/null
+is "unknown type, full node: compact and no NOTE" "$?/${I_MPI_PIN_ORDER:-unset}/$(grep -c '' "${TMP}/note-full")" "0/compact/0"
+lscpu_calls() {  # lscpu_calls <STUB_CPU> <lsdyna_pinning's arguments>: how many times lscpu ran
+    : > "${TMP}/lscpu-calls"
+    ( PATH="${TMP}/bin2:${PATH}"; hash -r; STUB_CPU="$1"; export STUB_CPU; shift; lsdyna_pinning "$@" >/dev/null 2>&1 )
+    grep -c '' "${TMP}/lscpu-calls"
+}
+is "no lscpu call: unknown type, full node" "$(lscpu_calls "GenuineIntel 2 96" "" 192 192)" "0"
+is "no lscpu call: unknown type, more ranks than cores" "$(lscpu_calls "GenuineIntel 2 96" "" 200 192)" "0"
+is "no lscpu call: hpc8a.96xlarge at 144" "$(lscpu_calls "AuthenticAMD 2 96" hpc8a.96xlarge 144 192)" "0"
+is "no lscpu call: c8i.96xlarge at 64" "$(lscpu_calls "GenuineIntel 2 96" c8i.96xlarge 64 192)" "0"
+is "one lscpu call: unknown type at 144 on 192 AMD cores" "$(lscpu_calls "AuthenticAMD 2 96" "" 144 192)" "1"
 
 echo "== ranks per node =="
 is "--ntasks-per-node" "$(SLURM_NTASKS_PER_NODE=144 SLURM_TASKS_PER_NODE='144(x2)' lsdyna_ranks_per_node)" "144"
