@@ -150,6 +150,10 @@ is "--time-to-solution 30" mesh_cells 3500000
 # ---------------------------------------------------------------------------
 # 6a. A replay with its MIUPS given, from a directory that holds another case's
 #     transcript, at another MIUPS: that transcript's count is not the run's.
+#     Since the recorder reads only the harness's transcript of the case and
+#     core count, its search leaves that transcript out, so this exercises the
+#     search; test-recorder-transcript.sh gives the pairing rule a transcript
+#     as TRANSCRIPT, with another MIUPS given.
 sed 's/^\(Million Cell Iteration Per Wall Second =\).*/\1    30.00 MIUPS/; s/= 3500000$/= 14400000/' \
     "${CELLS_TRN}" > "${WORK}/other-case.trn"
 for c in "other-case-flag -- --miups 20" "other-case-env MIUPS=20"; do
@@ -179,6 +183,10 @@ is "MIUPS 14.01 given, the transcript printing 14.00" mesh_cells -
 is "MIUPS 14.01 given, the transcript printing 14.00" time_per_iteration_seconds 0.28551
 notes "MIUPS 14.01 given, the transcript printing 14.00" 1
 # 6d. A transcript with no MIUPS line (not even the journal's command for it).
+#     The recorder's search takes only a transcript that prints the harness's
+#     MIUPS line, so this too exercises the search;
+#     test-recorder-transcript.sh gives the pairing rule such a transcript as
+#     TRANSCRIPT, with a MIUPS given and with none.
 sed '/Million Cell Iteration Per Wall Second/d' "${CELLS_TRN}" > "${WORK}/no-miups.trn"
 trn no-miups-given "${WORK}/no-miups.trn"
 record no-miups-given -- --miups 14.00

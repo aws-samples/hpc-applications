@@ -41,3 +41,15 @@ as `Cell count = N` and the recorder stores as `mesh_cells`, it also derives
 from the case's published size ( = `num_cells_million` / `miups` ), and a
 `NOTE:` says so. New flags: `--miups`, `--case-read`, `--data-read`,
 `--benchmark-method`, `--solver-mode`.
+
+It reads MIUPS, the cell count and the read times, and the case and the method
+when they are not given, from the harness's transcript of the case and core
+count only. The launch scripts pass the one they checked as `TRANSCRIPT`
+(`--transcript FILE` by hand). Otherwise it takes the last `<case>-<cores>.trn`,
+of the case and core count given when they are, in the run directory
+(`--run-dir`) or its `working/<tag>/transcript/`, that prints the harness's
+`Million Cell Iteration Per Wall Second =` line and is a file, not a link: the
+one the launch scripts check, should the harness write more than one. It
+never reads them from Fluent's own session transcript
+(`fluent-<date>-<time>-<pid>.trn`) or from `fluentbench.pl`'s `<case>-<cores>.trn`,
+which a run directory can hold too.

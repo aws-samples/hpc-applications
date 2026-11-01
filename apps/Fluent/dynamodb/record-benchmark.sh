@@ -102,6 +102,7 @@ CASE_READ_SECONDS="${CASE_READ_SECONDS:-}"
 DATA_READ_SECONDS="${DATA_READ_SECONDS:-}"
 BENCHMARK_METHOD="${BENCHMARK_METHOD:-}" # fluent_benchmark_harness | fluentbench
 SOLVER_MODE="${SOLVER_MODE:-}"           # cpu | gpu
+TRANSCRIPT="${TRANSCRIPT:-}"             # the harness's transcript of the run (--transcript)
 
 # Fluent dataset characteristics (also env-overridable).
 DISCIPLINE="CFD"          # always true for Fluent; override if you must
@@ -175,6 +176,14 @@ OPTIONS
     --run-dir DIR             Dir to scan for the solver log when metrics aren't
                               supplied (default: current dir). Lets a launch
                               script call the recorder with no arguments.
+    --transcript FILE         The 2026R1 harness's transcript of the run, to read
+                              MIUPS, the mesh's cell count, the read times, the
+                              case and the method from (the 2026R1 launch scripts
+                              pass the one they checked). Default: the last
+                              <case>-<cores>.trn of the case and core count, in the
+                              run dir or its working/<tag>/transcript/, that
+                              prints the harness's MIUPS line; never Fluent's own
+                              session transcript, fluent-<date>-<time>-<pid>.trn.
     --out DIR                 Directory for the saved JSON (default: current dir).
     -h, --help                Show this help.
 EOF
@@ -216,6 +225,7 @@ while [ $# -gt 0 ]; do
         --no-put)             DO_PUT="no"; shift;;
         --dry-run)            DRY_RUN=1; shift;;
         --run-dir)            RUN_DIR="$2"; shift 2;;
+        --transcript)         TRANSCRIPT="$2"; shift 2;;
         --out)                OUTDIR="$2"; shift 2;;
         -h|--help)            usage; exit 0;;
         *) echo "ERROR: unknown option '$1' (try --help)" >&2; exit 2;;
@@ -271,6 +281,31 @@ same_number() {
     is_number "$1" && is_number "$2" && LC_ALL=C awk -v a="$1" -v b="$2" 'BEGIN { exit !(a + 0 == b + 0) }'
 }
 
+# harness_transcript <dir>: the 2026R1 harness's transcript of the case and core count
+# in <dir>, or nothing: the last <case>-<cores>.trn (of the case and core count given,
+# when they are) at its top level, then under its working/<tag>/transcript/, that is a
+# file, not a link, and prints the harness's "Million Cell Iteration Per Wall Second ="
+# line: the one the 2026R1 launch scripts check, whose MIUPS an older launch script
+# passes too, so that the MIUPS and the count come from one transcript. So never
+# Fluent's own session transcript (fluent-<date>-<time>-<pid>.trn), fluentbench.pl's
+# <case>-<cores>.trn (it prints no MIUPS), a link to a file shipped with the dataset,
+# or a .trn anywhere else in <dir>.
+harness_transcript() {
+    local f name case_part cores_part last=""
+    for f in "$1"/*.trn "$1"/working/*/transcript/*.trn; do
+        name="${f##*/}"
+        [[ "$name" =~ ^(.+)-([0-9]+)\.trn$ ]] || continue
+        case_part="${BASH_REMATCH[1]}"; cores_part="${BASH_REMATCH[2]}"
+        [[ "$name" =~ ^fluent-[0-9]{8}-[0-9]{6}-[0-9]+\.trn$ ]] && continue
+        [ -z "$BENCHMARK_CASE" ] || [ "$case_part" = "$BENCHMARK_CASE" ] || continue
+        [[ ! "$NUM_CORES" =~ ^[0-9]+$ ]] || [ "$cores_part" = "$NUM_CORES" ] || continue
+        { [ -f "$f" ] && [ ! -L "$f" ]; } || continue
+        grep -q '^Million Cell Iteration Per Wall Second[[:space:]]*=' "$f" 2>/dev/null || continue
+        last="$f"
+    done
+    printf '%s' "$last"
+}
+
 declare -a ITEM_LINES=()
 add_s() {
     [ -n "${2:-}" ] || return 0
@@ -324,12 +359,23 @@ if ls "$RUN_DIR"/*.out >/dev/null 2>&1; then
     [ -n "$SOLVER_RATING" ]      || SOLVER_RATING="$(grep -h 'Solver rating' "$RUN_DIR"/*.out 2>/dev/null | awk '{print $4}' | head -1)"
 fi
 
-# New 2026R1 harness (fluent_benchmark_gpu.py): the per-case transcript
-# <case>-<cores>.trn carries "Million Cell Iteration Per Wall Second = <MIUPS>"
-# plus the case/data read wall times. The transcript lives a few levels down
-# (working/<tag>/transcript/), so look there too.
-_trn="$(ls -1 "$RUN_DIR"/*.trn 2>/dev/null | head -1)"
-[ -n "$_trn" ] || _trn="$(find "$RUN_DIR" -maxdepth 6 -name '*.trn' 2>/dev/null | head -1)"
+# New 2026R1 harness (fluent_benchmark_gpu.py): its transcript of a case and core
+# count, <case>-<cores>.trn under working/<tag>/transcript/, carries "Million Cell
+# Iteration Per Wall Second = <MIUPS>", the mesh's "Cell count = N" and the case/data
+# read wall times. They, the case and the method come from that transcript only:
+# TRANSCRIPT (the 2026R1 launch scripts pass the one they checked), or else the one
+# harness_transcript finds in RUN_DIR. Never from Fluent's own session transcript or
+# fluentbench.pl's, which a run directory can hold too.
+_trn=""
+if [ -n "$TRANSCRIPT" ]; then
+    if [ -f "$TRANSCRIPT" ] && [ -r "$TRANSCRIPT" ]; then
+        _trn="$TRANSCRIPT"
+    else
+        echo "WARN: ignoring TRANSCRIPT '${TRANSCRIPT}': not a readable file, so no transcript is read." >&2
+    fi
+else
+    _trn="$(harness_transcript "$RUN_DIR")"
+fi
 if [ -n "$_trn" ]; then
     _trn_miups="$(grep -h 'Million Cell Iteration Per Wall Second' "$_trn" 2>/dev/null | tail -1 | sed -E 's/.*=[[:space:]]*//' | awk '{print $1}')"
     [ -n "$MIUPS" ]             || MIUPS="$_trn_miups"
@@ -343,9 +389,11 @@ if [ -n "$_trn" ]; then
     [ -n "$DATA_READ_SECONDS" ] || DATA_READ_SECONDS="$(grep -h 'Average wall-clock time per data input' "$_trn" 2>/dev/null | tail -1 | sed -E 's/.*:[[:space:]]*//' | awk '{print $1}')"
     [ -n "$BENCHMARK_METHOD" ]  || BENCHMARK_METHOD="fluent_benchmark_harness"
     [ -n "$BENCHMARK_CASE" ]    || BENCHMARK_CASE="$(basename "$_trn" 2>/dev/null | sed -E 's/-[0-9]+\.trn$//')"
-    if [ -z "$SOLVER_MODE" ]; then
-        if find "$RUN_DIR" -maxdepth 6 -name '*.gpu' 2>/dev/null | grep -q .; then SOLVER_MODE="gpu"; else SOLVER_MODE="cpu"; fi
-    fi
+fi
+# The solver mode, when not given: gpu when the run directory holds a .gpu file, else
+# cpu. As before, only when a transcript is read or the run directory holds any .trn.
+if [ -z "$SOLVER_MODE" ] && { [ -n "$_trn" ] || [ -n "$(find "$RUN_DIR" -maxdepth 6 -name '*.trn' -print -quit 2>/dev/null)" ]; }; then
+    if find "$RUN_DIR" -maxdepth 6 -name '*.gpu' 2>/dev/null | grep -q .; then SOLVER_MODE="gpu"; else SOLVER_MODE="cpu"; fi
 fi
 # If we only found classic metrics, label the method accordingly.
 if [ -z "$BENCHMARK_METHOD" ] && [ -n "${SOLVER_RATING}${TIME_PER_ITERATION}" ]; then

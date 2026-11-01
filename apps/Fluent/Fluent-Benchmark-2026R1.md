@@ -124,8 +124,11 @@ The CPU and GPU scripts record a run only when the harness's transcript of the
 case and core count, `working/<tag>/transcript/<case>-<cores>.trn`, gives the
 case's rating: a positive number on its
 `Million Cell Iteration Per Wall Second =` line, which the recorder then gets
-as MIUPS. Otherwise the job output has a NOTE that names that transcript, and
-nothing is recorded.
+as MIUPS, and the transcript itself as `TRANSCRIPT`. The recorder reads the
+cell count and the read times from that transcript, and from no other in the
+run directory, such as Fluent's own session transcript
+(`fluent-<date>-<time>-<pid>.trn`, in `working/<tag>/<case>/`). Otherwise the
+job output has a NOTE that names that transcript, and nothing is recorded.
 
 ## Classic method (pre-2026 R1)
 

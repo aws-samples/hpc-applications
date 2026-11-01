@@ -24,7 +24,9 @@
 # is a stub too: it records its arguments, writes STUB_TRANSCRIPT where the
 # harness writes its transcript of the case and core count
 # (working/<tag>/transcript/<case>-<cores>.trn, and a copy in
-# working/<tag>/<case>/), and exits with STUB_HARNESS_RC.
+# working/<tag>/<case>/), and STUB_LATER_TRANSCRIPT the same way under a
+# second working/<tag>/, which sorts after the first, and exits with
+# STUB_HARNESS_RC.
 #
 # The recorder is recorder-stub, which logs its arguments and the variables
 # the script passes, or real-recorder: this directory's recorder in --dry-run,
@@ -167,8 +169,10 @@ cat > "${WORK}/bin/harness-python" <<'EOF'
 # Fluent's bundled Python, started as `python fluent_benchmark_gpu.py <arguments>`:
 # records its arguments and working directory, writes STUB_TRANSCRIPT where the
 # 2026 R1 harness writes its transcript of the case and core count
-# (STUB_TRANSCRIPT_NAME names it otherwise), STUB_FLUENT_TRANSCRIPT as Fluent's
-# own transcript, and exits with STUB_HARNESS_RC.
+# (STUB_TRANSCRIPT_NAME names it otherwise), STUB_LATER_TRANSCRIPT the same way
+# under a second working/<tag>/, which sorts after the first,
+# STUB_FLUENT_TRANSCRIPT as Fluent's own transcript, and exits with
+# STUB_HARNESS_RC.
 printf '%s\n' "$@" > "${STUB_STATE}/harness.args"
 pwd > "${STUB_STATE}/harness.cwd"
 cores=""; cases=""; prev=""
@@ -183,6 +187,12 @@ if [ -n "${STUB_TRANSCRIPT:-}" ]; then
     cp "${STUB_TRANSCRIPT}" "working/${tag}/transcript/${name}"
     cp "${STUB_TRANSCRIPT}" "working/${tag}/${cases}/${name}"
 fi
+if [ -n "${STUB_LATER_TRANSCRIPT:-}" ]; then
+    later="10-26-2026=12-30-00"
+    mkdir -p "working/${later}/transcript" "working/${later}/${cases}"
+    cp "${STUB_LATER_TRANSCRIPT}" "working/${later}/transcript/${cases}-${cores}.trn"
+    cp "${STUB_LATER_TRANSCRIPT}" "working/${later}/${cases}/${cases}-${cores}.trn"
+fi
 if [ -n "${STUB_FLUENT_TRANSCRIPT:-}" ]; then
     cp "${STUB_FLUENT_TRANSCRIPT}" "working/${tag}/${cases}/fluent-20261026-120000-1000.trn"
 fi
@@ -195,7 +205,7 @@ cat > "${WORK}/bin/recorder-stub" <<'EOF'
 {
     echo "CALL"
     for a in "$@"; do echo "ARG ${a}"; done
-    for v in FLUENT_VERSION RUN_DIR BENCHMARK_CASE BENCHMARK_METHOD SOLVER_MODE NUM_ITERATIONS MIUPS; do
+    for v in FLUENT_VERSION RUN_DIR BENCHMARK_CASE BENCHMARK_METHOD SOLVER_MODE NUM_ITERATIONS MIUPS TRANSCRIPT; do
         echo "${v}=${!v-}"
     done
 } >> "${STUB_STATE}/recorder.log"

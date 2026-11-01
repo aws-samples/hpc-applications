@@ -23,8 +23,9 @@
 #             fluent-20261026-120000-1000.trn, prints STUB_STDOUT, and exits
 #             with STUB_RC
 #   fluent    Fluent itself, which the journal scripts start: records its
-#             arguments and working directory, prints a line, and exits with
-#             STUB_FLUENT_RC
+#             arguments and working directory, writes STUB_SESSION_TRN as
+#             its own session transcript, fluent-20261026-120000-1000.trn,
+#             prints a line, and exits with STUB_FLUENT_RC
 #   python    Fluent's bundled Python, with the 2026 R1 harness: the stub of
 #             helpers-2026r1.sh, which writes STUB_TRANSCRIPT where the harness
 #             writes its transcript of the case and core count
@@ -69,7 +70,7 @@ cat > "${WORK}/lbin/recorder-stub" <<'EOF'
     echo "CALL"
     for a in "$@"; do echo "ARG ${a}"; done
     for v in FLUENT_VERSION RUN_DIR BENCHMARK_CASE BENCHMARK_METHOD SOLVER_MODE NUM_ITERATIONS MIUPS SOLVER_RATING \
-             TIME_PER_ITERATION SOLVER_SPEED; do
+             TIME_PER_ITERATION SOLVER_SPEED TRANSCRIPT; do
         echo "${v}=${!v-}"
     done
 } >> "${STUB_STATE}/recorder.log"
@@ -101,10 +102,12 @@ EOF
     cat > "${ANSYS_STUB}/${v}/fluent/bin/fluent" <<'EOF'
 #!/bin/bash
 # Fluent, as the journal scripts start it: records its arguments and working
-# directory, prints a line, and exits with STUB_FLUENT_RC.
+# directory, writes STUB_SESSION_TRN as its own session transcript,
+# fluent-20261026-120000-1000.trn, prints a line, and exits with STUB_FLUENT_RC.
 echo "CALL" >> "${STUB_STATE}/solver.calls"
 printf '%s\n' "$0" "$@" > "${STUB_STATE}/solver.args"
 pwd > "${STUB_STATE}/solver.cwd"
+[ -n "${STUB_SESSION_TRN:-}" ] && cp "${STUB_SESSION_TRN}" fluent-20261026-120000-1000.trn
 echo "[stub fluent] $*"
 exit "${STUB_FLUENT_RC:-0}"
 EOF
