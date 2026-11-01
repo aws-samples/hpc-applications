@@ -26,10 +26,15 @@
 #   time_to_solution_seconds  total solver wall-clock time (the model's target).
 #                             If you omit it but pass --time-per-iteration and
 #                             --num-iterations, it is computed (per-iter x iters).
-#   num_cells_million         mesh size in millions of cells
+#   num_cells_million         the case's published mesh size, in millions of cells
 # Optional but valuable:
 #   solver_rating, solver_speed, time_per_iteration_seconds, num_iterations,
 #   turbulence_model, solver_type, analysis_type, cell_type, fluent_version
+#   mesh_cells                the mesh's own cell count, from the 2026R1 harness's transcript
+#                             ("Cell count = N", the count its MIUPS is computed on), when the
+#                             MIUPS used is that transcript's (read from it, or given and equal
+#                             to its line); the time per iteration is N / 1e6 / MIUPS, else
+#                             num_cells_million / MIUPS
 #
 # The record lands in a DynamoDB table named  External_<Source>_Fluent  in the
 # owner's account/region. The ingestion side reads the record by the canonical
@@ -101,6 +106,7 @@ SOLVER_MODE="${SOLVER_MODE:-}"           # cpu | gpu
 # Fluent dataset characteristics (also env-overridable).
 DISCIPLINE="CFD"          # always true for Fluent; override if you must
 NUM_CELLS_MILLION="${NUM_CELLS_MILLION:-}"
+MESH_CELLS=""             # read from the 2026R1 harness's transcript only
 NUM_ITERATIONS="${NUM_ITERATIONS:-}"
 TURBULENCE_MODEL="${TURBULENCE_MODEL:-}"
 SOLVER_TYPE="${SOLVER_TYPE:-}"
@@ -116,7 +122,7 @@ declare -a EXTRA_METRICS=()
 declare -a EXTRA_CHARS=()
 
 usage() {
-    sed -n '2,62p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,67p' "$0" | sed 's/^# \{0,1\}//'
     cat <<'EOF'
 
 OPTIONS
@@ -150,7 +156,10 @@ OPTIONS
     --data-read SEC           Avg wall-clock time to read the data (2026R1).
     --benchmark-method M      fluent_benchmark_harness (2026R1) | fluentbench.
     --solver-mode M           cpu | gpu (which Fluent solver was benchmarked).
-    --num-cells-million X     Mesh size in millions of cells.
+    --num-cells-million X     The case's published mesh size, in millions of cells.
+                              With MIUPS, the time per iteration is X / MIUPS only
+                              when no transcript gives the mesh's "Cell count = N"
+                              (a transcript that prints the MIUPS used).
     --turbulence-model M      e.g. k-omega-sst, k-epsilon-realizable.
     --solver-type T           steady|transient; pressure-/density-based; coupled/segregated.
     --analysis-type T         steady | transient | RANS | ...
@@ -235,9 +244,32 @@ imds_instance_type() {
     if ( LC_ALL=C; [[ "$itype" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ); then printf '%s' "$itype"; fi
 }
 
+# transcript_cell_count <transcript>: the mesh's own cell count, from the 2026R1
+# harness's "Cell count = N" line (its print of number-of-cells, the count its MIUPS
+# is computed on), or nothing. N must be a positive integer (as Fluent prints one: no
+# sign, no leading zero), and every such line of the transcript must give the same N.
+# Lines that only mention it (the journal's echo of the print, the partition table)
+# do not start with "Cell count =". awk reads the file on its standard input: given
+# as an argument, a relative path such as run=1/... would be an assignment to awk.
+transcript_cell_count() {
+    LC_ALL=C awk '
+        /^Cell count[[:space:]]*=/ {
+            v = $0; sub(/^Cell count[[:space:]]*=[[:space:]]*/, "", v); sub(/[[:space:]]+$/, "", v)
+            if (v !~ /^[1-9][0-9]*$/) bad = 1
+            else if (n == "") n = v
+            else if (v != n) bad = 1
+        }
+        END { if (!bad && n != "") print n }' 2>/dev/null < "$1"
+}
+
 json_escape() { local s="${1//\\/\\\\}"; printf '%s' "${s//\"/\\\"}"; }
 
 is_number() { [[ "$1" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; }
+
+# same_number <a> <b>: true when both are numbers (is_number) of the same value (13.65, 13.650).
+same_number() {
+    is_number "$1" && is_number "$2" && LC_ALL=C awk -v a="$1" -v b="$2" 'BEGIN { exit !(a + 0 == b + 0) }'
+}
 
 declare -a ITEM_LINES=()
 add_s() {
@@ -299,7 +331,14 @@ fi
 _trn="$(ls -1 "$RUN_DIR"/*.trn 2>/dev/null | head -1)"
 [ -n "$_trn" ] || _trn="$(find "$RUN_DIR" -maxdepth 6 -name '*.trn' 2>/dev/null | head -1)"
 if [ -n "$_trn" ]; then
-    [ -n "$MIUPS" ]             || MIUPS="$(grep -h 'Million Cell Iteration Per Wall Second' "$_trn" 2>/dev/null | tail -1 | sed -E 's/.*=[[:space:]]*//' | awk '{print $1}')"
+    _trn_miups="$(grep -h 'Million Cell Iteration Per Wall Second' "$_trn" 2>/dev/null | tail -1 | sed -E 's/.*=[[:space:]]*//' | awk '{print $1}')"
+    [ -n "$MIUPS" ]             || MIUPS="$_trn_miups"
+    # The transcript's cell count times the run only with the transcript's own MIUPS: the
+    # MIUPS used is the number on its line, read from it here or given (a launcher passing
+    # the transcript it checked). A transcript that prints no MIUPS, or another one than the
+    # MIUPS given (a replay from a directory that holds another run's transcript), gives no
+    # count, so the time per iteration is on the case's nominal size, with the NOTE.
+    same_number "$MIUPS" "$_trn_miups" && MESH_CELLS="$(transcript_cell_count "$_trn")"
     [ -n "$CASE_READ_SECONDS" ] || CASE_READ_SECONDS="$(grep -h 'Average wall-clock time per case input' "$_trn" 2>/dev/null | tail -1 | sed -E 's/.*:[[:space:]]*//' | awk '{print $1}')"
     [ -n "$DATA_READ_SECONDS" ] || DATA_READ_SECONDS="$(grep -h 'Average wall-clock time per data input' "$_trn" 2>/dev/null | tail -1 | sed -E 's/.*:[[:space:]]*//' | awk '{print $1}')"
     [ -n "$BENCHMARK_METHOD" ]  || BENCHMARK_METHOD="fluent_benchmark_harness"
@@ -325,11 +364,20 @@ if [ -z "$NUM_CELLS_MILLION" ] && [ -n "$BENCHMARK_CASE" ]; then
     _ncm="$(printf '%s' "$BENCHMARK_CASE" | grep -oiE '[0-9]+m' | head -1 | grep -oE '[0-9]+')"
     [ -n "$_ncm" ] && NUM_CELLS_MILLION="$_ncm"
 fi
-# New harness: MIUPS = million-cell-iterations / wall-second. With the mesh size
-# this yields the per-iteration wall time (= cells_million / MIUPS).
-if [ -z "$TIME_PER_ITERATION" ] && is_number "${MIUPS:-}" && is_number "${NUM_CELLS_MILLION:-}" \
-        && awk "BEGIN{exit !(${MIUPS:-0} > 0)}"; then
-    TIME_PER_ITERATION="$(awk "BEGIN{printf \"%.6g\", ${NUM_CELLS_MILLION} / ${MIUPS}}")"
+# New harness: MIUPS = million-cell-iterations / wall-second, on the mesh's own cell
+# count, which the transcript prints. So the per-iteration wall time is that count
+# / 1e6 / MIUPS. With no usable count it is num_cells_million / MIUPS, on the size in
+# the case's name, which can differ from the mesh's: a NOTE says so.
+if [ -z "$TIME_PER_ITERATION" ] && is_number "${MIUPS:-}" && awk "BEGIN{exit !(${MIUPS:-0} > 0)}"; then
+    if [ -n "$MESH_CELLS" ]; then
+        TIME_PER_ITERATION="$(awk "BEGIN{printf \"%.6g\", ${MESH_CELLS} / 1e6 / ${MIUPS}}")"
+    elif is_number "${NUM_CELLS_MILLION:-}"; then
+        TIME_PER_ITERATION="$(awk "BEGIN{printf \"%.6g\", ${NUM_CELLS_MILLION} / ${MIUPS}}")"
+        echo "NOTE: no transcript gives the mesh's own cell count (one positive integer on the" \
+             "\"Cell count = N\" lines of a transcript that prints the MIUPS used), so the time per" \
+             "iteration is num_cells_million / MIUPS, on the case's nominal size" \
+             "(${NUM_CELLS_MILLION} million cells)." >&2
+    fi
 fi
 
 # Fluent total solve time = per-iteration x iterations, when total not given directly.
@@ -406,6 +454,7 @@ for pair in "${EXTRA_METRICS[@]:-}"; do [ -n "$pair" ] && add_kv add_n "$pair"; 
 # Dataset characteristics
 add_s "discipline"           "$DISCIPLINE"
 add_n "num_cells_million"    "$NUM_CELLS_MILLION"
+add_n "mesh_cells"           "$MESH_CELLS"
 add_n "num_iterations"       "$NUM_ITERATIONS"
 add_s "turbulence_model"     "$TURBULENCE_MODEL"
 add_s "solver_type"          "$SOLVER_TYPE"

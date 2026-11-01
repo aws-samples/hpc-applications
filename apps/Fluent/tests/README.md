@@ -46,6 +46,13 @@ its own, `fluent-<date>-<pid>.trn`. The Arm scripts name their install as
 `/fsx/ansys_inc`, so they run from a copy that names the stub tree instead and
 differs from the script in that line alone.
 
+The `test-recorder-*.sh` files run **the recorder itself**,
+`dynamodb/record-benchmark.sh`, in `--dry-run`, with the transcripts and output
+files that a test puts in a run directory, and through the 2026 R1 launch
+scripts. `helpers-recorder.sh` adds the functions they share to those of
+`helpers-launchers.sh`. `fixtures/steady-cell-count.trn` is a transcript of
+`sedan_4m` whose mesh's cell count differs from the size in the case's name.
+
 ## Adding a case
 
 Drop a transcript in `fixtures/` and add a `run_2026r1` call (for the other
