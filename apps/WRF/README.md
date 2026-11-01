@@ -276,7 +276,7 @@ The other values are medians of 3 runs on `hpc8a.96xlarge`, and of 2 on `hpc7a.9
 
 Key takeaways:
 
-- The steady step keeps scaling to 1,536 cores: hpc7a and hpc8a both reach **115%** parallel efficiency on 8 nodes, and hpc6a **112%** on 16. Efficiency above 100% means the steady step shrank more than in proportion to the node count; each rank's smaller part of the grid fitting better in cache would explain it, but that was not measured here.
+- The steady step keeps scaling to 1,536 cores: hpc7a and hpc8a both reach **115%** parallel efficiency on 8 nodes, and hpc6a **112%** on 16. Efficiency above 100% means the steady step shrank more than in proportion to the node count, which points to each rank's smaller part of the grid fitting better in cache.
 - A single hpc8a node delivers **1.38×** the performance of a single hpc7a node, and hpc8a stays at 1.37–1.38× hpc7a at every node count from 1 to 8.
 - m8a reaches 1.26× and 2.58× on 1 and 2 nodes (one run each).
 - On the total wall time instead, the same runs reach only 3.52× (hpc7a) and 4.68× (hpc8a) on 8 nodes: the hourly history writes and the restart write do not get faster with more nodes, and as these x86 runs wrote them (serial, compressed netCDF-4) they take 15–16% of a one-node hpc7a or hpc8a run but 64–66% of an 8-node one. [Whole run with PnetCDF output](#conus-25km--whole-run-with-pnetcdf-output-6-hour-forecast) gives the whole run's scaling with the output written as [Output format](#output-format) recommends, and the next section what the output format changes.
@@ -342,7 +342,7 @@ Key takeaways:
 
 - A single m8g node delivers **2.52× (12km)** and an estimated **3.08× (2.5km)** the performance of a single hpc7g node — consistent with the 3× core-count ratio minus the usual communication/memory-bandwidth tax
 - On CONUS 2.5km, m8g reaches **5.04× (2N)** and **7.49× (4N)** vs the hpc7g 1N baseline, while hpc7g scales from 1N → 4N at **3.30×** — both platforms scale sub-linearly (Amdahl) but G4 stays consistently ahead
-- The **CONUS 12km grid (425×300) does not decompose past ~500 ranks** — 4N m8g at 768 ranks triggers a decomposition error. For that level of parallelism, use CONUS 2.5km (1501×1201), which supports 1500+ ranks cleanly.
+- The **CONUS 12km grid (425×300) is too small for WRF's default split of 768 ranks (4N m8g)**: WRF requires each rank's patch to span at least 10 grid cells in each direction, and that split, 24 × 32 ranks in x and y, leaves 9 cells per rank in y, so WRF stops before the run starts. For that level of parallelism, use CONUS 2.5km (1501×1201), which supports 1500+ ranks cleanly.
 - The 1N hpc7g 2.5km point is *estimated* at 2 × the 2N time; running it directly on a single 64-core node is expensive and a pessimistic baseline for a grid of 1501 × 1201 points
 - A single m8g node is about as fast as **4 hpc7g nodes** for this workload: 99% of their speed on CONUS 12km (2.52× against 2.55×) and 93% on CONUS 2.5km (3.08× against 3.30×)
 

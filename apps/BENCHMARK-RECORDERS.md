@@ -158,8 +158,8 @@ On a cluster these are auto-detected. Off-cluster, pass `--instance-type`,
   (region `us-east-1` by default). `<App>` is the capitalized engine name, e.g.
   `External_AcmeCorp_Fluent`, `External_AcmeCorp_Openfoam`,
   `External_AcmeCorp_Gromacs`, `External_AcmeCorp_Wrf`.
-- The ingestion side reads **every** `External_*` table with an identity map, so
-  the canonical attribute names the recorder writes are consumed as-is.
+- The ingestion side reads each record by the canonical attribute names the
+  recorder writes, so keep the names as they are.
 - Each row carries: the required fields, your result metrics, dataset
   characteristics, a generated `record_id`, a `recorded_at` UTC timestamp, and
   provenance (`provenance_origin=external`, `provenance_source_id=<Source>`).

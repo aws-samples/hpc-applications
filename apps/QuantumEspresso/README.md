@@ -248,7 +248,7 @@ never sits next to a broken binary.
 [AUSURF112](https://github.com/QEF/benchmarks) is the standard QE benchmark:
 a 112-atom gold surface (Au(111) slab), ultrasoft pseudopotential, 800 bands,
 `ecutwfc = 25` Ry / `ecutrho = 200` Ry, run with `pw.x`. It fits in the memory
-of any instance listed below and completes in minutes, making it well suited to
+of any instance listed below and is a short run, making it well suited to
 right-sizing studies.
 
 **On k-points.** The deck does not list k-points explicitly; it requests an
@@ -336,9 +336,12 @@ sbatch -p <graviton-partition> --export=ALL,NPOOL=2 Arm/qe-benchmark.sbatch
 
 ## Performance on AWS Graviton
 
-**What this compares: current-generation Graviton, at equal core counts.** Wall
-times are measured AUSURF112 SCF runs — pure MPI, one rank per physical core,
-layout as above, the same deck each time (`electron_maxstep = 2`, fixed work).
+**What this compares: current-generation Graviton, at equal core counts.** The
+table gives the performance of measured AUSURF112 SCF runs — pure MPI, one rank
+per physical core, layout as above, the same deck each time
+(`electron_maxstep = 2`, fixed work) — relative to one `c8g.16xlarge`
+(Graviton4, 64 cores) = 1.00×: that run's wall time over each point's wall
+time, so higher is faster.
 Each core count is paired with the **smallest compute-optimised instance that
 provides that many physical cores** (right-sizing: never undersubscribe a
 bigger instance).
@@ -349,15 +352,16 @@ result, which makes those points a poor basis for comparing generations.
 
 | Cores | Graviton4 (Neoverse V2) | Graviton5 (Neoverse V3) | Graviton5 advantage |
 |------:|------------------------:|------------------------:|--------------------:|
-| 64 | **185 s** (`c8g.16xlarge`) | **142 s** (`c9g.16xlarge`) | 1.30× |
-| 96 | **172 s** (`c8g.24xlarge`) | **128 s** (`c9g.24xlarge`) | 1.34× |
+| 64 | **1.00×** (`c8g.16xlarge`) | **1.30×** (`c9g.16xlarge`) | 1.30× |
+| 96 | **1.08×** (`c8g.24xlarge`) | **1.45×** (`c9g.24xlarge`) | 1.34× |
 
 Reading the data:
 
 - **Graviton5 is a substantial step.** It completes the same fixed work ~1.3×
   faster than Graviton4 at equal core counts, at both 64 and 96 cores.
 - **Strong scaling has flattened by 64 cores** for this system size: the step
-  from 64 to 96 cores buys 7% on c8g and 10% on c9g, for 50% more cores.
+  from 64 to 96 cores takes 7% less time on c8g and 10% less on c9g, for 50%
+  more cores.
   AUSURF112 is a small system — 112 atoms, 800 bands — so there is only so much
   plane-wave FFT work to spread across ranks. Larger systems scale further.
 - **Right-size instead of undersubscribing.** Running 64 ranks on a 96-core
@@ -376,13 +380,12 @@ right-sizing target for new work, so no results are published for them here.
 - **Graviton4** (`c8g`): `eu-north-1`. Compiled `-mcpu=neoverse-v2`.
 - **Graviton5** (`c9g`): 2026-07, `eu-central-1`, AWS PCS with Slurm 25.11, one
   MPI rank per physical core, `sbatch --exclusive`, 10 reps per point (median
-  of QE's own `PWSCF ... WALL` timer; spread across reps ≤ 12 s at every
-  point). Also compiled `-mcpu=neoverse-v2`, **not** `-mcpu=neoverse-v3` — see
-  the provenance note below.
+  of QE's own `PWSCF ... WALL` timer; spread across reps under 10% of the
+  median at every point). Also compiled `-mcpu=neoverse-v2`, **not**
+  `-mcpu=neoverse-v3` — see the provenance note below.
 
 The two sets were measured in separate campaigns and regions, so treat the
-Graviton5 advantage as the headline and small absolute differences as
-measurement noise.
+Graviton5 advantage as the headline and small differences as measurement noise.
 
 **Provenance of the Graviton5 binary: it was _not_ V3-tuned.** The c9g runs used
 a binary compiled with `-mcpu=neoverse-v2`, not `-mcpu=neoverse-v3`. It came from
@@ -410,9 +413,8 @@ Two consequences worth being explicit about:
    measured binary — it produces a better-tuned one.** On a stock Amazon Linux
    2023 node its probe accepts `-mcpu=neoverse-v3` (that flag is back-ported into
    AL2023's gcc 11), so it emits V3 code where the benchmark used V2. Expect the
-   script's c9g wall times to be equal or better than the table above, not
-   identical to it. To reproduce the measured configuration exactly, pin the
-   target:
+   script's c9g runs to be as fast as the table above or faster, not identical
+   to it. To reproduce the measured configuration exactly, pin the target:
 
    ```bash
    sbatch -p <c9g-partition> --export=ALL,TARGET=graviton4 Arm/build_qe_arm.sbatch

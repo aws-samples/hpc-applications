@@ -167,7 +167,7 @@ There are two ways to run it: `run_hpl_gpu.sh` on a single node with Docker, or 
 ### Single node with Docker (`run_hpl_gpu.sh`)
 
 - Docker with `nvidia-container-toolkit`
-- NVIDIA GPU drivers (pre-installed on the [Deep Learning AMI](https://aws.amazon.com/machine-learning/amis/))
+- NVIDIA GPU drivers (pre-installed on the [Deep Learning AMI](https://aws.amazon.com/ai/machine-learning/amis/))
 - No compilation needed — the binary is inside the container
 
 ```bash

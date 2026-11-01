@@ -339,7 +339,7 @@ before trusting a timing.
       * R-family ([r7i](https://aws.amazon.com/ec2/instance-types/r7i/) /
         [r8i](https://aws.amazon.com/ec2/instance-types/r8i/), or
         [r8id](https://aws.amazon.com/ec2/instance-types/r8i/) /
-        [i7ie](https://aws.amazon.com/ec2/instance-types/i7ie/) for local
+        [i7ie](https://aws.amazon.com/ec2/instance-types/i7i/) for local
         NVMe) — worth it mainly when a single node must hold a very large model:
         one r8i.96xlarge ran V26direct-6 in-core, while two Hpc6id nodes ran it
         faster, in-core as well. Per core, r7i and r8i cost the most of the
