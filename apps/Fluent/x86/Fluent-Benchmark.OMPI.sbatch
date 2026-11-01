@@ -187,6 +187,7 @@ fi
 
 echo "Run Fluent Benchmark: ${APP_BIN_PATH} ${fluent_args[*]}"
 "${APP_BIN_PATH}" "${fluent_args[@]}" | tee output.$SLURM_JOBID.out
+_rec_rc=${PIPESTATUS[0]}
 
 # --- Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal) ---
 # The recorder self-collects host info from the environment and parses the Fluent
@@ -197,10 +198,11 @@ echo "Run Fluent Benchmark: ${APP_BIN_PATH} ${fluent_args[*]}"
 # line. A rating only in another case's or core count's output, in this job's
 # output.<jobid>.out or in a link to a file shipped with the dataset does not
 # count, so failed solves don't pollute the data. The recorder gets that file's
-# rating, time per iteration and solver speed, as SOLVER_RATING,
-# TIME_PER_ITERATION and SOLVER_SPEED. Override the recorder's path with
-# DYNAMODB_RECORDER; set SOURCE=<YourOrg> to tag your contributions. See
-# apps/Fluent/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
+# rating and, where that file gives them, its time per iteration and solver
+# speed, as SOLVER_RATING, TIME_PER_ITERATION and SOLVER_SPEED. Override the
+# recorder's path with DYNAMODB_RECORDER; set SOURCE=<YourOrg> to tag your
+# contributions. See apps/Fluent/dynamodb/README.md and
+# apps/BENCHMARK-RECORDERS.md.
 _case_out="${benchmark_name}-${SLURM_NPROCS}.out"
 # _case_value <name>: the first word after "=" on that file's last "<name> =" line
 _case_value() {
@@ -227,9 +229,17 @@ if [ -z "${_rating}" ]; then
          "rating on a \"Solver rating =\" line." >&2
     echo "NOTE: no solver rating found in the benchmark output; skipping benchmark recording." >&2
 elif [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
+    # The case and the method too: without them, the recorder takes both from the
+    # run dir's first .trn file, which can be Fluent's own session transcript
+    # (fluent-<date>-<pid>.trn).
     FLUENT_VERSION="${fluentversion}" RUN_DIR="${workdir}" SOLVER_RATING="${_rating}" \
-        TIME_PER_ITERATION="${_time_per_iteration}" SOLVER_SPEED="${_solver_speed}" "${_recorder}" \
+        TIME_PER_ITERATION="${_time_per_iteration}" SOLVER_SPEED="${_solver_speed}" \
+        BENCHMARK_CASE="${benchmark_name}" BENCHMARK_METHOD="fluentbench" "${_recorder}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 else
     echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2
 fi
+# The job ends with fluentbench.pl's own exit status (not tee's), whatever the
+# recording did, as the CFX and OptiStruct scripts and the STAR-CCM+ batch
+# scripts end with their solver's.
+exit "${_rec_rc}"

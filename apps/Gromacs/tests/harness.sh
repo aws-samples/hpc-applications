@@ -9,7 +9,9 @@
 # md.log; mpirun logs its command line and runs the gmx_mpi stub; srun, sudo and
 # the cache drop touch nothing; the aws stub refuses every call. curl answers the
 # IMDS reads as STUB_IMDS says, and lscpu describes the CPU STUB_LSCPU names, so
-# the test host's CPU never decides a case.
+# the test host's CPU never decides a case. gpu_stubs adds what the GPU launcher
+# needs on top of these: nvidia-smi, a stub GPU build and the nvcc its env scripts
+# put on the PATH.
 #
 # No Slurm, no EC2, no GROMACS, no MPI, no AWS credentials, no network.
 #
@@ -225,6 +227,62 @@ export GROMACS_TAG="v2024.4"
 export PATH="\${GROMACS_ROOT}/bin:\${PATH}"
 export GMXLIB="\${GROMACS_ROOT}/share/gromacs/top"
 ENV
+    done
+}
+
+# gpu_stubs: what GPU/gromacs-benchmark.sbatch needs on top of the stubs above, for the
+# tests that run it:
+#   nvidia-smi  STUB_GPUS NVIDIA L40S GPUs (one by default): -L lists them, topo -m
+#               prints their matrix, --query-gpu their name, and with no argument the
+#               summary names the driver and the CUDA version it supports;
+#   a stub L40S build, laid out as build_gromacs_gpu.sbatch lays it out, whose env
+#               scripts GPU_TMPI_ENV and GPU_OMPI_ENV name (a test gives the run one as
+#               GROMACS_ENV). As the build's env scripts load the CUDA toolkit, these put
+#               STUBS/cuda/bin on the PATH, with an nvcc whose --version names CUDA 13.0,
+#               unless STUB_CUDA=none (a node where no CUDA toolkit loads). STUB_NVCC=
+#               no-release makes nvcc print no release line, and not-a-number a release
+#               that is not a version number.
+gpu_stubs() {
+    cat > "${STUBS}/bin/nvidia-smi" <<'EOF'
+#!/bin/bash
+# nvidia-smi stub: STUB_GPUS GPUs (default 1). -L lists them, topo -m prints
+# their matrix, --query-gpu prints their name, and with no argument the
+# summary names the driver and the CUDA version it supports.
+n="${STUB_GPUS:-1}"
+case "${1:-}" in
+  -L) for (( i = 0; i < n; i++ )); do echo "GPU ${i}: NVIDIA L40S (UUID: GPU-stub-${i})"; done;;
+  topo) printf '        '; for (( i = 0; i < n; i++ )); do printf 'GPU%d    ' "${i}"; done; echo
+        for (( i = 0; i < n; i++ )); do
+          printf 'GPU%d    ' "${i}"
+          for (( j = 0; j < n; j++ )); do if (( i == j )); then printf ' X      '; else printf 'SYS     '; fi; done
+          echo
+        done;;
+  --query-gpu=*) for (( i = 0; i < n; i++ )); do echo "NVIDIA L40S, 46068 MiB"; done;;
+  *) echo "| NVIDIA-SMI 580.00   Driver Version: 580.00   CUDA Version: 13.0 |";;
+esac
+EOF
+    mkdir -p "${STUBS}/cuda/bin"
+    cat > "${STUBS}/cuda/bin/nvcc" <<'EOF'
+#!/bin/bash
+# nvcc stub: --version names CUDA 13.0, as the toolkit prints it. STUB_NVCC=no-release
+# prints no release line, and STUB_NVCC=not-a-number a release that is not a number.
+echo 'nvcc: NVIDIA (R) Cuda compiler driver'
+case "${STUB_NVCC:-}" in
+  no-release)   ;;
+  not-a-number) echo 'Cuda compilation tools, release beta, Vbeta';;
+  *)            echo 'Cuda compilation tools, release 13.0, V13.0.48';;
+esac
+EOF
+    chmod +x "${STUBS}/bin/nvidia-smi" "${STUBS}/cuda/bin/nvcc"
+    make_install "${STUBS}" x86_64-cuda13-l40s gromacs-v2024.4-tmpi-env.sh gromacs-v2024.4-ompi-env.sh
+    # The test files that call gpu_stubs read these two.
+    # shellcheck disable=SC2034
+    GPU_TMPI_ENV="${STUBS}/x86_64-cuda13-l40s/v2024.4/gromacs-v2024.4-tmpi-env.sh"
+    # shellcheck disable=SC2034
+    GPU_OMPI_ENV="${STUBS}/x86_64-cuda13-l40s/v2024.4/gromacs-v2024.4-ompi-env.sh"
+    local env_script
+    for env_script in "${GPU_TMPI_ENV}" "${GPU_OMPI_ENV}"; do
+        echo "[ \"\${STUB_CUDA:-}\" = none ] || export PATH=\"${STUBS}/cuda/bin:\${PATH}\"" >> "${env_script}"
     done
 }
 

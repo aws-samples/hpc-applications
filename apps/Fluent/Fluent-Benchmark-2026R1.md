@@ -132,6 +132,7 @@ The classic scripts,
 [`Arm/Fluent-benchmark.sbatch`](Arm/Fluent-benchmark.sbatch), record a run
 only when `fluentbench.pl`'s output of the case and core count,
 `<case>-<cores>.out` in the run directory, gives the case's rating: a positive
-number on its `Solver rating =` line. The recorder then gets that rating, and
-that file's time per iteration and solver speed. Otherwise the job output has
-a NOTE that names that file, and nothing is recorded.
+number on its `Solver rating =` line. The recorder then gets that file's rating
+and, where that file gives them, its time per iteration and solver speed.
+Otherwise the job output has a NOTE that names that file, and nothing is
+recorded.

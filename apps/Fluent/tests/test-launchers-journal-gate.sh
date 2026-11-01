@@ -10,8 +10,8 @@
 #   * a run that Fluent ends with status 2, or 137 (killed), is not recorded,
 #     and the NOTE "solver exited <status>; skipping benchmark recording." says
 #     so, instead of the NOTE about a missing recorder when none is found;
-#   * either way the job exits 0, as before, and output.<job>.out keeps
-#     Fluent's output;
+#   * either way the job ends with Fluent's own exit status, 0, 2 or 137, and
+#     output.<job>.out keeps Fluent's output;
 #   * with no recorder to be found, a run that Fluent ends with status 0 gets
 #     the NOTE that says how to point at one.
 #
@@ -24,8 +24,9 @@ echo "The journal scripts: Fluent's exit status"
 
 NOTE_NOT_FOUND="NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record."
 
-exits_0_with_output() {  # <description>: the job exits 0, and output.<job>.out holds Fluent's line
-    [ "${RC}" -eq 0 ] && ok "$1 -> the job exits 0" || bad "$1 -> the job exits 0" "exit 0" "exit ${RC}"
+exits_with_output() {  # <description> <status>: the job exits <status>, and output.<job>.out holds Fluent's line
+    [ "${RC}" -eq "$2" ] && ok "$1 -> the job exits $2, Fluent's status" \
+        || bad "$1 -> the job exits $2, Fluent's status" "exit $2" "exit ${RC}"
     grep -q '^\[stub fluent\] ' "${WORKDIR}/output.4242.out" 2>/dev/null \
         && ok "$1 -> output.<job>.out keeps Fluent's output" \
         || bad "$1 -> output.<job>.out keeps Fluent's output" "the stub's line" \
@@ -42,7 +43,7 @@ for s in "${JOURNAL_SCRIPTS[@]}"; do
         bad "${s}: Fluent exits 0 -> recorded once, no NOTE about its status" "1 call, no NOTE" \
             "$(recorder_calls) call(s); ${ERR}"
     fi
-    exits_0_with_output "${s}: Fluent exits 0"
+    exits_with_output "${s}: Fluent exits 0" 0
     for rc in 2 137; do
         run_launcher "${s}" "${n}-rc${rc}" STUB_FLUENT_RC="${rc}"
         [ "$(recorder_calls)" = "0" ] && ok "${s}: Fluent exits ${rc} -> not recorded" \
@@ -51,7 +52,7 @@ for s in "${JOURNAL_SCRIPTS[@]}"; do
             && ok "${s}: Fluent exits ${rc} -> a NOTE gives its status" \
             || bad "${s}: Fluent exits ${rc} -> a NOTE gives its status" \
                    "NOTE: solver exited ${rc}; skipping benchmark recording." "${ERR}"
-        exits_0_with_output "${s}: Fluent exits ${rc}"
+        exits_with_output "${s}: Fluent exits ${rc}" "${rc}"
     done
     run_launcher "${s}" "${n}-no-recorder" DYNAMODB_RECORDER=
     has_line "${ERR}" "${NOTE_NOT_FOUND}" && ok "${s}: no recorder -> a NOTE says how to point at it" \

@@ -15,7 +15,8 @@
 #     when the harness writes no transcript, and when a rating is only in
 #     another case's transcript, another core count's, Fluent's own transcript
 #     or a .trn shipped with the dataset;
-#   * the job's exit status does not change.
+#   * the job ends with the harness's exit status: 0, or 1 where it writes no
+#     transcript (test-launchers-exit-status.sh tests the status itself).
 #
 #   apps/Fluent/tests/test-launchers-gpu-gate.sh
 # =============================================================================
@@ -41,7 +42,8 @@ recorded() {  # <description>: the last run was recorded once, with MIUPS=12.34
         ok "$1 -> no NOTE about the rating"
     fi
 }
-not_recorded() {  # <description>: the last run was not recorded, both NOTEs say why, the job exits 0
+not_recorded() {  # <description> [<status>]: not recorded, both NOTEs say why, the job exits <status> (0)
+    local want="${2:-0}"
     [ "$(recorder_calls)" = "0" ] && ok "$1 -> not recorded" \
         || bad "$1 -> not recorded" "no recorder call" "$(recorder_calls) call(s)"
     if has_line "${ERR}" "${NOTE_TRN}" && has_line "${ERR}" "${NOTE_SKIP}"; then
@@ -50,8 +52,8 @@ not_recorded() {  # <description>: the last run was not recorded, both NOTEs say
         bad "$1 -> a NOTE names the transcript, then the NOTE that skips the recording" \
             "${NOTE_TRN} / ${NOTE_SKIP}" "${ERR}"
     fi
-    [ "${RC}" -eq 0 ] && ok "$1 -> the job's exit status is unchanged (0)" \
-        || bad "$1 -> the job's exit status is unchanged" "exit 0" "exit ${RC}"
+    [ "${RC}" -eq "${want}" ] && ok "$1 -> the job exits ${want}, the harness's status" \
+        || bad "$1 -> the job exits ${want}, the harness's status" "exit ${want}" "exit ${RC}"
 }
 
 # ---------------------------------------------------------------------------
@@ -81,7 +83,7 @@ for v in 0.00 nan -1.50; do
     not_recorded "a rating of ${v}"
 done
 run_launcher "${S}" no-transcript STUB_TRANSCRIPT= STUB_HARNESS_RC=1
-not_recorded "no transcript"
+not_recorded "no transcript" 1
 
 # ---------------------------------------------------------------------------
 # 3. A rating, but not in the harness's transcript of this case and core count.

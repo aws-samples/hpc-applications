@@ -18,7 +18,9 @@
 #             fluentbench.pl <case> -t<cores> <options>: records its arguments
 #             and working directory, writes STUB_OUT where fluentbench.pl
 #             writes its output of the case and core count, <case>-<cores>.out
-#             (STUB_OUT_NAME names it otherwise), prints STUB_STDOUT, and exits
+#             (STUB_OUT_NAME names it otherwise), and STUB_SESSION_TRN where
+#             Fluent writes its own session transcript,
+#             fluent-20261026-120000-1000.trn, prints STUB_STDOUT, and exits
 #             with STUB_RC
 #   fluent    Fluent itself, which the journal scripts start: records its
 #             arguments and working directory, prints a line, and exits with
@@ -82,14 +84,16 @@ for v in v242 v261; do
 #!/bin/bash
 # fluentbench.pl <case> -t<cores> <options>: records its arguments and working
 # directory, writes STUB_OUT as its output of the case and core count,
-# <case>-<cores>.out (STUB_OUT_NAME names it otherwise), prints STUB_STDOUT,
-# and exits with STUB_RC.
+# <case>-<cores>.out (STUB_OUT_NAME names it otherwise), and STUB_SESSION_TRN
+# as Fluent's own session transcript, fluent-20261026-120000-1000.trn, prints
+# STUB_STDOUT, and exits with STUB_RC.
 echo "CALL" >> "${STUB_STATE}/solver.calls"
 printf '%s\n' "$0" "$@" > "${STUB_STATE}/solver.args"
 pwd > "${STUB_STATE}/solver.cwd"
 case_name="${1:-}"; cores=""
 for a in "$@"; do case "${a}" in -t[0-9]*) cores="${a#-t}" ;; esac; done
 [ -n "${STUB_OUT:-}" ] && cp "${STUB_OUT}" "${STUB_OUT_NAME:-${case_name}-${cores}.out}"
+[ -n "${STUB_SESSION_TRN:-}" ] && cp "${STUB_SESSION_TRN}" fluent-20261026-120000-1000.trn
 [ -n "${STUB_STDOUT:-}" ] && cat "${STUB_STDOUT}"
 echo "[stub fluentbench.pl] ${case_name} on ${cores} cores"
 exit "${STUB_RC:-0}"

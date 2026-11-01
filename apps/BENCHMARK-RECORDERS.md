@@ -215,16 +215,30 @@ call is:
   `DYNAMODB_RECORDER` (or `CONTRIB_RECORDER`) gets the same arguments, so it
   must accept them.
 - **Non-fatal, and it never changes your job's result.** A missing recorder,
-  missing AWS credentials or a parse miss only prints a `NOTE:`; the job's exit
-  status always stays exactly that of the solver.
+  missing AWS credentials or a parse miss only prints a `NOTE:`; recording never
+  changes the job's exit status. That status is the solver's (for Fluent's
+  benchmark scripts, that of `fluentbench.pl` or the 2026 R1 harness, which run
+  Fluent), or, for ANSYS Mechanical and LS-DYNA, their script's verdict on the
+  solver's output (see
+  [`AnsysMechanical/Readme.md`](AnsysMechanical/Readme.md#exit-codes-do-not-use-them-to-decide-success)
+  and [`LS-Dyna/Readme.md`](LS-Dyna/Readme.md#running-ls-dyna)). The one
+  exception is GROMACS's `GPU/gromacs-mps-benchmark.sbatch`: it runs several
+  simulations at once and ends with status 0 once its recording step has run,
+  whatever the simulations' exit status.
 - **Successful solves only.** Launch scripts that don't use `set -e` capture the
   solver's exit code and skip recording (and skip a zero/garbage time) when the
   solve failed, so the dataset isn't polluted with failed runs. The benchmark
-  scripts of CFX, GROMACS (the CPU launchers), LAMMPS, OpenFOAM, WRF and ANSYS
-  Mechanical, Fluent's `x86/Fluent-Benchmark.2026R1.sbatch` and LS-DYNA's
-  `LS-Dyna.sbatch` also record a run only when the solver's output shows it
-  complete. Each application's README says what its script checks, or for
-  Fluent, [`Fluent-Benchmark-2026R1.md`](Fluent/Fluent-Benchmark-2026R1.md).
+  scripts of CFX, GROMACS (the x86, Arm and GPU single-simulation launchers),
+  LAMMPS, OpenFOAM, WRF and ANSYS Mechanical, and LS-DYNA's `LS-Dyna.sbatch`,
+  also record a run only when the solver's output shows it complete. Fluent's
+  benchmark scripts (`x86/Fluent-Benchmark.2026R1.sbatch`, the classic
+  `fluentbench.pl` scripts and `gpu/Fluent-Benchmark-GPU.sbatch`) go by the
+  output alone: they record a run when the output of its case and core count
+  gives the case's rating, whatever the exit status. Fluent's journal scripts
+  record a run only when Fluent exits with status 0. Each application's README
+  says what its script checks, or for Fluent,
+  [`Fluent-Benchmark-2026R1.md`](Fluent/Fluent-Benchmark-2026R1.md) and its
+  [`Readme.md`](Fluent/Readme.md).
 - **Local-first.** As always it writes a local JSON record every run and only
   performs the DynamoDB `put-item` when write access is available.
 

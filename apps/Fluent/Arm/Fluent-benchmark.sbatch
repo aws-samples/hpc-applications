@@ -58,6 +58,7 @@ echo "Install missing libraries"
 mpirun -n $SLURM_JOB_NUM_NODES --map-by ppr:1:node /bin/bash -c "sudo yum -y install libXtst libXtst-devel libvorbis libvorbis-devel"
 
 "${APP_BIN_PATH}" ${benchmark_file%.*} -t${SLURM_NPROCS}  -cnf=hostfile -part=4 -nosyslog -noloadchk -ssh -peth.efa -mpi=openmpi
+_rec_rc=$?
 
 # --- Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal) ---
 # The recorder self-collects host info from the environment and parses the Fluent
@@ -67,11 +68,11 @@ mpirun -n $SLURM_JOB_NUM_NODES --map-by ppr:1:node /bin/bash -c "sudo yum -y ins
 # run dir, must give the case's rating, a positive number on its "Solver rating ="
 # line. A rating only in another case's or core count's output, in the job's own
 # output or in a link to a file shipped with the dataset does not count, so
-# failed solves don't pollute the data. The recorder gets that file's rating,
-# time per iteration and solver speed, as SOLVER_RATING, TIME_PER_ITERATION and
-# SOLVER_SPEED. Override the recorder's path with DYNAMODB_RECORDER; set
-# SOURCE=<YourOrg> to tag your contributions. See apps/Fluent/dynamodb/README.md
-# and apps/BENCHMARK-RECORDERS.md.
+# failed solves don't pollute the data. The recorder gets that file's rating
+# and, where that file gives them, its time per iteration and solver speed, as
+# SOLVER_RATING, TIME_PER_ITERATION and SOLVER_SPEED. Override the recorder's
+# path with DYNAMODB_RECORDER; set SOURCE=<YourOrg> to tag your contributions.
+# See apps/Fluent/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
 _case_out="${benchmark_file%.*}-${SLURM_NPROCS}.out"
 # _case_value <name>: the first word after "=" on that file's last "<name> =" line
 _case_value() {
@@ -98,9 +99,17 @@ if [ -z "${_rating}" ]; then
          "rating on a \"Solver rating =\" line." >&2
     echo "NOTE: no solver rating found in the benchmark output; skipping benchmark recording." >&2
 elif [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
+    # The case and the method too: without them, the recorder takes both from the
+    # run dir's first .trn file, which can be Fluent's own session transcript
+    # (fluent-<date>-<pid>.trn).
     FLUENT_VERSION="${fluentversion}" RUN_DIR="${workdir}" SOLVER_RATING="${_rating}" \
-        TIME_PER_ITERATION="${_time_per_iteration}" SOLVER_SPEED="${_solver_speed}" "${_recorder}" \
+        TIME_PER_ITERATION="${_time_per_iteration}" SOLVER_SPEED="${_solver_speed}" \
+        BENCHMARK_CASE="${benchmark_file%.*}" BENCHMARK_METHOD="fluentbench" "${_recorder}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 else
     echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2
 fi
+# The job ends with fluentbench.pl's own exit status, whatever the recording
+# did, as the CFX and OptiStruct scripts and the STAR-CCM+ batch scripts end
+# with their solver's.
+exit "${_rec_rc}"

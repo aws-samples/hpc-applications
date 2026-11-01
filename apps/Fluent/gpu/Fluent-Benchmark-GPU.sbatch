@@ -64,6 +64,7 @@ mpirun -np $SLURM_JOB_NUM_NODES -ppn 1 /bin/bash -c "echo always | sudo tee /sys
 
 
 ${FLUENT_PYTHON_PATH} ${APP_BIN_PATH} -gpu -cores ${SLURM_NPROCS} -cases ${benchmark_file%.*} -cflush -mpiopt="-genv I_MPI_DEBUG 5" -peth.efa -cnf=./hostfile -part=4 -platform=intel -nosyslog -noloadchk -ssh -mpi=intel -norm | tee output.$SLURM_JOBID.out
+_rec_rc=${PIPESTATUS[0]}
 
 # --- Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal) ---
 # The recorder self-collects host info from the environment and parses the Fluent
@@ -103,3 +104,7 @@ elif [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
 else
     echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2
 fi
+# The job ends with the 2026 R1 harness's own exit status (not tee's), whatever
+# the recording did, as the CFX and OptiStruct scripts and the STAR-CCM+ batch
+# scripts end with their solver's.
+exit "${_rec_rc}"

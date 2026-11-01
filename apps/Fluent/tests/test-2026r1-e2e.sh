@@ -13,8 +13,12 @@
 #     ITERATIONS is not set); this directory's recorder in --dry-run would
 #     store the case, its size, that count and the harness's MIUPS;
 #   * a run whose harness writes no transcript is not recorded, a NOTE says
-#     so, and the job still exits 0; a recorder that cannot be found is named
-#     in a NOTE; nothing reaches AWS.
+#     so, and the job ends with the harness's exit status, 1 here;
+#   * the recording never changes that status: a run whose transcript gives
+#     the case's rating and whose harness exits 2 is recorded, and the job
+#     exits 2; with a recorder that exits 3, its NOTE says it failed, and the
+#     job still exits 2;
+#   * a recorder that cannot be found is named in a NOTE; nothing reaches AWS.
 #
 #   apps/Fluent/tests/test-2026r1-e2e.sh
 # =============================================================================
@@ -118,10 +122,41 @@ run_2026r1 no-transcript STUB_TRANSCRIPT= STUB_HARNESS_RC=1
 has_line "${ERR}" "NOTE: no MIUPS result found in transcripts; skipping benchmark recording." \
     && ok "no transcript -> the NOTE that skips the recording" \
     || bad "no transcript -> the NOTE that skips the recording" "the NOTE" "${ERR}"
-[ "${RC}" -eq 0 ] && ok "no transcript -> the job still exits 0" || bad "no transcript -> the job exits 0" "exit 0" "exit ${RC}"
+[ "${RC}" -eq 1 ] && ok "no transcript -> the job exits 1, the harness's status" \
+    || bad "no transcript -> the job exits 1, the harness's status" "exit 1" "exit ${RC}"
 
 # ---------------------------------------------------------------------------
-# 5. This directory's recorder, in --dry-run: the item it would store.
+# 5. The harness exits 2 after its transcript gives the case's rating: the
+#    recorder runs, and the job exits 2, whether the recorder succeeds or
+#    exits 3.
+# ---------------------------------------------------------------------------
+cat > "${WORK}/bin/recorder-fails" <<'EOF'
+#!/bin/bash
+# Logs its call, as recorder-stub does, then exits 3.
+echo "CALL" >> "${STUB_STATE}/recorder.log"
+echo "[failing recorder] called"
+exit 3
+EOF
+chmod +x "${WORK}/bin/recorder-fails"
+run_2026r1 rated-rc2 STUB_HARNESS_RC=2
+[ "$(recorder_calls)" = "1" ] && ok "the harness exits 2 after a rated run -> the recorder runs once" \
+    || bad "the harness exits 2 after a rated run -> the recorder runs once" "1" "$(recorder_calls)"
+recorder_has "MIUPS=12.34" && ok "the harness exits 2 after a rated run -> the recorder gets MIUPS=12.34" \
+    || bad "the harness exits 2 after a rated run -> the recorder gets MIUPS=12.34" "MIUPS=12.34" \
+        "$(grep MIUPS "${STATE}/recorder.log" 2>/dev/null)"
+[ "${RC}" -eq 2 ] && ok "the harness exits 2 after a rated run -> the job exits 2, the harness's status" \
+    || bad "the harness exits 2 after a rated run -> the job exits 2, the harness's status" "exit 2" "exit ${RC}"
+run_2026r1 recorder-fails STUB_HARNESS_RC=2 DYNAMODB_RECORDER="${WORK}/bin/recorder-fails"
+[ "$(recorder_calls)" = "1" ] && ok "the harness exits 2, the recorder 3 -> the recorder runs once" \
+    || bad "the harness exits 2, the recorder 3 -> the recorder runs once" "1" "$(recorder_calls)"
+has_line "${ERR}" "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." \
+    && ok "the harness exits 2, the recorder 3 -> the NOTE that the recorder failed" \
+    || bad "the harness exits 2, the recorder 3 -> the NOTE that the recorder failed" "the NOTE" "${ERR}"
+[ "${RC}" -eq 2 ] && ok "the harness exits 2, the recorder 3 -> the job exits 2, the harness's status" \
+    || bad "the harness exits 2, the recorder 3 -> the job exits 2, the harness's status" "exit 2" "exit ${RC}"
+
+# ---------------------------------------------------------------------------
+# 6. This directory's recorder, in --dry-run: the item it would store.
 # ---------------------------------------------------------------------------
 run_2026r1 real-recorder DYNAMODB_RECORDER="${WORK}/bin/real-recorder"
 item="$(sed -n '/^{/,$p' "${STATE}/recorder.json" 2>/dev/null)"
@@ -140,14 +175,14 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 6. No recorder to be found.
+# 7. No recorder to be found.
 # ---------------------------------------------------------------------------
 run_2026r1 no-recorder DYNAMODB_RECORDER=
 has_line "${ERR}" "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." \
     && ok "no recorder -> a NOTE says how to point at it" || bad "no recorder -> a NOTE" "the NOTE" "${ERR}"
 
 # ---------------------------------------------------------------------------
-# 7. Nothing above reached AWS.
+# 8. Nothing above reached AWS.
 # ---------------------------------------------------------------------------
 if compgen -G "${WORK}/*/aws.log" > /dev/null; then
     bad "no case calls aws" "no aws call" "$(cat "${WORK}"/*/aws.log)"

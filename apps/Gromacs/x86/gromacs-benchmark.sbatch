@@ -697,6 +697,19 @@ Wall time (job):  ${WALL_TIME_TOTAL}s
 REPORT
 
 # ---------------------------------------------------------------------------
+# The success gate, for both recorders below: record only a run whose md.log
+# gives a positive ns/day. mdrun exited 0 to get here (set -e and pipefail);
+# the rate shows it timed the second half of the run. Otherwise neither
+# records it, a NOTE says why, and the job's exit status and the results block
+# above are as they were.
+# ---------------------------------------------------------------------------
+_ns="${NS_PER_DAY:-}";  [ "${_ns}" != "0" ]   || _ns=""
+_not_recorded=""
+if ! awk -v v="${_ns}" 'BEGIN { exit !(v ~ /^[0-9]+([.][0-9]+)?$/ && v + 0 > 0) }'; then
+    _not_recorded="md.log gives no positive ns/day"
+fi
+
+# ---------------------------------------------------------------------------
 # Optional: record the result to DynamoDB.
 #
 # Disabled by default in the public repository so customers who only want
@@ -722,7 +735,9 @@ REPORT
 # export ATOMS LOOP_STEPS
 # export NS_PER_DAY HOUR_PER_NS WALL_TIME
 # export WORKDIR
-# if [ -x "${DYNAMODB_RECORDER}" ]; then
+# if [ -n "${_not_recorded}" ]; then
+#     :   # not recorded: the NOTE below says why
+# elif [ -x "${DYNAMODB_RECORDER}" ]; then
 #     "${DYNAMODB_RECORDER}" || true
 # else
 #     echo "DynamoDB recorder not found at ${DYNAMODB_RECORDER} — skipping result persistence"
@@ -744,7 +759,6 @@ REPORT
 # and set SOURCE=<YourOrg> to tag your contributions.
 # See apps/Gromacs/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
 # ---------------------------------------------------------------------------
-_ns="${NS_PER_DAY:-}";  [ "${_ns}" != "0" ]   || _ns=""
 _wall="${WALL_TIME:-}"; [ "${_wall}" != "0" ] || _wall=""
 _atoms_m=""
 if [ -n "${ATOMS:-}" ] && [ "${ATOMS}" != "0" ]; then
@@ -759,10 +773,7 @@ for _c in "${_contrib_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/apps/Gromacs/dynamodb/record-benchmark.sh"; do
     if [ -n "${_c}" ] && [ -x "${_c}" ]; then _contrib_recorder="${_c}"; break; fi
 done
-# The success gate: record only a run whose md.log gives a positive ns/day. mdrun
-# exited 0 to get here (set -e and pipefail); the rate shows it timed the second
-# half of the run.
-if ! awk -v v="${_ns}" 'BEGIN { exit !(v ~ /^[0-9]+([.][0-9]+)?$/ && v + 0 > 0) }'; then
+if [ -n "${_not_recorded}" ]; then
     echo "NOTE: md.log gives no positive ns/day, so this run is not recorded." >&2
 elif [ -n "${_contrib_recorder}" ] && [ -x "${_contrib_recorder}" ]; then
     GROMACS_VERSION="${GROMACS_TAG:-}" BENCHMARK_CASE="${MODEL}" \
