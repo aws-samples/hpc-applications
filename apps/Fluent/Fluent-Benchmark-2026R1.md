@@ -27,6 +27,7 @@ Second** (higher is faster). Each case writes a transcript
 
 ```
 Million Cell Iteration Per Wall Second =  <MIUPS>
+Cell count = <cells>
 Average wall-clock time per case input:   <sec>
 Average wall-clock time per data input:   <sec>
 ```
@@ -39,13 +40,19 @@ NumProc    MIUPS      Speedup     Efficiency
 192        <miups>    <speedup>   <eff>%
 ```
 
-MIUPS relates to the classic per-iteration wall time by the mesh size:
+MIUPS relates to the classic per-iteration wall time by the mesh's own cell
+count, which the transcript prints as `Cell count = <cells>` (the harness
+computes MIUPS on it):
 
 ```
-time_per_iteration_seconds = num_cells_million / MIUPS
+time_per_iteration_seconds = <cells> / 1,000,000 / MIUPS
 ```
 
-So a 140M-cell case at a MIUPS of `<miups>` takes 140 / `<miups>` seconds per iteration.
+A case's name gives its published size, rounded: `f1_racecar_140m`'s mesh has
+139,714,523 cells, so at a MIUPS of `<miups>` it takes 139.714523 / `<miups>`
+seconds per iteration. The recorder reads the count from the transcript
+(`mesh_cells` in the record) and derives the time from it; `num_cells_million`
+stays the published size.
 
 ## Running the CPU benchmark
 
@@ -106,9 +113,10 @@ type.
 Both the CPU and GPU launch scripts call
 [`dynamodb/record-benchmark.sh`](dynamodb/record-benchmark.sh) automatically
 right after the solve (non-fatal, never changes the job's exit status). The
-recorder parses the transcript, records **MIUPS**, the case/data read times and
-the derived per-iteration time, and tags the row with `benchmark_method` and
-`solver_mode` (`cpu`/`gpu`). Set `SOURCE=<YourOrg>` to attribute your rows. See
+recorder parses the transcript, records **MIUPS**, the mesh's cell count
+(`mesh_cells`), the per-iteration time derived from the two and the case/data
+read times, and tags the row with `benchmark_method` and `solver_mode`
+(`cpu`/`gpu`). Set `SOURCE=<YourOrg>` to attribute your rows. See
 [../BENCHMARK-RECORDERS.md](../BENCHMARK-RECORDERS.md) for the full contribution
 workflow.
 

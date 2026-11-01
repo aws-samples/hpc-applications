@@ -35,6 +35,9 @@ The recorder also understands the **2026 R1** benchmark harness
 end of a job (the launch scripts already do this) and it parses the
 `<case>-<cores>.trn` transcript to record **`miups`** (Million Cell Iterations
 per Wall Second), `case_read_seconds`, `data_read_seconds`, `benchmark_method`
-and `solver_mode`. With the mesh size it also derives `time_per_iteration_seconds`
-( = `num_cells_million` / `miups` ). New flags: `--miups`, `--case-read`,
-`--data-read`, `--benchmark-method`, `--solver-mode`.
+and `solver_mode`. With the mesh's own cell count, which the transcript prints
+as `Cell count = N` and the recorder stores as `mesh_cells`, it also derives
+`time_per_iteration_seconds` ( = N / 1,000,000 / `miups` ); with no such count,
+from the case's published size ( = `num_cells_million` / `miups` ), and a
+`NOTE:` says so. New flags: `--miups`, `--case-read`, `--data-read`,
+`--benchmark-method`, `--solver-mode`.

@@ -23,8 +23,9 @@
 # and the case/data read wall-clock times.
 #
 # MIUPS is the metric Ansys standardises on going forward (higher is faster);
-# with the mesh size you can recover the per-iteration wall time as
-# cells_million / MIUPS. The DynamoDB recorder does this automatically.
+# with the mesh's own cell count, which the transcript prints as "Cell count =
+# N", you can recover the per-iteration wall time as N / 1e6 / MIUPS. The
+# DynamoDB recorder does this automatically.
 #
 # For the classic fluentbench.pl harness (Solver rating / wall time per
 # iteration) use Fluent-Benchmark.OMPI.sbatch in this same directory instead.
