@@ -17,7 +17,7 @@
 #   * the recording never changes that status: a run whose transcript gives
 #     the case's rating and whose harness exits 2 is recorded, and the job
 #     exits 2; with a recorder that exits 3, its NOTE says it failed, and the
-#     job still exits 2;
+#     job still exits 2, or 0 after a harness that exits 0;
 #   * a recorder that cannot be found is named in a NOTE; nothing reaches AWS.
 #
 #   apps/Fluent/tests/test-2026r1-e2e.sh
@@ -128,7 +128,8 @@ has_line "${ERR}" "NOTE: no MIUPS result found in transcripts; skipping benchmar
 # ---------------------------------------------------------------------------
 # 5. The harness exits 2 after its transcript gives the case's rating: the
 #    recorder runs, and the job exits 2, whether the recorder succeeds or
-#    exits 3.
+#    exits 3. After a harness that exits 0, a recorder that exits 3 leaves the
+#    job's status 0.
 # ---------------------------------------------------------------------------
 cat > "${WORK}/bin/recorder-fails" <<'EOF'
 #!/bin/bash
@@ -154,6 +155,14 @@ has_line "${ERR}" "NOTE: benchmark recorder failed (non-fatal); the solve was un
     || bad "the harness exits 2, the recorder 3 -> the NOTE that the recorder failed" "the NOTE" "${ERR}"
 [ "${RC}" -eq 2 ] && ok "the harness exits 2, the recorder 3 -> the job exits 2, the harness's status" \
     || bad "the harness exits 2, the recorder 3 -> the job exits 2, the harness's status" "exit 2" "exit ${RC}"
+run_2026r1 recorder-fails-rc0 DYNAMODB_RECORDER="${WORK}/bin/recorder-fails"
+[ "$(recorder_calls)" = "1" ] && ok "the harness exits 0, the recorder 3 -> the recorder runs once" \
+    || bad "the harness exits 0, the recorder 3 -> the recorder runs once" "1" "$(recorder_calls)"
+has_line "${ERR}" "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." \
+    && ok "the harness exits 0, the recorder 3 -> the NOTE that the recorder failed" \
+    || bad "the harness exits 0, the recorder 3 -> the NOTE that the recorder failed" "the NOTE" "${ERR}"
+[ "${RC}" -eq 0 ] && ok "the harness exits 0, the recorder 3 -> the job exits 0, the harness's status" \
+    || bad "the harness exits 0, the recorder 3 -> the job exits 0, the harness's status" "exit 0" "exit ${RC}"
 
 # ---------------------------------------------------------------------------
 # 6. This directory's recorder, in --dry-run: the item it would store.
