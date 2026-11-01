@@ -23,8 +23,9 @@
 # and the case/data read wall-clock times.
 #
 # MIUPS is the metric Ansys standardises on going forward (higher is faster);
-# with the mesh size you can recover the per-iteration wall time as
-# cells_million / MIUPS. The DynamoDB recorder does this automatically.
+# with the mesh's own cell count, which the transcript prints as "Cell count =
+# N", you can recover the per-iteration wall time as N / 1e6 / MIUPS. The
+# DynamoDB recorder does this automatically.
 #
 # For the classic fluentbench.pl harness (Solver rating / wall time per
 # iteration) use Fluent-Benchmark.OMPI.sbatch in this same directory instead.
@@ -184,24 +185,32 @@ echo "Run: ${FLUENT_PYTHON_PATH} ${APP_BIN_PATH} ${harness_args[*]}"
 _rec_rc=${PIPESTATUS[0]}
 
 # --- Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal) ---
-# The recorder self-collects host info from the environment, reads the case
-# and data read times from the Fluent benchmark transcript in this run dir, and
-# NEVER fails the job (the `|| echo` keeps it non-fatal). We only record a
-# SUCCESSFUL benchmark: the harness's transcript of this case and core count,
-# working/<tag>/transcript/<case>-<cores>.trn, must give the case's rating, a
-# positive number on its "Million Cell Iteration Per Wall Second =" line, which
-# the recorder gets as MIUPS. A transcript with only the journal's command for
-# that line, or a rating in another case's or core count's transcript, in
-# Fluent's own transcript or in a .trn shipped with the dataset, does not
-# count, so failed solves don't pollute the data.
+# The recorder self-collects host info from the environment, reads the mesh's
+# cell count and the case and data read times from the harness's transcript
+# that this check reads, and NEVER fails the job (the `|| echo` keeps it
+# non-fatal). We only record a SUCCESSFUL benchmark: the harness's transcript of
+# this case and core count, working/<tag>/transcript/<case>-<cores>.trn, must
+# give the case's rating, a positive number on its "Million Cell Iteration Per
+# Wall Second =" line, which the recorder gets as MIUPS, and the transcript
+# itself as TRANSCRIPT, so that it reads no other transcript in this run dir. A
+# transcript with only the journal's command for that line, or a rating in
+# another case's or core count's transcript, in Fluent's own transcript or in a
+# .trn shipped with the dataset, does not count, so failed solves don't pollute
+# the data.
 # Override the recorder path with DYNAMODB_RECORDER; set SOURCE=<YourOrg> to tag
 # your contributions. See apps/Fluent/dynamodb/README.md and
 # apps/BENCHMARK-RECORDERS.md.
 _case_trn="working/*/transcript/${benchmark_name}-${SLURM_NPROCS}.trn"
-_miups="$(cat "${workdir}"/working/*/transcript/"${benchmark_name}-${SLURM_NPROCS}.trn" 2>/dev/null \
-    | awk '/^Million Cell Iteration Per Wall Second[[:space:]]*=/ {
+# The harness writes that transcript in one working/<tag>/; should there be
+# more, the last one that has the line is the one checked. awk reads it on its
+# standard input, as the recorder does, so that no path is an awk assignment.
+_transcript=""
+for _t in "${workdir}"/working/*/transcript/"${benchmark_name}-${SLURM_NPROCS}.trn"; do
+    grep -q '^Million Cell Iteration Per Wall Second[[:space:]]*=' "${_t}" 2>/dev/null && _transcript="${_t}"
+done
+_miups="$(awk '/^Million Cell Iteration Per Wall Second[[:space:]]*=/ {
                v = $0; sub(/^[^=]*=[[:space:]]*/, "", v); split(v, f, /[[:space:]]+/); m = f[1] }
-           END { print m }')"
+           END { print m }' 2>/dev/null < "${_transcript:-/dev/null}")"
 [[ "${_miups}" =~ ^[0-9]+([.][0-9]+)?$ && "${_miups}" =~ [1-9] ]] || _miups=""
 if [ -n "${_miups}" ]; then
     _recorder="${DYNAMODB_RECORDER:-}"
@@ -218,13 +227,12 @@ if [ -n "${_miups}" ]; then
     # For a transient case the harness runs both counts as time steps, so the
     # timed iterations are every iteration of those time steps.
     _record_args=(--char "warmup_iterations=${warmup_iterations}")
-    _timed_iterations="$(cat "${workdir}"/working/*/transcript/"${benchmark_name}-${SLURM_NPROCS}.trn" 2>/dev/null \
-        | awk '/^Number of Iterations[[:space:]]*=/ {
+    _timed_iterations="$(awk '/^Number of Iterations[[:space:]]*=/ {
                    v = $0; sub(/^[^=]*=[[:space:]]*/, "", v); split(v, f, /[[:space:]]+/); n = f[1] }
-               END { print n }')"
+               END { print n }' 2>/dev/null < "${_transcript:-/dev/null}")"
     [[ "${_timed_iterations}" =~ ^[1-9][0-9]*$ ]] && _record_args+=(--char "timed_iterations=${_timed_iterations}")
     if [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
-        FLUENT_VERSION="${fluentversion}" RUN_DIR="${workdir}" MIUPS="${_miups}" \
+        FLUENT_VERSION="${fluentversion}" RUN_DIR="${workdir}" MIUPS="${_miups}" TRANSCRIPT="${_transcript}" \
         BENCHMARK_CASE="${benchmark_name}" BENCHMARK_METHOD="fluent_benchmark_harness" \
         SOLVER_MODE="cpu" NUM_ITERATIONS="${iterations}" "${_recorder}" "${_record_args[@]}" \
             || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2

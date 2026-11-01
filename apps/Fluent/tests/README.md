@@ -41,10 +41,18 @@ Fluent and of the 2026 R1 harness, in one install tree. The `fluentbench.pl`
 stub writes a fixture where `fluentbench.pl` writes its output of the case and
 core count, `<case>-<cores>.out`: `fixtures/fluentbench-rated.out` has the
 fields that this repository's parsers read from that file, with synthetic
-values. A test can also have it write a session transcript where Fluent writes
-its own, `fluent-<date>-<pid>.trn`. The Arm scripts name their install as
+values. A test can also have it, or the stub of Fluent that the journal scripts
+start, write a session transcript where Fluent writes its own,
+`fluent-<date>-<time>-<pid>.trn`. The Arm scripts name their install as
 `/fsx/ansys_inc`, so they run from a copy that names the stub tree instead and
 differs from the script in that line alone.
+
+The `test-recorder-*.sh` files run **the recorder itself**,
+`dynamodb/record-benchmark.sh`, in `--dry-run`, with the transcripts and output
+files that a test puts in a run directory, and through the launch scripts.
+`helpers-recorder.sh` adds the functions they share to those of
+`helpers-launchers.sh`. `fixtures/steady-cell-count.trn` is a transcript of
+`sedan_4m` whose mesh's cell count differs from the size in the case's name.
 
 ## Adding a case
 

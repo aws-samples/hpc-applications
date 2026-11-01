@@ -4,10 +4,11 @@
 # x86/Fluent-Benchmark.OMPI.sbatch, Arm/Fluent-benchmark.sbatch) give the
 # recorder the case that their rating gate checked, as BENCHMARK_CASE, and the
 # method, as BENCHMARK_METHOD=fluentbench. On a node, the run directory also
-# holds Fluent's own session transcript, fluent-<date>-<pid>.trn, and a
-# recorder not given the case and the method takes both from the first .trn
-# file there: the transcript's name, and the 2026 R1 harness's method. See
-# helpers-launchers.sh. For each:
+# holds Fluent's own session transcript, fluent-<date>-<time>-<pid>.trn, and an
+# older recorder not given the case and the method takes both from the run
+# directory's first .trn (Fluent's own session transcript for a case such as
+# sedan_4m, fluentbench.pl's <case>-<cores>.trn for others): the transcript's
+# name, and the 2026 R1 harness's method. See helpers-launchers.sh. For each:
 #   * with a synthetic session transcript in the run directory, the recorder
 #     gets BENCHMARK_CASE=sedan_4m and BENCHMARK_METHOD=fluentbench, in one
 #     call, and this directory's recorder, in --dry-run, would store
