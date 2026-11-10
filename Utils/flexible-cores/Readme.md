@@ -361,180 +361,240 @@ Both Hpc8a.96xlarge and Hpc7a.96xlarge have:
 - Proper core pinning can significantly impact application performance, particularly for memory bandwidth bound applications
 - Test different configurations to find optimal performance for your workload
 
-## Addendum: Tuning for CMRX8i instances (Intel Granite Rapids, SNC3)
+## NUMA-aware pinning on the Intel-based 8i instances (SNC3)
 
-### Why CMRX8i Require Explicit Tuning
+The scripts above, their core lists and the supported counts are for the
+AMD-based Hpc8a.96xlarge and Hpc7a.96xlarge. This section is for the
+Intel-based 8i instances; of the files above, it uses only `hello-cpu.c`.
 
-These instances (`C8i, C8id, C8in, C8ine, C8ib, M8i, M8id, M8in, M8idn, M8ine, M8ib, M8idb, R8i, R8id, R8in, R8idn, R8ib, R8idb, X8i)` use Intel Xeon 6900P processors (Granite Rapids) with Sub-NUMA Clustering (SNC3) enabled by default. Each socket contains 3 compute dies, and each die is exposed as a separate NUMA domain. This results in (taking the R8i case as an example):
+The R8i and C8i instances use custom Intel Xeon 6 processors. On the two sizes
+checked here, r8i.96xlarge and c8i.96xlarge, `lscpu` shows three NUMA domains of
+32 cores in each of the two sockets. Intel's tuning guide (see
+[References](#references)) calls this Sub-NUMA Clustering (SNC): each compute
+die of the processor, with its memory controllers, appears as a NUMA domain,
+three per socket here (SNC3). On the tested instance, STREAM Triad ran at a
+lower bandwidth with its memory on another domain (see the table below). So
+keep each rank's cores, and with them its memory, inside one domain; many ranks
+may share a domain.
 
-- **R8i.48xlarge**: 1 socket, 3 NUMA nodes, 32 physical cores per NUMA node (96 total), SMT enabled (192 vCPUs)
-- **R8i.96xlarge**: 2 sockets, 6 NUMA nodes, 32 physical cores per NUMA node (192 total), SMT enabled (384 vCPUs)
+### Topology of r8i.96xlarge and c8i.96xlarge
 
-Please note that `32xlarge` sizes have only two NUMA domains and `16xlarge` and smaller are uniform (one NUMA).
+Captured on an r8i.96xlarge running Amazon Linux 2023 (kernel 6.12.95) with SMT
+off, on 2026-11-10: `lscpu` (selected lines), then the distance matrix of
+`numactl -H` (from the numactl package).
 
-The topology can be inspected with `lscpu --extended` (shows CPU to NUMA node and cache mapping) and `numactl --hardware` (shows NUMA nodes, memory sizes, and distance matrix).
+```text
+CPU(s):                                  384
+On-line CPU(s) list:                     0-191
+Off-line CPU(s) list:                    192-383
+Model name:                              Intel(R) Xeon(R) 6975P-C
+Thread(s) per core:                      1
+Core(s) per socket:                      96
+Socket(s):                               2
+L3 cache:                                960 MiB (2 instances)
+NUMA node(s):                            6
+NUMA node0 CPU(s):                       0-31
+NUMA node1 CPU(s):                       32-63
+NUMA node2 CPU(s):                       64-95
+NUMA node3 CPU(s):                       96-127
+NUMA node4 CPU(s):                       128-159
+NUMA node5 CPU(s):                       160-191
+```
 
-Unlike Hpc8a/Hpc7a (which have a nearly flat intra-socket topology with less than 3% bandwidth penalty) and R7i (which has 0% intra-socket penalty), the 48.xlarge and 96.xlarge sizes of these instances have significant bandwidth penalties for accessing memory on a different die within the same socket:
+```text
+node distances:
+node   0   1   2   3   4   5
+  0:  10  15  17  21  28  26
+  1:  15  10  15  23  26  23
+  2:  17  15  10  26  23  21
+  3:  21  28  26  10  15  17
+  4:  23  26  23  15  10  15
+  5:  26  23  21  17  15  10
+```
 
-| Access pattern | NUMA distance | Measured bandwidth loss |
-| --- | --- | --- |
-| Local (same die) | 10 | baseline |
-| Adjacent die, same socket | 15 | 11 to 19% |
-| Far die, same socket | 17 | 22 to 24% |
-| Cross-socket (R8i.96xl only) | 21 to 28 | 36 to 45% |
+Domains 0-2 are on the first socket and 3-5 on the second. The distances are
+relative figures that the firmware reports (10 is local), not times. lscpu
+reports the L3 per socket: 480 MiB shared by the socket's 96 cores. A
+c8i.96xlarge, captured the same day, gave the same lines and the same
+distances.
 
-NUMA distances are relative, dimensionless values defined by the ACPI SLIT table. Local access is always 10 (baseline), and higher values represent proportionally higher memory access latency. They are not expressed in nanoseconds or any physical unit.
+These CPU numbers are this node's. Read the ranges of your own node from
+`lscpu -e=CPU,NODE,SOCKET,CORE,CACHE` (the NODE column) or `numactl -H`, and
+check other sizes and other 8i families the same way before you choose a layout:
+they may have another number of domains.
 
-The bandwidth loss measurements were obtained with the STREAM benchmark:
+On an r7i.48xlarge, captured the same day, `numactl -H` shows one NUMA domain
+for each socket of 48 cores. A layout that keeps each rank inside one socket
+there keeps it inside one domain; on the two 8i instances above, a socket holds
+three domains.
+
+### Memory bandwidth across the domains
+
+STREAM Triad on one r8i.96xlarge, with 32 threads on the 32 cores of domain 0
+and the arrays on each domain in turn, relative to the arrays on domain 0:
+
+| Arrays on | Socket | Distance | Triad bandwidth |
+|---|---|--:|--:|
+| Domain 0 (local) | same | 10 | 1.00 |
+| Domain 1 | same | 15 | 0.91 |
+| Domain 2 | same | 17 | 0.92 |
+| Domain 3 | other | 21 | 0.50 |
+| Domain 4 | other | 28 | 0.48 |
+| Domain 5 | other | 26 | 0.54 |
+
+Each value is the median of 5 runs of STREAM's best Triad rate, over the median
+for domain 0, and the 5 runs of each domain agree within 2.5%. The bandwidth
+does not follow the distance closely: domains 1 and 2 gave about the same.
+These are STREAM Triad figures on the tested instance, not the slowdown of an
+application, which depends on how much of its memory traffic crosses a domain.
+
+The source is [`stream.c`](https://www.cs.virginia.edu/stream/FTP/Code/stream.c)
+of STREAM 5.10, which the block checks before the build. Its array size is the
+one in Intel's tuning guide (Section 6.4): each array is 4.5 GiB, more than
+four times the 960 MiB of L3 that lscpu reports for the whole instance. The
+build used gcc 11.5.0 of Amazon Linux 2023, and has no non-temporal store
+instructions. The block was run 5 times on a whole node (in Slurm, an
+exclusive job), in the directory holding `stream.c`:
 
 ```bash
-wget https://www.cs.virginia.edu/stream/FTP/Code/stream.c
-gcc -O3 -march=native -fopenmp -DSTREAM_ARRAY_SIZE=80000000 -DNTIMES=20 -o stream_c.exe stream.c
-export OMP_NUM_THREADS=8
-numactl --cpunodebind=0 --membind=<N> ./stream_c.exe | grep Triad
-
+sum=a52bae5e175bea3f7832112af9c085adab47117f7d2ce219165379849231692b
+echo "${sum}  stream.c" | sha256sum -c &&
+gcc -O3 -march=native -fopenmp -mcmodel=medium \
+    -DSTREAM_ARRAY_SIZE=600000000 -DNTIMES=10 -o stream_c.exe stream.c
+export OMP_NUM_THREADS=32 OMP_PLACES=cores OMP_PROC_BIND=close
+export OMP_DISPLAY_AFFINITY=true
+for node in 0 1 2 3 4 5; do
+    numactl --cpunodebind=0 --membind="${node}" ./stream_c.exe
+done
 ```
 
-Replace `<N>` with each NUMA node index (0, 1, 2, ... up to the number of nodes minus 1) to measure bandwidth at each distance.
+`numactl --cpunodebind=0` keeps the threads on domain 0, where
+`OMP_PLACES=cores` and `OMP_PROC_BIND=close` bind one thread to each core
+(`OMP_DISPLAY_AFFINITY` prints them: CPUs 0 to 31), and `--membind` puts the
+arrays on the given domain. Read each run's `Triad:` line.
 
-Applications that ran well on R7i or Hpc7a with loose pinning may underperform on CMRX8i because threads or memory allocations silently cross die boundaries. The SNC3 topology is documented in the [Intel Xeon 6 with P-Cores Configuration and Tuning Guide for HPC Applications](https://www.intel.com/content/www/us/en/content-details/858491/intel-xeon-6-with-p-cores-configuration-and-tuning-guide-for-hpc-applications.html) (Document 858491, Rev 1.1, December 2025, Section 2.2) and confirmed by independent benchmarks ([Phoronix, Oct 2024](https://www.phoronix.com/review/xeon-6980p-snc3-hex), [Phoronix, Oct 2025](https://www.phoronix.com/review/intel-xeon-snc3-hex-benchmarks)). SNC3 cannot be disabled on EC2 instances (neither virtualized nor bare-metal).
+### Choosing a layout
 
-### NUMA Distance Matrix
+The rule is the same for every layout: no rank's cores cross a domain boundary.
+By default, Linux places a page of memory on the domain of the core that first
+touches it (the first-touch policy of Intel's guide, Section 3.3.1), so a rank
+whose threads stay inside one domain keeps its memory there too.
 
-Obtained with:
+#### Pure MPI, one rank per core (recommended)
 
-```bash
-numactl --hardware
-
-```
-
-**R8i.48xlarge example (1 socket, 3 NUMA nodes):**
-
-```
-node   0   1   2 
-  0:  10  15  17 
-  1:  15  10  15 
-  2:  17  15  10 
-
-```
-
-**R8i.96xlarge example (2 sockets, 6 NUMA nodes):**
-
-```
-node   0   1   2   3   4   5 
-  0:  10  15  17  21  28  26 
-  1:  15  10  15  23  26  23 
-  2:  17  15  10  26  23  21 
-  3:  21  28  26  10  15  17 
-  4:  23  26  23  15  10  15 
-  5:  26  23  21  17  15  10 
-
-```
-
-### General Tuning Principles
-
-**1. One MPI rank per NUMA domain**
-
-The fundamental rule is to keep each rank and its memory within a single NUMA domain. Each NUMA domain contains 32 physical cores (64 vCPUs with SMT). The recommended decomposition per instance:
-
-| Instance | Total physical cores | NUMA domains | Ranks per instance | Physical cores per rank | vCPUs per rank (with SMT) |
-| --- | --- | --- | --- | --- | --- |
-| R8i.48xl | 96 | 3 | 3 | 32 | 64 |
-| R8i.96xl | 192 | 6 | 6 | 32 | 64 |
-
-If the application uses fewer threads per rank, leave the remaining cores idle within that NUMA domain rather than packing additional ranks that would share the same memory controller. Verify rank placement by checking the NUMA domain boundaries in the output of `lscpu --extended` (NODE column) or `numactl --hardware` (CPU list per domain).
-
-**2. Always bind memory locally**
-
-```bash
-#SBATCH --mem-bind=local
-
-```
-
-Without this, the Linux kernel may allocate memory pages on a remote die during initialization, causing persistent bandwidth loss for the entire run.
-
-**3. Use compact pinning, not scatter**
-
-```bash
-export OMP_PROC_BIND=close
-export OMP_PLACES=cores
-export I_MPI_PIN_DOMAIN=omp:compact
-export I_MPI_PIN_ORDER=compact
-
-```
-
-`scatter` and `spread` strategies that worked on R7i's flat topology or Hpc8a's nearly-flat intra-socket will spread threads across multiple dies on CMRX8i, incurring 11 to 24% bandwidth loss per misplaced thread.
-
-**4. Handle SMT appropriately**
-
-For compute-bound workloads (recommended):
-
-```bash
-#SBATCH --threads-per-core=1
-#SBATCH --hint=nomultithread
-
-```
-
-When using `--hint=nomultithread`, always ensure `OMP_NUM_THREADS` matches `--cpus-per-task`. Setting `OMP_NUM_THREADS` higher than the allocated CPUs causes oversubscription and performance degradation from context switching.
-
-If the application benefits from SMT (I/O-heavy or latency-hiding workloads), omit these flags and use `OMP_PLACES=cores` with `OMP_PROC_BIND=close` to place threads on distinct physical cores while leaving SMT siblings available.
-
-**5. Generic Slurm template**
+For the memory-bandwidth-bound solvers this repository covers, run one MPI rank
+per physical core, with SMT off: 32 ranks in each domain, 192 on these
+instances. Intel MPI pins each rank to one core, in order, so ranks 0-31 run on
+domain 0, ranks 32-63 on domain 1, and so on:
 
 ```bash
 #!/bin/bash
-#SBATCH --nodes=<N>
-#SBATCH --ntasks-per-node=<NUMA_NODES>    # 3 for r8i.48xl, 6 for r8i.96xl
-#SBATCH --cpus-per-task=<THREADS>          # up to 32 (physical) or 64 (with SMT)
-#SBATCH --threads-per-core=1              # omit if SMT is desired
-#SBATCH --hint=nomultithread              # omit if SMT is desired
-#SBATCH --mem-bind=local
-
-export OMP_NUM_THREADS=<THREADS>           # must match cpus-per-task
-export OMP_PROC_BIND=close
-export OMP_PLACES=cores
-
-export I_MPI_HYDRA_BOOTSTRAP=slurm
-export I_MPI_PIN_DOMAIN=omp:compact
+#SBATCH --nodes=1
+#SBATCH --ntasks=192
+#SBATCH --exclusive
+module load intelmpi
+export I_MPI_PIN_DOMAIN=core     # one core per rank
 export I_MPI_PIN_ORDER=compact
-
-srun ./application
-
+export I_MPI_DEBUG=5             # print the pinning table
+mpicc hello-cpu.c -o hello-cpu
+mpirun -n ${SLURM_NTASKS} ./hello-cpu
 ```
 
-Replace `<NUMA_NODES>` with 3 (for .48xlarge sizes) or 6 (for .96xlarge sizes) and `<THREADS>` with the desired thread count per rank (up to 32 without SMT, 64 with SMT).
+Submit it from this directory to a queue of r8i.96xlarge or c8i.96xlarge nodes
+(`sbatch --partition=<queue>`), and replace `./hello-cpu` with your application.
+On r8i.96xlarge, Intel MPI 2021.18's pinning table read as follows (lines
+selected, node name replaced), and c8i.96xlarge gave the same pinning:
 
-**6. Validate pinning before production runs**
+```text
+[0] MPI startup(): Rank    Pid      Node name  Pin cpu
+[0] MPI startup(): 0       72300    <node>     {0}
+[0] MPI startup(): 1       72301    <node>     {1}
+[0] MPI startup(): 2       72302    <node>     {2}
+...
+[0] MPI startup(): 191     72508    <node>     {191}
+```
+
+#### Hybrid MPI and OpenMP, one rank per domain
+
+An application that runs OpenMP threads in each rank can instead take one rank
+per domain and one thread per core of it: 6 ranks of 32 threads. Intel MPI gives
+each rank one domain (`I_MPI_PIN_DOMAIN=numa`), and OpenMP binds each thread to
+one core of it:
 
 ```bash
-export I_MPI_DEBUG=5
-srun ./application
-
+#!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --ntasks=6
+#SBATCH --cpus-per-task=32
+#SBATCH --exclusive
+module load intelmpi
+export I_MPI_PIN_DOMAIN=numa     # one NUMA domain per rank
+export I_MPI_PIN_ORDER=compact
+export I_MPI_DEBUG=5             # print the pinning table
+export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}
+export OMP_PLACES=cores
+export OMP_PROC_BIND=close
+mpicc hello-cpu.c -o hello-cpu
+mpirun -n ${SLURM_NTASKS} ./hello-cpu
 ```
 
-Verify in the output that each rank's CPU set falls entirely within one NUMA node boundary:
+On r8i.96xlarge, the pinning table read as follows (node name replaced), and
+c8i.96xlarge gave the same pinning:
 
-- CMRX8i.48xl: 0-31, 32-63, 64-95 (physical cores); add 96-127, 128-159, 160-191 if SMT is active
-- CMRX8i.96xl: 0-31, 32-63, 64-95, 96-127, 128-159, 160-191 (physical cores); add 192-383 if SMT is active
+```text
+[0] MPI startup(): Rank    Pid      Node name  Pin cpu
+[0] MPI startup(): 0       72754    <node>     {0-31}
+[0] MPI startup(): 1       72755    <node>     {32-63}
+[0] MPI startup(): 2       72756    <node>     {64-95}
+[0] MPI startup(): 3       72757    <node>     {96-127}
+[0] MPI startup(): 4       72758    <node>     {128-159}
+[0] MPI startup(): 5       72759    <node>     {160-191}
+```
 
-Any rank spanning two NUMA boundaries will incur 11 to 45% bandwidth loss depending on the distance between the dies involved.
+Intel MPI sets each rank's CPUs before the rank starts, so the OpenMP runtime
+builds its places from the rank's domain. With six copies of STREAM as the
+application (`mpirun` starts any program) and `OMP_DISPLAY_AFFINITY=true`
+added, each copy bound its 32 threads one to each core of its own domain, and
+each copy's Triad rate was 1.00 to 1.01 of the local value in the table above.
 
-### Comparison with R7i
+#### SMT off
 
-Settings that work on R7i without tuning will typically fail on CMRX8i:
+With SMT on, these instances run two threads per core: EC2 lists 384 vCPUs on
+192 cores for both, and on the nodes captured above, CPUs 192 to 383 are
+off-line. We recommend turning SMT off for memory-bandwidth-bound solvers, so
+that each core runs one rank or one thread. Set one thread per core in the
+instance's CPU options
+([Optimize CPU options](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-optimize-cpu.html)),
+or, in AWS ParallelCluster, set
+[`DisableSimultaneousMultithreading: true`](https://docs.aws.amazon.com/parallelcluster/latest/ug/Scheduling-v3.html#yaml-Scheduling-SlurmQueues-ComputeResources-DisableSimultaneousMultithreading)
+on the queue's compute resource, which the nodes captured here used. Check the
+result with `lscpu`: `Thread(s) per core: 1`.
 
-| Setting | R7i (flat intra-socket) | CMRX8i (SNC3, requires tuning) |
-| --- | --- | --- |
-| OMP_PROC_BIND | false (safe, no intra-socket penalty) | close (required to prevent tile migration) |
-| OMP_PLACES | undefined (safe) | cores (required) |
-| I_MPI_PIN_DOMAIN | numa (48 cores, all local) | omp:compact (limits to one 32-core tile) |
-| I_MPI_PIN_ORDER | scatter (safe) | compact (required) |
-| --mem-bind | not critical (flat NUMA) | local (critical) |
-| --hint | not critical | nomultithread (recommended for HPC) |
+#### With srun instead of mpirun
 
-### Reference
+With `srun`, Slurm binds the tasks, and what it does depends on how the
+cluster's `slurm.conf` describes the node: check it with `--cpu-bind=verbose`.
+On the cluster used here (AWS ParallelCluster 3.16, Slurm 25.11), whose node
+definitions give the CPU count only, Slurm sees each CPU as a socket. There,
+`--cpu-bind=cores` gave each of 192 tasks one core, and each of 6 tasks with
+`--cpus-per-task=32` one domain, but `--cpu-bind=rank_ldom` bound each of the 6
+tasks to a single CPU.
 
-- [Intel Xeon 6 with P-Cores Configuration and Tuning Guide for HPC Applications, Document 858491, Rev 1.1, Dec 2025](https://www.intel.com/content/www/us/en/content-details/858491/intel-xeon-6-with-p-cores-configuration-and-tuning-guide-for-hpc-applications.html)
-- [Intel Xeon 6980P SNC3 vs HEX Clustering Mode Performance Review, Phoronix, Oct 2024](https://www.phoronix.com/review/xeon-6980p-snc3-hex)
-- [Revisiting SNC3 vs HEX Mode Performance, Phoronix, Oct 2025](https://www.phoronix.com/review/intel-xeon-snc3-hex-benchmarks)
-- [Intel Xeon 6 Granite Rapids product page](https://www.intel.com/content/www/us/en/ark/products/codename/128428/products-formerly-granite-rapids.html)
+### Checking the placement
+
+Both templates are for whole nodes. With fewer ranks per node, keep the same
+number of ranks on each domain, so that the job uses every domain's memory.
+Check the placement once for each layout and rank count you use. Intel MPI's
+table (`I_MPI_DEBUG=5`) gives each rank's CPUs: compare them with the NUMA node
+ranges of `lscpu`. For an OpenMP application, `OMP_DISPLAY_AFFINITY=true` prints
+each thread's CPUs when the application enters its first parallel region.
+
+### References
+
+- [Intel Xeon 6 with P-cores Configuration and Tuning Guide for HPC
+  Applications](https://www.intel.com/content/www/us/en/content-details/858491/intel-xeon-6-with-p-cores-configuration-and-tuning-guide-for-hpc-applications.html),
+  document 858491, revision 1.4, April 2026: Sub-NUMA Clustering in Sections
+  3.3.1 and 4.4.4, numactl in Section 4.3.2, STREAM in Section 6.4.
+- [STREAM](https://www.cs.virginia.edu/stream/), the memory bandwidth benchmark.
+- The [R8i](https://aws.amazon.com/ec2/instance-types/r8i/) and
+  [C8i](https://aws.amazon.com/ec2/instance-types/c8i/) instance pages.
