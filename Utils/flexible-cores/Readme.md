@@ -6,6 +6,10 @@ This directory contains examples demonstrating how to use flexible core configur
 
 Both Hpc8a.96xlarge and Hpc7a.96xlarge instances provide 192 physical cores across 2 sockets (96 cores per socket) with [SMT](https://www.amd.com/en/blogs/2025/simultaneous-multithreading-driving-performance-a.html) disabled. These examples show how to configure MPI applications using both [Intel MPI](https://www.intel.com/content/www/us/en/developer/tools/oneapi/mpi-library.html) and [OpenMPI](https://www.open-mpi.org/) to use different core counts, ensuring all available L3 cache is accessible and balanced among the cores, effectively emulating smaller instance sizes while maintaining the same hardware platform.
 
+The scripts and core lists in this directory are for these two AMD-based types.
+For the Intel-based 8i instances, see
+[NUMA-aware pinning on the Intel-based 8i instances](#numa-aware-pinning-on-the-intel-based-8i-instances-snc3).
+
 ## Motivation
 
 For applications that are memory bandwidth bound, running on fewer cores per instance can lead to better performance. The higher performance is achieved thanks to the increase of available memory bandwidth per core (critical for CFD applications like Fluent, StarCCM+, OpenFOAM). As a side effect, available memory per core (critical for FEA applications like Abaqus, Mechanical, Nastran) is also increased.
