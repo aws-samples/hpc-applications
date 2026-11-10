@@ -37,7 +37,16 @@ P=$(awk -v ranks="$TOTAL_RANKS" 'BEGIN { sq=int(sqrt(ranks)); p=1; for(i=sq;i>=1
 Q=$((TOTAL_RANKS / P))
 
 HPL_BIN="/fsx/HPL-OpenMPI/bin/Linux_AMD_OpenMPI/xhpl"
-instanceType=$(TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") && curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
+# The instance type, from the instance metadata (IMDSv2), for the run
+# directory's name and the sweep's header line only. Each request gives up
+# after 5 seconds (2 to connect), and -f turns an HTTP error into no answer. An
+# answer cut off at that limit, or one that is not an instance type name
+# (tested in the C locale: in some locales [a-z] leaves out i), a proxy's page
+# for example, counts as none: the name then has no instance type, and the job
+# goes on.
+TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") || TOKEN=""
+instanceType=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type) || instanceType=""
+( LC_ALL=C; [[ "${instanceType}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || instanceType=""
 WORK_DIR="/fsx/HPL-Run/${SLURM_JOB_NAME%.*}/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${instanceType}-${SLURM_NPROCS}-$(date '+%d-%m-%Y-%H-%M')"
 mkdir -p "$WORK_DIR"
 cp "$HPL_BIN" "$WORK_DIR/"

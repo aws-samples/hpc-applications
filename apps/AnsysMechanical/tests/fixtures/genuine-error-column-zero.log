@@ -2,7 +2,7 @@
 
  SOLVE FOR LS 1 OF 1
 
-*** ERROR ***                           CP =     455.120   TIME= 09:40:11
+*** ERROR ***                           CP =     400.000   TIME= 09:40:11
 The distributed memory parallel solver detected an inconsistent element
 matrix and cannot continue.
 
@@ -12,7 +12,7 @@ matrix and cannot continue.
  |                                                                           |
  |---------------------------------------------------------------------------|
  |                                                                           |
- |        CP Time      (sec) =      455.120       Time  =  09:40:12          |
+ |        CP Time      (sec) =      400.000       Time  =  09:40:12          |
  |        Elapsed Time (sec) =      460.000       Date  =  08/29/2026        |
  |                                                                           |
  *---------------------------------------------------------------------------*

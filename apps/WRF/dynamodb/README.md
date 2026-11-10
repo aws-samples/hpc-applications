@@ -16,10 +16,15 @@ MPI are auto-detected):
 
 ```bash
 ./record-benchmark.sh \
-    --case CONUS-2.5km --num-cells-million 1.8 --time-to-solution 1200 \
+    --case CONUS-2.5km --num-cells-million 90.135 --time-to-solution 1200 \
     --source YourOrg
 ```
 
-For WRF, `--num-cells-million` captures the grid size (grid points, in
-millions), and `--analysis-type` the run type (e.g. forecast/idealized).
+For WRF, `--num-cells-million` captures the grid size: domain 1's
+`e_we × e_sn × e_vert` from `namelist.input`, in millions (CONUS 2.5km:
+1501 × 1201 × 50 = 90.135). `--analysis-type` gives the run type (e.g.
+forecast/idealized). The benchmark scripts in this folder's parent pass the
+grid size as `--num-cells-million`, and the simulated minutes, the number of
+time steps and the history output's `io_form` as `--char` values, read from
+the run directory ([`../lib/wrf-run-info.sh`](../lib/wrf-run-info.sh)).
 Preview with `--dry-run`; see every option with `./record-benchmark.sh --help`.

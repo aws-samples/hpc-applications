@@ -1,0 +1,9 @@
+taskid: 0 hostname: node1
+ Ntasks in X            2 , ntasks in Y            4
+WRF V4.6.1 MODEL
+d01 2000-01-01_00:00:00  Input data is acceptable to use: wrfinput_d01
+Timing for processing wrfinput file (stream 0) for domain        1:    2.00000 elapsed seconds
+-------------- FATAL CALLED ---------------
+FATAL CALLED FROM FILE:  <stdin>  LINE:       0
+synthetic fixture: the run stopped before its first step
+-------------------------------------------

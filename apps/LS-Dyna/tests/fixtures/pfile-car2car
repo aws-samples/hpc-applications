@@ -1,0 +1,2 @@
+dir { global one_global_dir
+      local /tmp/Caravan-2400k }

@@ -16,7 +16,7 @@ MPI are auto-detected):
 
 ```bash
 ./record-benchmark.sh \
-    --case drivaer --mesh-cells-million 65 --time-to-solution 900 \
+    --case drivaer --mesh-cells-million 65 --time-to-solution <seconds> \
     --solver simpleFoam --source YourOrg
 ```
 

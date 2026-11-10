@@ -6,24 +6,23 @@ This document is the operational checklist for the x86 scaling sweep:
 > on hpc7a (24 jobs); confirm DynamoDB has every record for the sweep;
 > pull the means via the same scan helper used for LAMMPS.
 
-The sweep is the data feed for the x86 chart in
-[`Doc/img/Gromacs/generate_charts.py`](../../../Doc/img/Gromacs/)
-and the embedded PNG in [`apps/Gromacs/README.md`](../README.md).
+The sweep was the data feed for the x86 charts of
+[`apps/Gromacs/README.md`](../README.md), drawn by the chart generators in
+[`Doc/img/Gromacs/`](../../../Doc/img/Gromacs/).
 
 It is **not** runnable from a developer laptop — it must run on the head
-node of the x86 cluster (`ec2-user@10.3.39.86`, reached via bastion
-`ec2-user@3.128.184.207`). The artefacts in this directory are intended
+node of the x86 cluster. The artefacts in this directory are intended
 to be `git pull`'d on the cluster head node and invoked there.
 
 ## Status
 
-**Documented, awaiting live execution.**
-
-As of 2026-05-26 the prerequisites below are not all met (see § Prerequisites).
-Once they are, the operator runs `scaling_sweep_manifest.sh` on the head node,
-waits for the 24 jobs to complete, runs `../dynamodb/scan_sweep.sh` to confirm
-DynamoDB landed every record, then pastes the per-replicate means into
-`Doc/img/Gromacs/generate_charts.py`.
+**Ran in May and June 2026.** Its charts (hpc8a vs hpc7a) have since been replaced in
+[`apps/Gromacs/README.md`](../README.md) by the October 2026 runs on four
+AMD instance types, drawn by `Doc/img/Gromacs/generate_instance_charts.py`. The
+runbook stays as the way to run a sweep with these launchers: the operator
+runs `scaling_sweep_manifest.sh` on the head node, waits for the jobs to
+complete, runs `../dynamodb/scan_sweep.sh` to confirm DynamoDB landed every
+record, then hands the values to the chart generator (see below).
 
 ### Partition fallback — hpc7a if hpc8a is unavailable
 
@@ -58,9 +57,7 @@ without any code changes:
 
 - The DynamoDB record's `instance_type` field is read from IMDSv2 at run
   time, so hpc7a runs land in `Gromacs_Benchmarks` with
-  `instance_type=hpc7a.96xlarge` automatically; the chart pipeline
-  keys on `instance_type` and renders hpc8a vs hpc7a, so
-  partial-only-hpc7a data is consumed cleanly when hpc8a backfill arrives.
+  `instance_type=hpc7a.96xlarge` automatically.
 
 The `--constraint=hpc7a-96xlarge` clause is required only on clusters where
 the hpc7a partition is heterogeneous (12/24/48/96xlarge sharing one slurm
@@ -163,7 +160,7 @@ Sample output:
 
 ```
 instance             nodes         model        ns_per_day_replicates    mean_ns_per_day
-hpc7a.96xlarge           1     benchMEM     [144.598, 144.812]                 144.705
+hpc7a.96xlarge           1     benchMEM     [140.000, 140.500]                 140.250
 hpc7a.96xlarge           1   benchPEP-h     [  2.118,   2.122]                   2.120
 hpc7a.96xlarge           2     benchMEM     [273.000, 273.500]                 273.250
 hpc7a.96xlarge           2   benchPEP-h     [  4.018,   4.025]                   4.022
@@ -182,29 +179,28 @@ performance on hpc8a/hpc7a, just placeholders showing the table shape.)
 
 ## Hand-off to the chart pipeline
 
-Copy the per-replicate `ns_per_day_replicates` lists from `scan_sweep.sh`
-output into `Doc/img/Gromacs/generate_charts.py` as numeric Python literals,
-mirroring the existing pattern in `Doc/img/LAMMPS/generate_charts.py`:
+The x86 charts of the README are drawn by
+`Doc/img/Gromacs/generate_instance_charts.py`, which embeds relative values
+and run counts from one sweep and one layout: the October 2026 runs, one
+MPI rank per core. This manifest runs `THREADS_PER_RANK=4` (48 ranks x 4
+OpenMP threads per node), so never add its cells to that chart's `DATA`:
+give the sweep a chart of its own, or replace all of `DATA` with it. To
+replace `DATA`, take each cell's median ns/day from the
+`ns_per_day_replicates` lists of `scan_sweep.sh`, divide it by the median
+of the sweep's own one-node `hpc7a.96xlarge` cell of the same benchmark,
+and enter the result with the cell's run count:
 
 ```python
-# benchMEM ----------------------------------------------------------------
-nodes_x86 = np.array([1, 2, 4])
-
-# hpc8a (Zen5, OpenMPI 4): 2 replicas at every node count
-ns_hpc8a_1n_benchMEM = [200.250, 200.610]
-ns_hpc8a_2n_benchMEM = [380.500, 381.220]
-ns_hpc8a_4n_benchMEM = [690.700, 692.140]
-
-# hpc7a (Zen4, OpenMPI 4): 2 replicas at every node count
-ns_hpc7a_1n_benchMEM = [144.598, 144.812]
-# ...
+    "benchMEM": {
+        "hpc8a.96xlarge": {1: (<relative rate>, <runs>), 2: (...), 4: (...)},
+        ...
 ```
 
-Then run `python3 Doc/img/Gromacs/generate_charts.py` to produce
-`Gromacs-benchMEM-Hpc8aVsHpc7a.png` and the equivalent benchPEP-h chart, and
-embed them in `apps/Gromacs/README.md` using the GitHub
-`raw=true` URL pattern documented in
-[`apps/LAMMPS/README.md`](../../LAMMPS/README.md).
+Then change the chart notes (`PROTOCOL_NOTES`) to the sweep's layout and
+protocol, run `python3 generate_instance_charts.py` in `Doc/img/Gromacs/`
+(it rewrites `Gromacs-SingleNode.png` and `Gromacs-Scaling.png`, which
+`apps/Gromacs/README.md` embeds, and prints the README's tables), and
+update the README's tables and text to match.
 
 ## Why this isn't auto-submitted
 

@@ -1,0 +1,11 @@
+-------------------------------------------------------------
+This is the standard ANSYS FLUENT benchmarks suite.
+For permission to use or publish please contact ANSYS Inc..
+-------------------------------------------------------------
+Number of iterations           = 25
+Total wall time                = 100.000 sec
+Read case time                 = 1.234 sec
+Read data time                 = 0.567 sec
+Solver wall time per iteration = 1.000 sec
+Solver speed                   = 86400.0 iterations/day
+Solver rating                  = 3456.0

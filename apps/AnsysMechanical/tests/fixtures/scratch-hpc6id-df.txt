@@ -1,0 +1,2 @@
+Filesystem                     1024-blocks  Used   Available Capacity Mounted on
+/dev/mapper/vg.01-lv_ephemeral 14725621912    28 13983418492       1% /scratch

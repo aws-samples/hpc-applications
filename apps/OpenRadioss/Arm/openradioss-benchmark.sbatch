@@ -71,8 +71,16 @@ else
 fi
 NRANK_PER_NODE=$(( SLURM_NTASKS_PER_NODE / THREADS_PER_RANK ))
 
-TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-INSTANCE_TYPE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
+# The instance type, from the instance metadata (IMDSv2), for the run
+# directory's name and the job log only. Each read gives up after a few
+# seconds and never ends the job: no answer, an HTTP error, an answer cut off
+# at the time limit, or one that is not an instance type name (an error page,
+# for example; the name is tested in the C locale) leaves INSTANCE_TYPE empty,
+# and the run directory's name and the job log then have no instance type.
+IMDS_CURL=(curl -fs --connect-timeout 2 --max-time 5)
+TOKEN=$("${IMDS_CURL[@]}" -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") || TOKEN=""
+INSTANCE_TYPE=$("${IMDS_CURL[@]}" -H "X-aws-ec2-metadata-token: ${TOKEN}" http://169.254.169.254/latest/meta-data/instance-type) || INSTANCE_TYPE=""
+( LC_ALL=C; [[ "${INSTANCE_TYPE}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || INSTANCE_TYPE=""
 WORKDIR="${BASE_DIR}/Run/${SLURM_JOB_NAME}/${MODEL}/${SLURM_CLUSTER_NAME:-cluster}/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${INSTANCE_TYPE}-${NRANK_TOTAL}x${THREADS_PER_RANK}-$(date '+%d-%m-%Y-%H-%M')"
 
 mkdir -p "${WORKDIR}"

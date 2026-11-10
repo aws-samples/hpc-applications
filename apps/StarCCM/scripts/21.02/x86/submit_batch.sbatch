@@ -18,15 +18,14 @@
 #   -s SIM_FILE   Simulation file path (default: /fsx/simulations/model.sim)
 #   -m BATCH_CMD  -batch command(s): a .java macro, run, mesh, step, or a
 #                 comma-separated combination (default: run — solves the sim)
-#   -l PODKEY     PoD license key (default: $PODLIC env var)
+#   -l PODKEY     PoD license key (default: $PODLIC env var, else the Parameter
+#                 Store parameter named by PODLIC_SSM_PARAMETER)
 #
-# MPI: OpenMPI (bundled with STAR-CCM+) is the recommended MPI for Linux per
-#   the Siemens user guide. Intel MPI is unsupported on AMD and crashes on
-#   21.02+ on AMD Turin/Genoa during mesh repartitioning.
-#   See docs/hpc8a-mpi-investigation.md for details.
+# MPI: OpenMPI (bundled with STAR-CCM+) is the default and recommended MPI for
+#   Linux per the Siemens installation guide; use it on AMD instances.
 #
-# CPU binding: No -cpubind flag needed — STAR-CCM+ defaults to "bandwidth"
-#   which is optimal (42-45% faster than -cpubind off on AMD).
+# CPU binding: No -cpubind flag needed — STAR-CCM+ defaults to "bandwidth",
+#   which maximises memory bandwidth across NUMA nodes; keep that default.
 #
 # IMPORTANT: STAR-CCM+ 21.02+ requires glibc >= 2.28.
 #   AL2023 (glibc 2.34) ✓ | Ubuntu 20+ ✓ | RHEL8+ ✓ | AL2 (2.26) ✗
@@ -56,7 +55,41 @@ export FI_EFA_FORK_SAFE=1             # Required for EFA with fork()
 export PATH=/opt/slurm/bin:$PATH
 
 SIM_BASENAME=$(basename ${SIM_FILE})
-LICENSEOPTS="-power -podkey ${PODKEY} -licpath 1999@flex.cd-adapco.com"
+# PoD key: -l, else $PODLIC, else the AWS Systems Manager Parameter Store parameter
+# that PODLIC_SSM_PARAMETER names (read now, when the job starts). STAR-CCM+ gets it in
+# LM_PROJECT, the variable its launcher sets from -podkey, so the key is not on
+# STAR-CCM+'s command line, which STAR-CCM+ writes into its log (and -benchmark into
+# its XML and HTML reports).
+if [ -z "${PODKEY}" ] && [ -n "${PODLIC_SSM_PARAMETER:-}" ]; then
+    # The lookup's Region, when AWS_REGION and AWS_DEFAULT_REGION are both unset
+    # or empty, comes from the instance metadata (IMDSv2). Each request gives up
+    # after 5 seconds (2 to connect), and -f turns an HTTP error into no answer.
+    # An answer cut off at that limit, or one that is not a Region name (tested in
+    # the C locale: in some locales [a-z] leaves out i), a proxy's page for
+    # example, counts as none. The script then sets no Region and leaves both
+    # variables as the job got them. If both are unset, the AWS CLI looks for a
+    # Region itself: in its configuration, then (AWS CLI v2) in the instance
+    # metadata. If either is set to an empty string, AWS CLI v2 takes that as the
+    # Region. With an empty Region, or with none, the lookup gives no key, and
+    # STAR-CCM+ starts without one.
+    if [ -z "${AWS_REGION:-${AWS_DEFAULT_REGION:-}}" ]; then
+        _imds_token=$(curl -fsS --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" \
+            -H "X-aws-ec2-metadata-token-ttl-seconds: 60") || _imds_token=""
+        _imds_region=$(curl -fsS --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: ${_imds_token}" \
+            "http://169.254.169.254/latest/meta-data/placement/region") || _imds_region=""
+        ( LC_ALL=C; [[ "${_imds_region}" =~ ^[a-z]{2}(-[a-z]+)+-[0-9]+$ ]] ) || _imds_region=""
+        [ -n "${_imds_region}" ] && export AWS_REGION="${_imds_region}"
+    fi
+    PODKEY=$(aws ssm get-parameter --name "${PODLIC_SSM_PARAMETER}" --with-decryption \
+        --query Parameter.Value --output text)
+fi
+[ -n "${PODKEY}" ] && export LM_PROJECT="${PODKEY}"
+LICENSEOPTS="-power -licpath 1999@flex.cd-adapco.com"
+
+echo "Drop caches on all nodes"
+srun --ntasks=$SLURM_JOB_NUM_NODES --ntasks-per-node=1 /bin/bash -c "sync && echo 3 | sudo tee /proc/sys/vm/drop_caches"
+echo "Enabling Transparent Huge Pages (THP)"
+srun --ntasks=$SLURM_JOB_NUM_NODES --ntasks-per-node=1 /bin/bash -c "echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled"
 
 echo "STAR-CCM+ ${APP_VERSION} — x86 batch (OpenMPI)"
 echo "Nodes: ${SLURM_JOB_NUM_NODES}, Sim: ${SIM_BASENAME}, Batch: ${BATCH_CMD}"

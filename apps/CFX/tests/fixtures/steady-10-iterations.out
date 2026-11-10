@@ -1,0 +1,98 @@
+ Synthetic cfx5solve output file for apps/CFX/tests: every time and mesh count in it is made up.
+
+ +--------------------------------------------------------------------+
+ |                                                                    |
+ |                         CFX Command Language                       |
+ |                                                                    |
+ +--------------------------------------------------------------------+
+
+ FLOW: Flow Analysis 1
+   SOLVER CONTROL:
+     CONVERGENCE CONTROL:
+       Maximum Number of Iterations = 10
+       Minimum Number of Iterations = 10
+     END
+   END
+ END
+
+ +--------------------------------------------------------------------+
+ |                Job Information at Start of Run                     |
+ +--------------------------------------------------------------------+
+
+ Run mode:       partitioning run
+
+ Host computer:  node1 (PID:1001)
+
+ Job started:    Mon Jan  5 10:00:00 2026
+ +--------------------------------------------------------------------+
+ |                          Mesh Statistics                           |
+ +--------------------------------------------------------------------+
+ Domain Name : fluid
+     Total Number of Nodes                                =     1030301
+     Total Number of Elements                             =     1000000
+         Total Number of Hexahedrons                      =     1000000
+     Total Number of Faces                                =       60000
+
+ +--------------------------------------------------------------------+
+ |                  Job Information at End of Run                     |
+ +--------------------------------------------------------------------+
+
+ Host computer:  node1 (PID:1001)
+
+ Job finished:   Mon Jan  5 10:01:00 2026
+
+ Total wall clock time: 6.000E+01 seconds
+
+ +--------------------------------------------------------------------+
+ |                Job Information at Start of Run                     |
+ +--------------------------------------------------------------------+
+
+ Run mode:       parallel run (Intel(R) MPI Library 2021.14)
+
+ Job started:    Mon Jan  5 10:01:05 2026
+ +--------------------------------------------------------------------+
+ |                          Mesh Statistics                           |
+ +--------------------------------------------------------------------+
+ Domain Name : fluid
+     Total Number of Nodes                                =     1030301
+     Total Number of Elements                             =     1000000
+         Total Number of Hexahedrons                      =     1000000
+     Total Number of Faces                                =       60000
+
+ ======================================================================
+ OUTER LOOP ITERATION =    1                    CPU SECONDS = 1.000E+02
+ ======================================================================
+ OUTER LOOP ITERATION =    2                    CPU SECONDS = 2.000E+02
+ ======================================================================
+ OUTER LOOP ITERATION =    3                    CPU SECONDS = 3.000E+02
+ ======================================================================
+ OUTER LOOP ITERATION =    4                    CPU SECONDS = 4.000E+02
+ ======================================================================
+ OUTER LOOP ITERATION =    5                    CPU SECONDS = 5.000E+02
+ ======================================================================
+ OUTER LOOP ITERATION =    6                    CPU SECONDS = 6.000E+02
+ ======================================================================
+ OUTER LOOP ITERATION =    7                    CPU SECONDS = 7.000E+02
+ ======================================================================
+ OUTER LOOP ITERATION =    8                    CPU SECONDS = 8.000E+02
+ ======================================================================
+ OUTER LOOP ITERATION =    9                    CPU SECONDS = 9.000E+02
+ ======================================================================
+ OUTER LOOP ITERATION =   10                    CPU SECONDS = 1.000E+03
+
+ CFD Solver wall clock seconds: 1.2345E+02
+
+ ======================================================================
+              Termination and Interrupt Condition Summary
+ ======================================================================
+
+ CFD Solver: Run duration reached
+   (Maximum number of outer iterations)
+
+ +--------------------------------------------------------------------+
+ |                  Job Information at End of Run                     |
+ +--------------------------------------------------------------------+
+
+ Job finished:   Mon Jan  5 10:03:30 2026
+
+ Total wall clock time: 1.450E+02 seconds

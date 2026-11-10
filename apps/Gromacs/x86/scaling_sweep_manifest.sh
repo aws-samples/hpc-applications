@@ -16,8 +16,7 @@
 # per cell so this is consistent with the LAMMPS pattern.
 #
 # This script is INTENDED TO BE RUN ON THE HEAD NODE OF THE x86 cluster
-# (ec2-user@10.3.39.86, reached via bastion 3.128.184.207) AFTER all
-# prerequisites are green:
+# AFTER all prerequisites are green:
 #
 #   [ ] — build_gromacs_x86.sbatch has been submitted on hpc8a
 #                 and produced /fsx/gromacs/x86_64/<tag>/{tmpi,ompi}/bin/{gmx,gmx_mpi}

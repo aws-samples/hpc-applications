@@ -37,8 +37,8 @@
 #
 # GROMACS prints performance to md.log on the lines:
 #                  (ns/day)    (hour/ns)
-#   Performance:   144.741     0.166
-#   Wall t (s):     59.668
+#   Performance:   100.000     0.240
+#   Wall t (s):     10.000
 # `-resethway` discards the first half of the run from the timing so warm-up
 # cost is excluded; `-noconfout` suppresses the multi-GiB per-rank confout
 # write that otherwise dominates I/O at high rank counts.
@@ -335,17 +335,25 @@ esac
 # <ranks>x<threads> token so a 4-GPU sweep is distinguishable from an
 # 8-GPU sweep at a glance.
 # ---------------------------------------------------------------------------
-TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-    -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-INSTANCE_TYPE=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
-    http://169.254.169.254/latest/meta-data/instance-type)
+# Instance metadata (IMDSv2), for the run directory's name and the job log
+# only. Each read gives up after a few seconds and never ends the job: no
+# answer, an HTTP error or an answer that is not an instance type name (an
+# error page, for example; the name is tested in the C locale) leaves
+# INSTANCE_TYPE empty, and the run directory and the job log then name the
+# type "unknown".
+IMDS_CURL=(curl -fs --connect-timeout 2 --max-time 5)
+TOKEN=$("${IMDS_CURL[@]}" -X PUT "http://169.254.169.254/latest/api/token" \
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") || TOKEN=""
+INSTANCE_TYPE=$("${IMDS_CURL[@]}" -H "X-aws-ec2-metadata-token: ${TOKEN}" \
+    http://169.254.169.254/latest/meta-data/instance-type) || INSTANCE_TYPE=""
+( LC_ALL=C; [[ "${INSTANCE_TYPE}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || INSTANCE_TYPE=""
 # REGION is referenced by the optional DynamoDB recorder block at the
 # bottom of this file (commented out by default).
 # shellcheck disable=SC2034
-REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
-    http://169.254.169.254/latest/meta-data/placement/region)
+REGION=$("${IMDS_CURL[@]}" -H "X-aws-ec2-metadata-token: ${TOKEN}" \
+    http://169.254.169.254/latest/meta-data/placement/region) || REGION=""
 
-WORKDIR="${BASE_DIR}/Run/${SLURM_JOB_NAME}/${MODEL}/${SLURM_CLUSTER_NAME:-cluster}/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${INSTANCE_TYPE}-${GPU_COUNT}g${GPU_TARGET_TAG}-$(date '+%d-%m-%Y-%H-%M')"
+WORKDIR="${BASE_DIR}/Run/${SLURM_JOB_NAME}/${MODEL}/${SLURM_CLUSTER_NAME:-cluster}/${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${INSTANCE_TYPE:-unknown}-${GPU_COUNT}g${GPU_TARGET_TAG}-$(date '+%d-%m-%Y-%H-%M')"
 
 if [ -e "${WORKDIR}" ]; then
     echo "ERROR: workdir already exists: ${WORKDIR}" >&2
@@ -360,7 +368,7 @@ echo "=== GROMACS GPU benchmark ==="
 echo "Date:          $(date)"
 echo "SLURM Job ID:  ${SLURM_JOB_ID}"
 echo "Model:         ${MODEL} (${TPR_FILE})"
-echo "Nodes:         ${SLURM_JOB_NUM_NODES} x ${INSTANCE_TYPE}"
+echo "Nodes:         ${SLURM_JOB_NUM_NODES} x ${INSTANCE_TYPE:-unknown}"
 echo "GPUs/node:     ${GPUS_PER_NODE}"
 echo "GPU_COUNT:     ${GPU_COUNT}"
 echo "GPU target:    ${GPU_TARGET_TAG}"
@@ -435,9 +443,12 @@ echo "${GMX_BIN_NAME} binary:  ${GMX_BIN}"
 echo "GROMACS tag:    ${GROMACS_TAG:-unknown}"
 
 # Capture the CUDA toolkit version on the running node for the DynamoDB
-# record (the GPU extension to the schema). nvcc may not be
-# on PATH at run time even when the build had it; fall back to the
-# nvidia-smi driver-side CUDA version line.
+# record (the GPU extension to the schema), from nvcc, which the env script
+# puts on the PATH when it loads the CUDA toolkit. With no nvcc on the PATH,
+# or no release number in what it prints, the version is "unknown" here and
+# in the results block, and the contribution record has no cuda_version:
+# nvidia-smi names the driver's version and the newest CUDA that driver
+# supports, not the toolkit's.
 # shellcheck disable=SC2034
 CUDA_VERSION="unknown"
 # NOTE: avoid 'cmd | awk ...exit...' pipelines here — awk closing the pipe
@@ -445,12 +456,8 @@ CUDA_VERSION="unknown"
 # script (exit 141). Capture into a variable first, then parse, with || true.
 if command -v nvcc >/dev/null 2>&1; then
     _nvcc_out="$(nvcc --version 2>/dev/null || true)"
-    CUDA_VERSION="$(printf '%s\n' "${_nvcc_out}" | awk '/release/ {print $(NF-1)}' | tr -d ',' || true)"
-fi
-if [ -z "${CUDA_VERSION}" ] || [ "${CUDA_VERSION}" = "unknown" ]; then
-    _smi_out="$(nvidia-smi 2>/dev/null || true)"
-    CUDA_VERSION="$(printf '%s\n' "${_smi_out}" | awk '/CUDA Version:/ {for (i=1;i<=NF;i++) if ($i=="Version:") {print $(i+1)}}' | head -1 | tr -d ',' || true)"
-    CUDA_VERSION="${CUDA_VERSION:-unknown}"
+    _nvcc_release="$(printf '%s\n' "${_nvcc_out}" | awk '/release/ {print $(NF-1)}' | tr -d ',' || true)"
+    if [[ "${_nvcc_release}" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then CUDA_VERSION="${_nvcc_release}"; fi
 fi
 echo "CUDA version:   ${CUDA_VERSION}"
 
@@ -698,8 +705,8 @@ WALL_TIME_TOTAL=$(awk "BEGIN{printf \"%.2f\", ${T_END} - ${T_START}}")
 # Same extraction logic as the CPU phases — GROMACS prints near the end of
 # md.log:
 #                  (ns/day)    (hour/ns)
-#   Performance:   144.741     0.166
-#   Wall t (s):     59.668
+#   Performance:   100.000     0.240
+#   Wall t (s):     10.000
 # Missing values -> 0 / "n/a" (non-fatal: gmx exit code is the
 # authoritative success signal per design.md error-handling table).
 # ---------------------------------------------------------------------------
@@ -832,7 +839,7 @@ GROMACS GPU benchmark results
 Date:             $(date)
 SLURM Job ID:     ${SLURM_JOB_ID}
 Model:            ${MODEL}
-Nodes:            ${SLURM_JOB_NUM_NODES} x ${INSTANCE_TYPE}
+Nodes:            ${SLURM_JOB_NUM_NODES} x ${INSTANCE_TYPE:-unknown}
 GPUs:             ${GPU_COUNT} (${GPU_TARGET_TAG})
 GPU topology:     ${GPU_TOPO_CLASS}
 MPI ranks:        ${NRANK_TOTAL} (${NRANK_PER_NODE}/node)
@@ -848,6 +855,19 @@ Wall time:        ${WALL_DISPLAY}
 Wall time (job):  ${WALL_TIME_TOTAL}s
 ================================================================================
 REPORT
+
+# ---------------------------------------------------------------------------
+# The success gate, for both recorders below, as in the CPU launchers: record
+# only a run whose md.log gives a positive ns/day. mdrun exited 0 to get here
+# (set -e and pipefail); the rate shows it timed the second half of the run.
+# Otherwise neither records it, a NOTE says why, and the job's exit status and
+# the results block above are as they were.
+# ---------------------------------------------------------------------------
+_ns="${NS_PER_DAY:-}";  [ "${_ns}" != "0" ]   || _ns=""
+_not_recorded=""
+if ! awk -v v="${_ns}" 'BEGIN { exit !(v ~ /^[0-9]+([.][0-9]+)?$/ && v + 0 > 0) }'; then
+    _not_recorded="md.log gives no positive ns/day"
+fi
 
 # ---------------------------------------------------------------------------
 # Optional: record the result to DynamoDB.
@@ -885,7 +905,9 @@ REPORT
 # export NS_PER_DAY HOUR_PER_NS WALL_TIME
 # export WORKDIR
 # export GPU_COUNT CUDA_VERSION
-# if [ -x "${DYNAMODB_RECORDER}" ]; then
+# if [ -n "${_not_recorded}" ]; then
+#     :   # not recorded: the NOTE below says why
+# elif [ -x "${DYNAMODB_RECORDER}" ]; then
 #     "${DYNAMODB_RECORDER}" || true
 # else
 #     echo "DynamoDB recorder not found at ${DYNAMODB_RECORDER} — skipping result persistence"
@@ -903,12 +925,14 @@ REPORT
 # and set SOURCE=<YourOrg> to tag your contributions.
 # See apps/Gromacs/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
 # ---------------------------------------------------------------------------
-_ns="${NS_PER_DAY:-}";  [ "${_ns}" != "0" ]   || _ns=""
 _wall="${WALL_TIME:-}"; [ "${_wall}" != "0" ] || _wall=""
 _atoms_m=""
 if [ -n "${ATOMS:-}" ] && [ "${ATOMS}" != "0" ]; then
     _atoms_m="$(awk "BEGIN{printf \"%.6g\", ${ATOMS}/1000000}" 2>/dev/null || true)"
 fi
+# The CUDA version, only when nvcc gave one (see "CUDA version" above).
+_cuda_args=()
+if [ "${CUDA_VERSION}" != unknown ]; then _cuda_args=(--char "cuda_version=${CUDA_VERSION}"); fi
 _contrib_recorder="${CONTRIB_RECORDER:-}"
 for _c in "${_contrib_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
@@ -916,11 +940,13 @@ for _c in "${_contrib_recorder}" \
           "${SLURM_SUBMIT_DIR:-.}/apps/Gromacs/dynamodb/record-benchmark.sh"; do
     if [ -n "${_c}" ] && [ -x "${_c}" ]; then _contrib_recorder="${_c}"; break; fi
 done
-if [ -n "${_contrib_recorder}" ] && [ -x "${_contrib_recorder}" ]; then
+if [ -n "${_not_recorded}" ]; then
+    echo "NOTE: md.log gives no positive ns/day, so this run is not recorded." >&2
+elif [ -n "${_contrib_recorder}" ] && [ -x "${_contrib_recorder}" ]; then
     GROMACS_VERSION="${GROMACS_TAG:-}" BENCHMARK_CASE="${MODEL}" \
     NS_PER_DAY="${_ns}" TIME_TO_SOLUTION="${_wall}" ATOMS_MILLION="${_atoms_m}" \
     RUN_DIR="${WORKDIR}" "${_contrib_recorder}" \
-        --metric "gpu_count=${GPU_COUNT}" --char "cuda_version=${CUDA_VERSION}" \
+        --metric "gpu_count=${GPU_COUNT}" ${_cuda_args[@]+"${_cuda_args[@]}"} \
         --char "gpu_target=${GPU_TARGET_TAG}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 else

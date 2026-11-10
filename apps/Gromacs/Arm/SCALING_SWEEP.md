@@ -14,20 +14,17 @@ The sweep is the data feed for the Arm chart in
 populated) and the embedded PNGs in [`apps/Gromacs/README.md`](../README.md).
 
 It is **not** runnable from a developer laptop — it must run on the head
-node of the Arm cluster (`ec2-user@10.3.51.188`, reached via bastion
-`ec2-user@3.128.184.207`). The artefacts in this directory are intended
+node of the Arm cluster. The artefacts in this directory are intended
 to be `git pull`'d on the cluster head node and invoked there.
 
 ## Status
 
-**Documented, awaiting live execution.**
-
-As of the time this file was committed the prerequisites below are not all
-met (see § Prerequisites). Once they are, the operator runs
+**Ran in May and June 2026**; its benchPEP-h chart is in
+[`apps/Gromacs/README.md`](../README.md). To run it again, the operator runs
 `scaling_sweep_manifest.sh` on the head node, waits for the 24 jobs to
 complete, runs `../dynamodb/scan_sweep.sh` to confirm DynamoDB landed
-every record, then pastes the per-replicate means into
-`Doc/img/Gromacs/generate_charts.py` and flips `data_available_arm = True`.
+every record, then enters each cell's relative value and run count in
+`Doc/img/Gromacs/generate_charts.py` (see the hand-off below).
 
 ## Prerequisites
 
@@ -156,40 +153,28 @@ m8g.48xlarge             4   benchPEP-h     [ 12.510,  12.580]                  
 
 ## Hand-off to the chart pipeline
 
-Copy the per-replicate `ns_per_day_replicates` lists from `scan_sweep.sh`
-output into [`Doc/img/Gromacs/generate_charts.py`](../../../Doc/img/Gromacs/generate_charts.py),
-mirroring the placeholder pattern that's already in place for x86:
+[`Doc/img/Gromacs/generate_charts.py`](../../../Doc/img/Gromacs/generate_charts.py)
+embeds relative values and run counts only. From the
+`ns_per_day_replicates` lists of `scan_sweep.sh`, take each cell's median
+ns/day (for a cell measured with several layouts, the fastest layout's),
+divide it by the median of one Graviton3E node of the same workload, and
+enter the result with the cell's run count in `ARM_DATA`, one entry per
+workload (`ARM_SUBTITLES` holds each chart's subtitle):
 
 ```python
-# Arm — benchMEM ----------------------------------------------------------
-# hpc7g (Graviton3E, OpenMPI 5)
-ns_hpc7g_1n_benchMEM = [92.300, 92.612]
-ns_hpc7g_2n_benchMEM = [175.700, 176.110]
-ns_hpc7g_4n_benchMEM = [320.500, 321.220]
-# m8g (Graviton4, OpenMPI 5)
-ns_m8g_1n_benchMEM   = [240.500, 241.220]
-ns_m8g_2n_benchMEM   = [462.700, 463.140]
-ns_m8g_4n_benchMEM   = [855.700, 857.220]
-
-# Arm — benchPEP-h --------------------------------------------------------
-ns_hpc7g_1n_benchPEPh = [1.420, 1.428]
-# ... and so on for the other five cells
+ARM_DATA = {
+    "benchPEP-h": {
+        "c7gn.16xlarge": {1: (1.00000, <runs>), 2: (<relative rate>, <runs>), 4: (...)},
+        "m8g.48xlarge": {1: (...), 2: (...), 4: (...)},
+    },
+}
 ```
 
-The empty data lists in `generate_charts.py` show every
-cell that needs filling. Then flip the gate near the top of the script:
-
-```python
-data_available_arm = True
-```
-
-From the repo root, run `python3 Doc/img/Gromacs/generate_charts.py`. The
-script writes `Gromacs-benchMEM-Graviton3VsGraviton4.png` and
-`Gromacs-benchPEP-h-Graviton3VsGraviton4.png` next to itself. The Arm
-chart subsection in [`apps/Gromacs/README.md`](../README.md) already
-embeds these PNGs by raw-content URL — no edit to the README is required
-once the PNGs land in `Doc/img/Gromacs/` on `main`. They'll start
-rendering automatically the moment the commit reaches the default branch.
+Then run `python3 generate_charts.py` in `Doc/img/Gromacs/`. It writes
+`Gromacs-<workload>-Graviton3VsGraviton4.png` for each workload in
+`ARM_DATA`. Check the chart's notes (run counts, layouts) against the
+sweep, and embed a new workload's PNG in the Arm section of
+[`apps/Gromacs/README.md`](../README.md).
 
 `git add Doc/img/Gromacs/Gromacs-*-Graviton3VsGraviton4.png Doc/img/Gromacs/generate_charts.py`
 and commit.

@@ -12,8 +12,8 @@
 #   * It ALWAYS writes the record as a local JSON file you can inspect/keep.
 #   * It only calls `aws dynamodb put-item` when AWS credentials with write
 #     access are available (or you pass --put). With no credentials it just
-#     saves the JSON and tells you where it is, so you can send it to the
-#     dataset owner or upload it to their contribution inbox. Nothing fails.
+#     saves the JSON and tells you where it is, so you can share it in a public
+#     Benchmark results issue (see apps/BENCHMARK-RECORDERS.md). Nothing fails.
 #   * `--dry-run` prints the record to stdout and touches neither disk nor AWS.
 #
 # ---------------------------------------------------------------------------
@@ -26,14 +26,19 @@
 #   time_to_solution_seconds  total solver wall-clock time (the model's target).
 #                             If you omit it but pass --time-per-iteration and
 #                             --num-iterations, it is computed (per-iter x iters).
-#   num_cells_million         mesh size in millions of cells
+#   num_cells_million         the case's published mesh size, in millions of cells
 # Optional but valuable:
 #   solver_rating, solver_speed, time_per_iteration_seconds, num_iterations,
 #   turbulence_model, solver_type, analysis_type, cell_type, fluent_version
+#   mesh_cells                the mesh's own cell count, from the 2026R1 harness's transcript
+#                             ("Cell count = N", the count its MIUPS is computed on), when the
+#                             MIUPS used is that transcript's (read from it, or given and equal
+#                             to its line); the time per iteration is N / 1e6 / MIUPS, else
+#                             num_cells_million / MIUPS
 #
 # The record lands in a DynamoDB table named  External_<Source>_Fluent  in the
-# owner's account/region. The ingestion side reads every External_* table with
-# an identity map, so the canonical attribute names below are consumed as-is.
+# owner's account/region. The ingestion side reads the record by the canonical
+# attribute names below, so keep them as they are.
 #
 # Fluent reports per-iteration timing in the solver .out/.trn:
 #   "Solver wall time per iteration" -> --time-per-iteration
@@ -97,17 +102,19 @@ CASE_READ_SECONDS="${CASE_READ_SECONDS:-}"
 DATA_READ_SECONDS="${DATA_READ_SECONDS:-}"
 BENCHMARK_METHOD="${BENCHMARK_METHOD:-}" # fluent_benchmark_harness | fluentbench
 SOLVER_MODE="${SOLVER_MODE:-}"           # cpu | gpu
+TRANSCRIPT="${TRANSCRIPT:-}"             # the harness's transcript of the run (--transcript)
 
 # Fluent dataset characteristics (also env-overridable).
 DISCIPLINE="CFD"          # always true for Fluent; override if you must
 NUM_CELLS_MILLION="${NUM_CELLS_MILLION:-}"
+MESH_CELLS=""             # read from the 2026R1 harness's transcript only
 NUM_ITERATIONS="${NUM_ITERATIONS:-}"
 TURBULENCE_MODEL="${TURBULENCE_MODEL:-}"
 SOLVER_TYPE="${SOLVER_TYPE:-}"
 ANALYSIS_TYPE="${ANALYSIS_TYPE:-}"
 CELL_TYPE="${CELL_TYPE:-}"
 
-# Directory scanned for the solver log to recover metrics in zero-arg use
+# Directory scanned for the solver log to recover metrics not passed in
 # (defaults to the current dir, which is the run dir when called from a job).
 RUN_DIR="${RUN_DIR:-$PWD}"
 
@@ -116,7 +123,7 @@ declare -a EXTRA_METRICS=()
 declare -a EXTRA_CHARS=()
 
 usage() {
-    sed -n '2,62p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,67p' "$0" | sed 's/^# \{0,1\}//'
     cat <<'EOF'
 
 OPTIONS
@@ -150,7 +157,10 @@ OPTIONS
     --data-read SEC           Avg wall-clock time to read the data (2026R1).
     --benchmark-method M      fluent_benchmark_harness (2026R1) | fluentbench.
     --solver-mode M           cpu | gpu (which Fluent solver was benchmarked).
-    --num-cells-million X     Mesh size in millions of cells.
+    --num-cells-million X     The case's published mesh size, in millions of cells.
+                              With MIUPS, the time per iteration is X / MIUPS only
+                              when no transcript gives the mesh's "Cell count = N"
+                              (a transcript that prints the MIUPS used).
     --turbulence-model M      e.g. k-omega-sst, k-epsilon-realizable.
     --solver-type T           steady|transient; pressure-/density-based; coupled/segregated.
     --analysis-type T         steady | transient | RANS | ...
@@ -160,10 +170,20 @@ OPTIONS
 
   Behavior:
     --put                     Force the DynamoDB put-item (error out if it fails).
+                              With no AWS CLI on the PATH, keep the JSON and exit 0.
     --no-put                  Never call AWS; only write the JSON file.
     --dry-run                 Print the record to stdout; touch no file and no AWS.
     --run-dir DIR             Dir to scan for the solver log when metrics aren't
-                              supplied (default: current dir). Enables zero-arg use.
+                              supplied (default: current dir). Lets a launch
+                              script call the recorder with no arguments.
+    --transcript FILE         The 2026R1 harness's transcript of the run, to read
+                              MIUPS, the mesh's cell count, the read times, the
+                              case and the method from (the 2026R1 launch scripts
+                              pass the one they checked). Default: the last
+                              <case>-<cores>.trn of the case and core count, in the
+                              run dir or its working/<tag>/transcript/, that
+                              prints the harness's MIUPS line; never Fluent's own
+                              session transcript, fluent-<date>-<time>-<pid>.trn.
     --out DIR                 Directory for the saved JSON (default: current dir).
     -h, --help                Show this help.
 EOF
@@ -205,6 +225,7 @@ while [ $# -gt 0 ]; do
         --no-put)             DO_PUT="no"; shift;;
         --dry-run)            DRY_RUN=1; shift;;
         --run-dir)            RUN_DIR="$2"; shift 2;;
+        --transcript)         TRANSCRIPT="$2"; shift 2;;
         --out)                OUTDIR="$2"; shift 2;;
         -h|--help)            usage; exit 0;;
         *) echo "ERROR: unknown option '$1' (try --help)" >&2; exit 2;;
@@ -212,18 +233,78 @@ while [ $# -gt 0 ]; do
 done
 
 # --- Helpers -----------------------------------------------------------------
+# imds <path>: the instance metadata's answer at <path> (IMDSv2), or nothing.
+# Each request gives up after 2 seconds (1 to connect), and an HTTP error, or an
+# answer cut off at that limit, gives nothing.
 imds() {
-    local path="$1" token
+    local path="$1" token answer
     token=$(curl -fsS --connect-timeout 1 --max-time 2 -X PUT \
         "http://169.254.169.254/latest/api/token" \
         -H "X-aws-ec2-metadata-token-ttl-seconds: 60" 2>/dev/null) || return 0
-    curl -fsS --connect-timeout 1 --max-time 2 -H "X-aws-ec2-metadata-token: $token" \
-        "http://169.254.169.254/latest/meta-data/${path}" 2>/dev/null || return 0
+    answer=$(curl -fsS --connect-timeout 1 --max-time 2 -H "X-aws-ec2-metadata-token: $token" \
+        "http://169.254.169.254/latest/meta-data/${path}" 2>/dev/null) || return 0
+    printf '%s' "$answer"
+}
+# imds_instance_type: the instance type from the instance metadata, when the
+# answer is an instance type name (tested in the C locale: in some locales [a-z]
+# leaves out i). Anything else, a proxy's page for example, counts as none.
+imds_instance_type() {
+    local itype
+    itype="$(imds instance-type)"
+    if ( LC_ALL=C; [[ "$itype" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ); then printf '%s' "$itype"; fi
+}
+
+# transcript_cell_count <transcript>: the mesh's own cell count, from the 2026R1
+# harness's "Cell count = N" line (its print of number-of-cells, the count its MIUPS
+# is computed on), or nothing. N must be a positive integer (as Fluent prints one: no
+# sign, no leading zero), and every such line of the transcript must give the same N.
+# Lines that only mention it (the journal's echo of the print, the partition table)
+# do not start with "Cell count =". awk reads the file on its standard input: given
+# as an argument, a relative path such as run=1/... would be an assignment to awk.
+transcript_cell_count() {
+    LC_ALL=C awk '
+        /^Cell count[[:space:]]*=/ {
+            v = $0; sub(/^Cell count[[:space:]]*=[[:space:]]*/, "", v); sub(/[[:space:]]+$/, "", v)
+            if (v !~ /^[1-9][0-9]*$/) bad = 1
+            else if (n == "") n = v
+            else if (v != n) bad = 1
+        }
+        END { if (!bad && n != "") print n }' 2>/dev/null < "$1"
 }
 
 json_escape() { local s="${1//\\/\\\\}"; printf '%s' "${s//\"/\\\"}"; }
 
 is_number() { [[ "$1" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; }
+
+# same_number <a> <b>: true when both are numbers (is_number) of the same value (13.65, 13.650).
+same_number() {
+    is_number "$1" && is_number "$2" && LC_ALL=C awk -v a="$1" -v b="$2" 'BEGIN { exit !(a + 0 == b + 0) }'
+}
+
+# harness_transcript <dir>: the 2026R1 harness's transcript of the case and core count
+# in <dir>, or nothing: the last <case>-<cores>.trn (of the case and core count given,
+# when they are) at its top level, then under its working/<tag>/transcript/, that is a
+# file, not a link, and prints the harness's "Million Cell Iteration Per Wall Second ="
+# line: the one the 2026R1 launch scripts check, whose MIUPS an older launch script
+# passes too, so that the MIUPS and the count come from one transcript. So never
+# Fluent's own session transcript (fluent-<date>-<time>-<pid>.trn), fluentbench.pl's
+# <case>-<cores>.trn (it prints no MIUPS), a link to a file shipped with the dataset,
+# or a .trn anywhere else in <dir>.
+harness_transcript() {
+    local f name case_part cores_part last=""
+    for f in "$1"/*.trn "$1"/working/*/transcript/*.trn; do
+        name="${f##*/}"
+        [[ "$name" =~ ^(.+)-([0-9]+)\.trn$ ]] || continue
+        case_part="${BASH_REMATCH[1]}"; cores_part="${BASH_REMATCH[2]}"
+        [[ "$name" =~ ^fluent-[0-9]{8}-[0-9]{6}-[0-9]+\.trn$ ]] && continue
+        [ -z "$BENCHMARK_CASE" ] || [ "$case_part" = "$BENCHMARK_CASE" ] || continue
+        [[ ! "$NUM_CORES" =~ ^[0-9]+$ ]] || [ "$cores_part" = "$NUM_CORES" ] || continue
+        { [ -f "$f" ] && [ ! -L "$f" ]; } || continue
+        grep -q '^Million Cell Iteration Per Wall Second[[:space:]]*=' "$f" 2>/dev/null || continue
+        last="$f"
+    done
+    printf '%s' "$last"
+}
 
 declare -a ITEM_LINES=()
 add_s() {
@@ -246,7 +327,7 @@ add_kv() {
 }
 
 # --- Auto-detect environment (only fills values not already supplied) --------
-[ -n "$INSTANCE_TYPE" ]    || INSTANCE_TYPE="$(imds instance-type)"
+[ -n "$INSTANCE_TYPE" ]    || INSTANCE_TYPE="$(imds_instance_type)"
 [ -n "$NUM_CORES" ]        || NUM_CORES="${SLURM_NTASKS:-${SLURM_NPROCS:-}}"
 [ -n "$NUM_INSTANCES" ]    || NUM_INSTANCES="${SLURM_JOB_NUM_NODES:-}"
 if [ -z "$OPERATING_SYSTEM" ] && [ -r /etc/os-release ]; then
@@ -267,7 +348,7 @@ MPI_VERSION="$(mpirun --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | he
 LIBFABRIC_VERSION="$(fi_info --version 2>/dev/null | awk '/libfabric:/ {print $2; exit}')"
 EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print $2; exit}')"
 
-# --- Zero-arg fallback: recover Fluent result metrics from the solver log ----
+# --- Fallback: recover Fluent result metrics from the solver log -------------
 # When a value wasn't supplied (flag or env), parse it from the Fluent solver
 # output in RUN_DIR, using the same patterns as Utils/record-results. This lets
 # the recorder run with no arguments when called at the end of a benchmark job.
@@ -278,21 +359,41 @@ if ls "$RUN_DIR"/*.out >/dev/null 2>&1; then
     [ -n "$SOLVER_RATING" ]      || SOLVER_RATING="$(grep -h 'Solver rating' "$RUN_DIR"/*.out 2>/dev/null | awk '{print $4}' | head -1)"
 fi
 
-# New 2026R1 harness (fluent_benchmark_gpu.py): the per-case transcript
-# <case>-<cores>.trn carries "Million Cell Iteration Per Wall Second = <MIUPS>"
-# plus the case/data read wall times. The transcript lives a few levels down
-# (working/<tag>/transcript/), so look there too.
-_trn="$(ls -1 "$RUN_DIR"/*.trn 2>/dev/null | head -1)"
-[ -n "$_trn" ] || _trn="$(find "$RUN_DIR" -maxdepth 6 -name '*.trn' 2>/dev/null | head -1)"
+# New 2026R1 harness (fluent_benchmark_gpu.py): its transcript of a case and core
+# count, <case>-<cores>.trn under working/<tag>/transcript/, carries "Million Cell
+# Iteration Per Wall Second = <MIUPS>", the mesh's "Cell count = N" and the case/data
+# read wall times. They, the case and the method come from that transcript only:
+# TRANSCRIPT (the 2026R1 launch scripts pass the one they checked), or else the one
+# harness_transcript finds in RUN_DIR. Never from Fluent's own session transcript or
+# fluentbench.pl's, which a run directory can hold too.
+_trn=""
+if [ -n "$TRANSCRIPT" ]; then
+    if [ -f "$TRANSCRIPT" ] && [ -r "$TRANSCRIPT" ]; then
+        _trn="$TRANSCRIPT"
+    else
+        echo "WARN: ignoring TRANSCRIPT '${TRANSCRIPT}': not a readable file, so no transcript is read." >&2
+    fi
+else
+    _trn="$(harness_transcript "$RUN_DIR")"
+fi
 if [ -n "$_trn" ]; then
-    [ -n "$MIUPS" ]             || MIUPS="$(grep -h 'Million Cell Iteration Per Wall Second' "$_trn" 2>/dev/null | tail -1 | sed -E 's/.*=[[:space:]]*//' | awk '{print $1}')"
+    _trn_miups="$(grep -h 'Million Cell Iteration Per Wall Second' "$_trn" 2>/dev/null | tail -1 | sed -E 's/.*=[[:space:]]*//' | awk '{print $1}')"
+    [ -n "$MIUPS" ]             || MIUPS="$_trn_miups"
+    # The transcript's cell count times the run only with the transcript's own MIUPS: the
+    # MIUPS used is the number on its line, read from it here or given (a launcher passing
+    # the transcript it checked). A transcript that prints no MIUPS, or another one than the
+    # MIUPS given (a replay from a directory that holds another run's transcript), gives no
+    # count, so the time per iteration is on the case's nominal size, with the NOTE.
+    same_number "$MIUPS" "$_trn_miups" && MESH_CELLS="$(transcript_cell_count "$_trn")"
     [ -n "$CASE_READ_SECONDS" ] || CASE_READ_SECONDS="$(grep -h 'Average wall-clock time per case input' "$_trn" 2>/dev/null | tail -1 | sed -E 's/.*:[[:space:]]*//' | awk '{print $1}')"
     [ -n "$DATA_READ_SECONDS" ] || DATA_READ_SECONDS="$(grep -h 'Average wall-clock time per data input' "$_trn" 2>/dev/null | tail -1 | sed -E 's/.*:[[:space:]]*//' | awk '{print $1}')"
     [ -n "$BENCHMARK_METHOD" ]  || BENCHMARK_METHOD="fluent_benchmark_harness"
     [ -n "$BENCHMARK_CASE" ]    || BENCHMARK_CASE="$(basename "$_trn" 2>/dev/null | sed -E 's/-[0-9]+\.trn$//')"
-    if [ -z "$SOLVER_MODE" ]; then
-        if find "$RUN_DIR" -maxdepth 6 -name '*.gpu' 2>/dev/null | grep -q .; then SOLVER_MODE="gpu"; else SOLVER_MODE="cpu"; fi
-    fi
+fi
+# The solver mode, when not given: gpu when the run directory holds a .gpu file, else
+# cpu. As before, only when a transcript is read or the run directory holds any .trn.
+if [ -z "$SOLVER_MODE" ] && { [ -n "$_trn" ] || [ -n "$(find "$RUN_DIR" -maxdepth 6 -name '*.trn' -print -quit 2>/dev/null)" ]; }; then
+    if find "$RUN_DIR" -maxdepth 6 -name '*.gpu' 2>/dev/null | grep -q .; then SOLVER_MODE="gpu"; else SOLVER_MODE="cpu"; fi
 fi
 # If we only found classic metrics, label the method accordingly.
 if [ -z "$BENCHMARK_METHOD" ] && [ -n "${SOLVER_RATING}${TIME_PER_ITERATION}" ]; then
@@ -311,11 +412,20 @@ if [ -z "$NUM_CELLS_MILLION" ] && [ -n "$BENCHMARK_CASE" ]; then
     _ncm="$(printf '%s' "$BENCHMARK_CASE" | grep -oiE '[0-9]+m' | head -1 | grep -oE '[0-9]+')"
     [ -n "$_ncm" ] && NUM_CELLS_MILLION="$_ncm"
 fi
-# New harness: MIUPS = million-cell-iterations / wall-second. With the mesh size
-# this yields the per-iteration wall time (= cells_million / MIUPS).
-if [ -z "$TIME_PER_ITERATION" ] && is_number "${MIUPS:-}" && is_number "${NUM_CELLS_MILLION:-}" \
-        && awk "BEGIN{exit !(${MIUPS:-0} > 0)}"; then
-    TIME_PER_ITERATION="$(awk "BEGIN{printf \"%.6g\", ${NUM_CELLS_MILLION} / ${MIUPS}}")"
+# New harness: MIUPS = million-cell-iterations / wall-second, on the mesh's own cell
+# count, which the transcript prints. So the per-iteration wall time is that count
+# / 1e6 / MIUPS. With no usable count it is num_cells_million / MIUPS, on the size in
+# the case's name, which can differ from the mesh's: a NOTE says so.
+if [ -z "$TIME_PER_ITERATION" ] && is_number "${MIUPS:-}" && awk "BEGIN{exit !(${MIUPS:-0} > 0)}"; then
+    if [ -n "$MESH_CELLS" ]; then
+        TIME_PER_ITERATION="$(awk "BEGIN{printf \"%.6g\", ${MESH_CELLS} / 1e6 / ${MIUPS}}")"
+    elif is_number "${NUM_CELLS_MILLION:-}"; then
+        TIME_PER_ITERATION="$(awk "BEGIN{printf \"%.6g\", ${NUM_CELLS_MILLION} / ${MIUPS}}")"
+        echo "NOTE: no transcript gives the mesh's own cell count (one positive integer on the" \
+             "\"Cell count = N\" lines of a transcript that prints the MIUPS used), so the time per" \
+             "iteration is num_cells_million / MIUPS, on the case's nominal size" \
+             "(${NUM_CELLS_MILLION} million cells)." >&2
+    fi
 fi
 
 # Fluent total solve time = per-iteration x iterations, when total not given directly.
@@ -392,6 +502,7 @@ for pair in "${EXTRA_METRICS[@]:-}"; do [ -n "$pair" ] && add_kv add_n "$pair"; 
 # Dataset characteristics
 add_s "discipline"           "$DISCIPLINE"
 add_n "num_cells_million"    "$NUM_CELLS_MILLION"
+add_n "mesh_cells"           "$MESH_CELLS"
 add_n "num_iterations"       "$NUM_ITERATIONS"
 add_s "turbulence_model"     "$TURBULENCE_MODEL"
 add_s "solver_type"          "$SOLVER_TYPE"
@@ -431,12 +542,14 @@ attempt_put=0
 case "$DO_PUT" in
     yes) attempt_put=1;;
     no)  attempt_put=0;;
-    auto) if command -v aws >/dev/null 2>&1; then attempt_put=1; fi;;
+    auto) attempt_put=1;;
 esac
 
 if [ "$attempt_put" -eq 1 ]; then
     if ! command -v aws >/dev/null 2>&1; then
-        echo "NOTE: AWS CLI not found; kept JSON only. Send ${JSON_FILE} to the dataset owner." >&2
+        echo "NOTE: AWS CLI not found; kept JSON only. To share it, attach ${JSON_FILE} to a Benchmark results issue:" >&2
+        echo "      https://github.com/aws-samples/hpc-applications/issues/new?template=benchmark-results.yml" >&2
+        echo "      The issue is public, and so are the JSON and its file's name: rename a confidential case in both first." >&2
         exit 0
     fi
     put_err="$( aws dynamodb put-item --region "$REGION" --table-name "$TABLE" \
@@ -449,7 +562,9 @@ if [ "$attempt_put" -eq 1 ]; then
             exit 1
         fi
         echo "NOTE: could not write to DynamoDB (this is expected without write access to the owner's account)." >&2
-        echo "      Your result is saved at ${JSON_FILE} — send it to the dataset owner or upload it to their contribution inbox." >&2
+        echo "      Your result is saved at ${JSON_FILE}. To share it, attach it to a Benchmark results issue:" >&2
+        echo "      https://github.com/aws-samples/hpc-applications/issues/new?template=benchmark-results.yml" >&2
+        echo "      The issue is public, and so are the JSON and its file's name: rename a confidential case in both first." >&2
     fi
 else
     echo "Skipped DynamoDB write (--no-put). JSON saved at ${JSON_FILE}."

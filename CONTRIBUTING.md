@@ -40,6 +40,18 @@ GitHub provides additional document on [forking a repository](https://help.githu
 [creating a pull request](https://help.github.com/articles/creating-a-pull-request/).
 
 
+## Contributing benchmark results
+Benchmark results are contributions too. Eleven applications in this repository ship a recorder, and their benchmark
+launch scripts save each successful run as a small JSON record. See [apps/BENCHMARK-RECORDERS.md](apps/BENCHMARK-RECORDERS.md)
+for how to tag your runs and share them with the AI-Powered HPC dataset, which trains a model that predicts HPC
+performance on AWS. To share a run, open a
+[Benchmark results issue](https://github.com/aws-samples/hpc-applications/issues/new?template=benchmark-results.yml),
+one per run, and attach the JSON record. The issue is public, and so are the JSON and its file's name: share only
+public benchmark cases (or rename a confidential one in both first), and no licence server, licence key or customer name.
+If you attach or paste something you should not have, the contribution workflow in
+[apps/BENCHMARK-RECORDERS.md](apps/BENCHMARK-RECORDERS.md#contribution-workflow) says what to do.
+
+
 ## Finding contributions to work on
 Looking at the existing issues is a great way to find something to contribute on. As our projects, by default, use the default GitHub issue labels (enhancement/bug/duplicate/help wanted/invalid/question/wontfix), looking at any 'help wanted' issues is a great place to start.
 

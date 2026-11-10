@@ -19,12 +19,29 @@
 #     SCRATCH_MODE      auto | nvme | shared   (default auto)
 #                       nvme/auto run the solve from node-local instance-store
 #                       NVMe (SCRATCH_ROOT, mounted by ParallelCluster) when
-#                       present on ALL nodes - faster for out-of-core solves and
-#                       keeps heavy scratch I/O off the shared filesystem.
+#                       ALL nodes pass the scratch check below - faster for
+#                       out-of-core solves and keeps heavy scratch I/O off the
+#                       shared filesystem. shared never checks.
 #     SCRATCH_ROOT      instance-store mount point (default /scratch).
+#     SCRATCH_MIN_FREE_GIB  free space SCRATCH_ROOT needs on every node for the
+#                       solve to run there, in GiB (default 300; 1 to 9999999).
 #     ANSYS_COMPAT_DIR  dir with the legacy libs AL2023 lacks (see Readme.md);
 #                       default ${BASE_DIR}/ansys_compat, used when it exists.
-#     ANSYSLMD_LICENSE_FILE, SOURCE, DYNAMODB_RECORDER    see recorder section.
+#     MAPDL_PERF        on | off (default on). on passes MAPDL's -perf on, as
+#                       the command line runBench.py prints does: MAPDL then
+#                       prints the S O L V E R   S T A T I S T I C S section of
+#                       its closing statistics, whose Memory Option: line gives
+#                       the memory mode the run is recorded with. off leaves it
+#                       out, and the memory mode is unknown.
+#     ANSYSLMD_LICENSE_FILE  the Ansys licence server, as <port>@<host>: set it
+#                       in the shell you submit from (Readme.md, "Running under
+#                       a job scheduler"). The default is only a placeholder.
+#     SOURCE, DYNAMODB_RECORDER    see recorder section.
+#     SOLVER_TYPE       solver family the recorder stores with the run, e.g.
+#                       sparse-direct-symmetric or pcg-iterative. Set it on
+#                       the submission, SOLVER_TYPE=pcg-iterative sbatch ...,
+#                       so it does not carry over to the next model (Readme.md,
+#                       "Recording results").
 #
 # IMPORTANT: submit as a regular user, NEVER root. The -ssh start method
 # authenticates with the submitting user's inter-node SSH identity, and on
@@ -84,7 +101,10 @@ module load libfabric-aws
 export INTELMPI_ROOT="$(dirname $(dirname $(which mpirun)))"
 ######################## EFA settings ########################
 
-export ANSYSLMD_LICENSE_FILE=${ANSYSLMD_LICENSE_FILE:-"1055@172.31.89.151"}
+# The Ansys licence server, as <port>@<host>: set ANSYSLMD_LICENSE_FILE in the
+# shell you submit from (Readme.md, "Running under a job scheduler"); sbatch
+# passes it on to the job. The default is only a placeholder.
+export ANSYSLMD_LICENSE_FILE=${ANSYSLMD_LICENSE_FILE:-"1055@<license-server>"}
 
 mechanicalversion=${1:-"v261"}
 input_file=${2:-"/fsx/.../your_file.dat"}
@@ -93,6 +113,38 @@ scratch_mode=${SCRATCH_MODE:-"auto"}
 # Where node-local instance-store NVMe is mounted. ParallelCluster uses /scratch;
 # override for clusters that mount it elsewhere.
 scratch_root=${SCRATCH_ROOT:-"/scratch"}
+# Free space, in GiB, SCRATCH_ROOT must have on EVERY node for the solve to run
+# there (see the scratch check below). The default holds the whole of an in-core
+# V26 Cluster solve on one node (MAPDL reported at most 231 GiB of disk space used)
+# with room to spare. Out-of-core solves write several times more (0.5-1.2 TB for
+# those models), and a node that runs out of scratch mid-solve fails the run, so
+# for an out-of-core model set it to what the model writes on a node.
+scratch_min_free_gib=${SCRATCH_MIN_FREE_GIB:-"300"}
+# A whole number from 1 to 9999999: at most 7 digits keeps the comparison far
+# inside the shell's integers, and 0 would let any free space pass.
+case "${scratch_min_free_gib}" in
+    *[!0-9]*|0|00|000|0000|00000|000000|0000000|????????*)
+        echo "ERROR: SCRATCH_MIN_FREE_GIB='${scratch_min_free_gib}' is not a whole number of GiB" >&2
+        echo "       from 1 to 9999999. It is the free space SCRATCH_ROOT needs on every node" >&2
+        echo "       for the solve to use node-local NVMe scratch. Refusing to run rather" >&2
+        echo "       than guess at it." >&2
+        exit 1 ;;
+esac
+
+# MAPDL's -perf on, as in the command line runBench.py prints. Only with it does
+# MAPDL 2026 R1 print the S O L V E R   S T A T I S T I C S section of its closing
+# statistics, which holds the Memory Option: line the memory mode is read from
+# (lib/mapdl-verdict.sh); without it the memory mode is recorded as unknown.
+mapdl_perf=${MAPDL_PERF:-"on"}
+case "${mapdl_perf}" in
+    on)  mapdl_perf_args=( -perf on ) ;;
+    off) mapdl_perf_args=() ;;
+    *)
+        echo "ERROR: MAPDL_PERF='${mapdl_perf}' is neither on nor off. on, the default, passes" >&2
+        echo "       MAPDL's -perf on, whose solver statistics give the memory mode the run is" >&2
+        echo "       recorded with; off leaves it out. Refusing to run rather than guess at it." >&2
+        exit 1 ;;
+esac
 
 APP_BIN_PATH="${basedir}/ansys_inc/${mechanicalversion}/ansys/bin/mapdl"
 
@@ -130,41 +182,88 @@ if [ -d "${ANSYS_COMPAT_DIR}" ]; then
     export LD_LIBRARY_PATH="${ANSYS_COMPAT_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 fi
 
-TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-instanceType=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
-run_tag="${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${instanceType}-${SLURM_NPROCS}-$(date "+%d-%m-%Y-%H-%M")"
-shared_dir="$(readlink -m "${basedir}/${SLURM_JOB_NAME%.*}")/Run/${run_tag}"
-if ! mkdir -p "${shared_dir}"; then
-    echo "ERROR: cannot create the shared run directory '${shared_dir}'." >&2
-    echo "       Check that ${basedir} is mounted and writable. Refusing to run: the" >&2
-    echo "       solver log would have nowhere durable to land." >&2
-    exit 1
-fi
+# The instance type, from the instance metadata (IMDSv2). Each request gives up
+# after 5 seconds (2 to connect), and -f turns an HTTP error into no answer. An
+# answer cut off at that limit, or one that is not an instance type name (tested
+# in the C locale: in some locales [a-z] leaves out i), a proxy's page for
+# example, counts as none, so it never names the run directory or the NVMe
+# scratch directory.
+TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") || TOKEN=""
+instanceType=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type) || instanceType=""
+( LC_ALL=C; [[ "${instanceType}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || instanceType=""
 
-# --- working directory: node-local NVMe when available ----------------------
-# MAPDL writes its scratch to the working directory, and in DMP every rank
-# resolves the same PATH locally on its own node. Running from /scratch
-# (ParallelCluster mounts the instance-store there, e.g. 4x3.8TB on Hpc6id)
-# keeps out-of-core I/O local: measurably faster and no shared-FS contention.
-# Verified single-node and multi-node; each node needs the dir created, and
-# each node's scratch must be reclaimed afterwards (warm nodes are reused).
-workdir="${shared_dir}"
-if [ "${scratch_mode}" != "shared" ]; then
-    if srun --ntasks=${SLURM_JOB_NUM_NODES} --ntasks-per-node=1 \
-         /bin/bash -c "[ -d '${scratch_root}' ] && [ -w '${scratch_root}' ]" 2>/dev/null; then
-        workdir="${scratch_root}/mapdl-${run_tag}"
-        srun --ntasks=${SLURM_JOB_NUM_NODES} --ntasks-per-node=1 mkdir -p "${workdir}"
-        scratch_mode="nvme"
-        echo "Using node-local NVMe scratch on all ${SLURM_JOB_NUM_NODES} node(s): ${workdir}"
-    elif [ "${scratch_mode}" = "nvme" ]; then
-        echo "WARNING: SCRATCH_MODE=nvme requested but '${scratch_root}' is unavailable on some node; using shared filesystem." >&2
-        scratch_mode="shared"
+# ---------------------------------------------------------------------------
+# Cores per node on hpc8a.96xlarge and hpc7a.96xlarge. Their 192 cores sit in
+# 24 CCDs of 8, one L3 cache each, and 24, 48, 72, 96, 120, 144, 168 and 192
+# cores per node are the counts at which the flexible-cores lists spread the
+# ranks evenly over the 24 CCDs (pin the ranks with those lists,
+# I_MPI_PIN_PROCESSOR_LIST; this script sets none). When the instance metadata
+# names one of those two types, any other count stops the job here, before the
+# run directory, the scratch check and the solve. Each node's count is the one
+# Slurm placed (SLURM_TASKS_PER_NODE, as for -machines below, which also fails
+# the job when Slurm's placement cannot be read). Other instance types and
+# sizes get no list and no check.
+# When the metadata gives no instance type (no answer within those 5 seconds,
+# an HTTP error, an answer cut off at that limit, or an answer that is not an
+# instance type name) and a node's count is outside the set, lscpu decides: a
+# node with 192 AMD cores (sockets x cores per socket) could be one of those
+# two types, so the count is refused there too, and the refusal names both
+# types and says why. Any other node runs it, with a one-line NOTE that the
+# check was skipped: no run is refused only because the metadata did not
+# answer.
+# ---------------------------------------------------------------------------
+_fc_types=""; _fc_by_lscpu=0; _fc_off=0
+case "${instanceType}" in
+    hpc8a.96xlarge|hpc7a.96xlarge) _fc_types="${instanceType}" ;;
+esac
+for _n in ${SLURM_TASKS_PER_NODE//,/ }; do   # a count outside the set ("abc": the -machines check's)
+    case "${_n%%(*}" in 24|48|72|96|120|144|168|192|''|*[!0-9]*) ;; *) _fc_off=1 ;; esac
+done
+if [ "${_fc_off}" -eq 1 ] && [ -z "${instanceType}" ]; then
+    _fc_amd192="$(LC_ALL=C lscpu 2>/dev/null | awk -F: '
+        { k = $1; sub(/^[[:space:]]+/, "", k); v = $2; gsub(/^[[:space:]]+|[[:space:]]+$/, "", v) }
+        k == "Vendor ID" { vendor = v }
+        k == "Socket(s)" { sockets = v }
+        k == "Core(s) per socket" { cores = v }
+        END { if (vendor == "AuthenticAMD" && sockets ~ /^[0-9]+$/ && cores ~ /^[0-9]+$/ &&
+                  sockets * cores == 192) print "yes" }')"
+    if [ "${_fc_amd192}" = yes ]; then
+        _fc_types="hpc8a.96xlarge or hpc7a.96xlarge"; _fc_by_lscpu=1
     else
-        scratch_mode="shared"
+        echo "NOTE: the instance metadata did not name the instance type, and lscpu does not show the" \
+             "192 AMD cores of hpc8a.96xlarge and hpc7a.96xlarge, so their cores-per-node check" \
+             "(Utils/flexible-cores) is skipped." >&2
     fi
 fi
-echo "Execution directory is: ${workdir} (scratch: ${scratch_mode}; logs: ${shared_dir})"
-cd "${workdir}"
+if [ -n "${_fc_types}" ]; then
+    for _n in ${SLURM_TASKS_PER_NODE//,/ }; do
+        _n="${_n%%(*}"   # "96(x2)" -> 96
+        case "${_n}" in
+            24|48|72|96|120|144|168|192) ;;
+            ''|*[!0-9]*) ;;   # not a count: left to the -machines check below
+            *)
+                if [ "${_n}" -gt 192 ]; then
+                    echo "ERROR: ${_n} tasks per node exceed the 192 cores of ${_fc_types}" >&2
+                else
+                    echo "ERROR: ${_n} cores per node load the 24 CCDs of ${_fc_types} unevenly" >&2
+                fi
+                if [ "${_fc_by_lscpu}" -eq 1 ]; then
+                    echo "       (the instance metadata did not name the instance type, and this node has" >&2
+                    echo "       192 AMD cores, as those two do; SLURM_TASKS_PER_NODE=${SLURM_TASKS_PER_NODE})." \
+                         "On hpc8a.96xlarge and" >&2
+                else
+                    echo "       (SLURM_TASKS_PER_NODE=${SLURM_TASKS_PER_NODE}). On hpc8a.96xlarge and" >&2
+                fi
+                echo "       hpc7a.96xlarge run 24, 48, 72, 96, 120, 144, 168 or 192 cores per node," >&2
+                echo "       the counts at which the flexible-cores lists spread the ranks evenly" >&2
+                echo "       over the 24 CCDs (pin the ranks with those lists, I_MPI_PIN_PROCESSOR_LIST;" >&2
+                echo "       Utils/flexible-cores). Set --ntasks to the node count times one of them," >&2
+                echo "       e.g. --nodes=2 --ntasks=192 --ntasks-per-node=96: with --ntasks set, Slurm" >&2
+                echo "       takes --ntasks-per-node only as a maximum. Refusing to run before the solve." >&2
+                exit 1 ;;
+        esac
+    done
+fi
 
 # ---------------------------------------------------------------------------
 # -machines host:cores list.
@@ -177,6 +276,9 @@ cd "${workdir}"
 # division would silently drop ranks. The recommended layouts in Readme.md are
 # all homogeneous and divisible, so this normally reproduces the simple result -
 # it just stays correct when they are not.
+#
+# This runs before the run directory and the scratch check, so a placement it
+# refuses leaves neither behind.
 # ---------------------------------------------------------------------------
 expand_tasks_per_node() {   # "64(x2),32" -> "64 64 32"
     local spec="$1" part count reps r out=""
@@ -236,6 +338,90 @@ else
 fi
 echo "Task placement: ${machines} (total ${_tpn_sum} cores over ${#_hosts[@]} node(s); uniform=${_tpn_uniform})"
 
+run_tag="${SLURM_JOB_ID}-${SLURM_JOB_NUM_NODES}x${instanceType}-${SLURM_NPROCS}-$(date "+%d-%m-%Y-%H-%M")"
+shared_dir="$(readlink -m "${basedir}/${SLURM_JOB_NAME%.*}")/Run/${run_tag}"
+if ! mkdir -p "${shared_dir}"; then
+    echo "ERROR: cannot create the shared run directory '${shared_dir}'." >&2
+    echo "       Check that ${basedir} is mounted and writable. Refusing to run: the" >&2
+    echo "       solver log would have nowhere durable to land." >&2
+    exit 1
+fi
+
+# --- working directory: node-local NVMe when available ----------------------
+# MAPDL writes its scratch to the working directory, and in DMP every rank
+# resolves the same PATH locally on its own node. Running from /scratch
+# (ParallelCluster mounts the instance-store there, e.g. 4x3.8TB on Hpc6id)
+# keeps out-of-core I/O local: measurably faster and no shared-FS contention.
+# Verified single-node and multi-node; each node needs the dir created, and
+# each node's scratch must be reclaimed afterwards (warm nodes are reused).
+#
+# A writable SCRATCH_ROOT is not enough: on a type without instance store it can
+# be a plain directory on the root volume, and the solve would then write its
+# scratch to EBS. So every node runs nvme_scratch_probe (one srun task per node):
+# SCRATCH_ROOT must be a mount point, every disk under it local NVMe instance
+# storage (ParallelCluster stripes the drives into one LVM volume; lsblk reports
+# each one's model as "Amazon EC2 NVMe Instance Storage"), writable by the job
+# user, with at least SCRATCH_MIN_FREE_GIB free. NVMe is used only when the number
+# of DISTINCT host names that passed equals the node count: a node that printed
+# nothing, or a second answer from the same host, cannot stand in for a node.
+# Anything else runs from the shared run directory, as SCRATCH_MODE=shared does.
+# shellcheck disable=SC2317  # runs on each node through srun (declare -f), not here
+nvme_scratch_probe() {   # <root> <min_free_gib> -> "<host> ok: ..." or "<host> no: <why>"
+    local root="$1" need="$2" host src disks free_kib free_gib
+    host="$(hostname)"
+    if [ ! -d "${root}" ]; then echo "${host} no: ${root} does not exist"; return 0; fi
+    # The last mount listed at that point is the one on top: the one a path there reaches.
+    src="$(findmnt -n -o SOURCE --mountpoint "${root}" 2>/dev/null | tail -n 1)"
+    if [ -z "${src}" ]; then
+        echo "${host} no: ${root} is not a mount point (a directory on another filesystem)"; return 0
+    fi
+    disks="$(lsblk -n -s -P -o TYPE,MODEL "${src}" 2>/dev/null | grep 'TYPE="disk"')"
+    if [ -z "${disks}" ]; then echo "${host} no: ${root} (${src}) is on no local disk"; return 0; fi
+    if grep -qv 'MODEL="Amazon EC2 NVMe Instance Storage' <<< "${disks}"; then
+        echo "${host} no: ${root} (${src}) has a disk that is not local NVMe instance storage"; return 0
+    fi
+    if [ ! -w "${root}" ]; then echo "${host} no: ${root} is not writable by $(id -un)"; return 0; fi
+    free_kib="$(df -Pk "${root}" 2>/dev/null | awk 'NR == 2 { print $4 }')"
+    # 18 digits at most, so the arithmetic below cannot overflow; 10# reads it as decimal
+    case "${free_kib}" in
+        ''|*[!0-9]*|???????????????????*) echo "${host} no: cannot read the free space of ${root}"; return 0 ;;
+    esac
+    free_gib=$(( 10#${free_kib} / 1048576 ))
+    # "ok" only when the test holds: a comparison the shell cannot evaluate answers no.
+    if [ "${free_gib}" -ge "${need}" ] 2>/dev/null; then
+        echo "${host} ok: ${root} on local NVMe instance storage (${src}), ${free_gib} GiB free"
+    elif [ "${free_gib}" -lt "${need}" ] 2>/dev/null; then
+        echo "${host} no: ${root} has ${free_gib} GiB free, under ${need} GiB"
+    else
+        echo "${host} no: cannot compare the ${free_gib} GiB free on ${root} with ${need} GiB"
+    fi
+}
+workdir="${shared_dir}"
+if [ "${scratch_mode}" != "shared" ]; then
+    echo "NVMe scratch check (SCRATCH_MODE=${scratch_mode}): ${scratch_root} on each of the" \
+         "${SLURM_JOB_NUM_NODES} node(s) must be a mount point on local NVMe instance storage," \
+         "writable, with at least ${scratch_min_free_gib} GiB free"
+    _probe="$(srun --ntasks=${SLURM_JOB_NUM_NODES} --ntasks-per-node=1 /bin/bash -c \
+                "$(declare -f nvme_scratch_probe); nvme_scratch_probe \"\$@\"" nvme-scratch-probe \
+                "${scratch_root}" "${scratch_min_free_gib}" 2>&1)"
+    [ -n "${_probe}" ] && printf '%s\n' "${_probe}" | sed 's/^/  /'
+    _passed="$(printf '%s\n' "${_probe}" | awk '$2 == "ok:" && !seen[$1]++ { n++ } END { print n + 0 }')"
+    if [ "${_passed}" = "${SLURM_JOB_NUM_NODES}" ]; then
+        workdir="${scratch_root}/mapdl-${run_tag}"
+        srun --ntasks=${SLURM_JOB_NUM_NODES} --ntasks-per-node=1 mkdir -p "${workdir}"
+        scratch_mode="nvme"
+        echo "Using node-local NVMe scratch on all ${SLURM_JOB_NUM_NODES} node(s): ${workdir}"
+    else
+        echo "${_passed} of ${SLURM_JOB_NUM_NODES} node(s) passed the NVMe scratch check; using the shared filesystem."
+        if [ "${scratch_mode}" = "nvme" ]; then
+            echo "WARNING: SCRATCH_MODE=nvme requested but '${scratch_root}' is unavailable on some node; using shared filesystem." >&2
+        fi
+        scratch_mode="shared"
+    fi
+fi
+echo "Execution directory is: ${workdir} (scratch: ${scratch_mode}; logs: ${shared_dir})"
+cd "${workdir}"
+
 cp "$0" "${shared_dir}/" 2>/dev/null
 # inputs are read only by the master rank; symlinks into the workdir suffice
 ln -sf "${input_file}" .
@@ -257,7 +443,7 @@ output_file="output-${SLURM_JOB_ID}.log"
 
 # Ansys Mechanical gets the total number of cores from hostlist not from -np
 _rec_t0="$(date +%s)"
-"${APP_BIN_PATH}" -b -dis -mpi intelmpi -ssh -machines $machines -i $(basename ${input_file}) -o "${output_file}"
+"${APP_BIN_PATH}" -b "${mapdl_perf_args[@]}" -dis -mpi intelmpi -ssh -machines $machines -i $(basename ${input_file}) -o "${output_file}"
 _rec_rc=$?
 _rec_secs=$(( $(date +%s) - _rec_t0 ))
 
@@ -282,6 +468,50 @@ if [ "${MAPDL_UNEXPECTED}" -gt 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# MAPDL's error logs on node-local scratch. Every MAPDL process writes its own
+# file<N>.err in the working directory of the node it runs on, and the reclaim
+# below deletes that directory. So, first, each node copies its own into
+# <shared_dir>/<host>/ (the scratch check passed only distinct host names); then a
+# name only one node holds moves up to <shared_dir>/, where a run on the shared
+# filesystem has it, and a name more than one node holds stays under each <host>/,
+# so no node's copy replaces another's. Best effort: a copy that fails prints a
+# WARNING, and neither the reclaim nor the job's exit status changes.
+# ---------------------------------------------------------------------------
+keep_mapdl_error_logs() {   # <node-local workdir> <shared run dir>
+    local src="$1" dest="$2" f same apart=0
+    # shellcheck disable=SC2016  # the script is expanded by the bash on each node
+    srun --ntasks="${SLURM_JOB_NUM_NODES}" --ntasks-per-node=1 /bin/bash -c '
+        host="$(hostname)" copied=0 failed=0
+        for f in "$1"/file*.err; do
+            [ -f "${f}" ] || continue
+            if mkdir -p "$2/${host}" && cp -p -- "${f}" "$2/${host}/"; then
+                copied=$(( copied + 1 ))
+            else
+                failed=$(( failed + 1 ))
+            fi
+        done
+        echo "${host}: ${copied} MAPDL error log(s) (file*.err) copied to $2"
+        if [ "${failed}" -gt 0 ]; then
+            echo "WARNING: ${host}: ${failed} MAPDL error log(s) (file*.err) not copied" >&2; exit 1
+        fi' mapdl-error-logs "${src}" "${dest}" \
+        || echo "WARNING: not every MAPDL error log (file*.err) was copied off the nodes' NVMe scratch; the reclaim deletes the rest." >&2
+    for f in "${dest}"/*/file*.err; do
+        [ -f "${f}" ] || continue
+        same=( "${dest}"/*/"${f##*/}" )
+        if [ "${#same[@]}" -eq 1 ] && [ ! -e "${dest}/${f##*/}" ]; then
+            mv -- "${f}" "${dest}/"
+        else
+            apart=$(( apart + 1 ))
+        fi
+    done
+    rmdir "${dest}"/*/ 2>/dev/null
+    if [ "${apart}" -gt 0 ]; then
+        echo "MAPDL error logs: ${apart} file(s) whose name another node also holds kept under ${dest}/<host>/"
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Durable stage-out BEFORE reclaiming node-local scratch. When the solve ran on
 # /scratch, the copy on the shared filesystem is the ONLY lasting record of it,
 # so a failed copy must never be followed by `rm -rf`: keep the scratch, say
@@ -290,6 +520,7 @@ fi
 if mapdl_stage_out "${output_file}" "${shared_dir}"; then
     if [ "${scratch_mode}" = "nvme" ]; then
         cd "${shared_dir}"
+        keep_mapdl_error_logs "${workdir}" "${shared_dir}"
         srun --ntasks=${SLURM_JOB_NUM_NODES} --ntasks-per-node=1 \
           /bin/bash -c "rm -rf '${workdir}' && echo \"\$(hostname): local scratch reclaimed\""
     fi
@@ -301,6 +532,21 @@ else
     echo "ERROR: recorder with --run-dir <recovered dir>. Marking this job failed." >&2
     solve_ok=0
     [ "${final_rc}" -ne 0 ] || final_rc=4
+fi
+
+# ---------------------------------------------------------------------------
+# The run's time is MAPDL's own Elapsed Time (sec): the time Ansys publishes, and
+# the one to compare runs on. The wall clock around the mapdl command also counts
+# the time outside MAPDL's clock, which is not constant (Readme.md, "Which time to
+# compare"), so it is kept beside it, not instead of it. Only a run accepted
+# overall gets a time - verified output, a final status of zero and a durable
+# stage-out, the gate the recorder uses below - because a rejected solve can still
+# print a positive Elapsed Time (a disk-full abort does).
+# ---------------------------------------------------------------------------
+if [ "${final_rc}" -eq 0 ] && [ "${solve_ok}" -eq 1 ]; then
+    echo "Time to solution: ${mapdl_elapsed} s (MAPDL Elapsed Time); wall clock around mapdl: ${_rec_secs} s"
+else
+    echo "Time to solution: none (run not accepted, final_rc=${final_rc}); wall clock around mapdl: ${_rec_secs} s"
 fi
 
 # ---------------------------------------------------------------------------
@@ -323,9 +569,12 @@ done
 if [ "${final_rc}" -eq 0 ] && [ "${solve_ok}" -eq 1 ] \
    && [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
     _rec_args=( --char memory_mode="${memory_mode}" --char scratch_mode="${scratch_mode}" )
-    # Only pass the MAPDL-reported solver time when it is actually valid; the
-    # verdict above already guarantees it is positive when solve_ok=1.
+    # The recorded time_to_solution_seconds is MAPDL's own Elapsed Time (sec); the
+    # verdict above guarantees it is positive when solve_ok=1. It is also stored as
+    # mapdl_elapsed_seconds, and the wall clock around the mapdl command beside it
+    # as wall_clock_seconds.
     [ -n "${mapdl_elapsed}" ] && _rec_args+=( --metric mapdl_elapsed_seconds="${mapdl_elapsed}" )
+    _rec_args+=( --metric wall_clock_seconds="${_rec_secs}" )
     # cores_per_node is only meaningful when EVERY node got the same count.
     # Recording one node's share as if it were uniform would misdescribe a
     # heterogeneous allocation, so record the real layout instead.
@@ -336,7 +585,7 @@ if [ "${final_rc}" -eq 0 ] && [ "${solve_ok}" -eq 1 ] \
         echo "NOTE: heterogeneous task placement; recording task_placement instead of cores_per_node." >&2
     fi
     MECHANICAL_VERSION="${mechanicalversion}" BENCHMARK_CASE="$(basename "${input_file%.*}")" \
-    TIME_TO_SOLUTION="${_rec_secs}" RUN_DIR="${shared_dir}" "${_recorder}" "${_rec_args[@]}" \
+    TIME_TO_SOLUTION="${mapdl_elapsed}" RUN_DIR="${shared_dir}" "${_recorder}" "${_rec_args[@]}" \
         || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
 elif [ "${final_rc}" -ne 0 ]; then
     echo "NOTE: run not accepted (solver rc=${_rec_rc}, final rc=${final_rc}); skipping benchmark recording." >&2

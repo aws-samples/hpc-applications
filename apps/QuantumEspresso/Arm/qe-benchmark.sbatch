@@ -168,12 +168,18 @@ log "layout: ${NTASKS} MPI ranks x 1 thread, npool=${NPOOL}, --cpu-bind=cores"
 # a network filesystem serialises the run on small-file I/O.
 # --------------------------------------------------------------------------- #
 # Instance type for the run-directory name (matches the other apps in this repo).
+# Each request gives up after 3 seconds, and -f turns an HTTP error into no
+# answer. No answer, an answer cut off at that limit, or one that is not an
+# instance type name (tested in the C locale: in some locales [a-z] leaves
+# out i), a proxy's page for example, names the type "unknown", and the job
+# goes on.
 IMDS_TOKEN=$(curl -fsSL --max-time 3 -X PUT \
     -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
-    http://169.254.169.254/latest/api/token 2>/dev/null || true)
+    http://169.254.169.254/latest/api/token 2>/dev/null) || IMDS_TOKEN=""
 INSTANCE_TYPE=$(curl -fsSL --max-time 3 \
     -H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}" \
-    http://169.254.169.254/latest/meta-data/instance-type 2>/dev/null || echo unknown)
+    http://169.254.169.254/latest/meta-data/instance-type 2>/dev/null) || INSTANCE_TYPE=""
+( LC_ALL=C; [[ "${INSTANCE_TYPE}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || INSTANCE_TYPE=unknown
 
 # Run-directory layout follows the other apps here:
 #   <base>/Run/<jobname>/<cluster>/<jobid>-<nodes>x<instance>-<ntasks>-<date>

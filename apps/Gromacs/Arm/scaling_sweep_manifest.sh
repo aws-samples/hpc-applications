@@ -14,8 +14,7 @@
 # pipeline at Doc/img/Gromacs/generate_charts.py consumes either shape).
 #
 # This script is INTENDED TO BE RUN ON THE HEAD NODE OF THE Arm cluster
-# (ec2-user@10.3.51.188, reached via bastion 3.128.184.207) AFTER all
-# prerequisites are green:
+# AFTER all prerequisites are green:
 #
 #   [ ] — build_gromacs_arm.sbatch has been submitted on hpc7g
 #                  (default OpenMPI 5) AND m8g (OpenMPI 5 forced) and

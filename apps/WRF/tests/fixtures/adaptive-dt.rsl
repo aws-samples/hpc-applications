@@ -1,0 +1,19 @@
+taskid: 0 hostname: node1
+ Ntasks in X            2 , ntasks in Y            4
+WRF V4.6.1 MODEL
+d01 2000-01-01_00:00:00  Input data is acceptable to use: wrfinput_d01
+Timing for processing wrfinput file (stream 0) for domain        1:    2.00000 elapsed seconds
+Timing for Writing wrfout_d01_2000-01-01_00:00:00 for domain        1:    3.00000 elapsed seconds
+d01 2000-01-01_00:00:00  Input data is acceptable to use: wrfbdy_d01
+Timing for processing lateral boundary for domain        1:    0.50000 elapsed seconds
+Timing for main (dt= 15.00): time 2000-01-01_00:00:15 on domain   1:    6.40000 elapsed seconds
+Timing for main (dt= 20.50): time 2000-01-01_00:00:35 on domain   1:    1.20000 elapsed seconds
+Timing for main (dt=  9.75): time 2000-01-01_00:00:45 on domain   1:    1.00000 elapsed seconds
+Timing for main (dt=100.00): time 2000-01-01_00:02:25 on domain   1:    1.40000 elapsed seconds
+Timing for Writing wrfout_d01_2000-01-01_00:02:25 for domain        1:    3.00000 elapsed seconds
+Timing for main (dt= 35.00): time 2000-01-01_00:03:00 on domain   1:    3.60000 elapsed seconds
+Timing for main (dt= 30.00): time 2000-01-01_00:03:30 on domain   1:    1.00000 elapsed seconds
+Timing for main (dt= 30.00): time 2000-01-01_00:04:00 on domain   1:    1.20000 elapsed seconds
+Timing for main (dt= 30.00): time 2000-01-01_00:04:30 on domain   1:    1.00000 elapsed seconds
+Timing for Writing wrfout_d01_2000-01-01_00:04:30 for domain        1:    3.00000 elapsed seconds
+d01 2000-01-01_00:04:30 wrf: SUCCESS COMPLETE WRF
