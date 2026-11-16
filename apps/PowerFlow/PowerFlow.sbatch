@@ -24,7 +24,8 @@ PF_CASE="${PF_CASE:?set PF_CASE to the .cdi file}"
 MODE="${MODE:-simulate}"                   # simulate | discretize | all (discretize + simulate)
 # SP ranks per node. On hpc8a.96xlarge and hpc7a.96xlarge (24 CCDs of 8 cores)
 # use 120, 144, 168 or 192 so every CCD gets the same number of ranks
-# (see Utils/flexible-cores). With 192, the CP shares a core with an SP.
+# (see Utils/flexible-cores); the script pins them with the matching list.
+# With 192, the CP shares a core with an SP.
 SP_PER_NODE="${SP_PER_NODE:-$(nproc)}"
 DISC_NPROCS="${DISC_NPROCS:-8}"            # discretizer processes
 
@@ -67,10 +68,54 @@ if [ "$(lspci | grep -c -i efa)" -ge 2 ]; then
 fi
 export I_MPI_DEBUG="${I_MPI_DEBUG:-5}"     # prints the provider and the pinning map
 
-# One rank per core with Intel MPI's default domains. I_MPI_PIN_DOMAIN=numa would
-# let each rank float over a whole NUMA domain.
+# One rank per core. I_MPI_PIN_DOMAIN=numa would let each rank float over a whole
+# NUMA domain.
 export I_MPI_PIN=1
 unset I_MPI_PIN_DOMAIN I_MPI_PIN_ORDER
+
+# Explicit core list (Utils/flexible-cores): the same number of SPs on every CCD.
+# Intel MPI's own placement can load the CCDs unevenly when fewer than 192 ranks
+# run on a node. The list follows the flexible-cores rule: with k = SP_PER_NODE/24
+# ranks per CCD, every (8/k)-th core when k divides 8, else each CCD's first k cores.
+#
+# The CP: the first list entry is a free core of the last CCD. On the first node the
+# CP (listed first in the hostfile) takes it. On the other nodes there is no CP, so
+# the first SP takes it and the list's last core, on the same CCD, stays free: every
+# CCD still holds k SPs on every node. Check the "CPU pinning" table that
+# I_MPI_DEBUG=5 prints at the start of simulator.log.
+#
+# Set PIN_EXPLICIT=0 to leave the placement to Intel MPI.
+pf_pin_list() {
+    local sp=$1 g=8 nccd=24 k list="" ccd i free
+    k=$(( sp / nccd ))
+    for (( ccd = 0; ccd < nccd; ccd++ )); do
+        for (( i = 0; i < k; i++ )); do
+            if (( g % k == 0 )); then
+                list+="$(( ccd * g + i * (g / k) )),"
+            else
+                list+="$(( ccd * g + i )),"
+            fi
+        done
+    done
+    list=${list%,}
+    # A core of the last CCD that no SP uses, for the CP.
+    for (( free = nccd * g - 1; free >= (nccd - 1) * g; free-- )); do
+        case ",${list}," in *",${free},"*) ;; *) break ;; esac
+    done
+    echo "${free},${list}"
+}
+if [ "${PIN_EXPLICIT:-1}" = "1" ]; then
+    case "$(nproc):${SP_PER_NODE}" in
+        192:24|192:48|192:72|192:96|192:120|192:144|192:168)
+            I_MPI_PIN_PROCESSOR_LIST="$(pf_pin_list "${SP_PER_NODE}")"
+            export I_MPI_PIN_PROCESSOR_LIST ;;
+        192:192)
+            echo "Note: 192 SPs per node leave no free core; the CP shares one with an SP." ;;
+        *)
+            echo "WARNING: no flexible-cores list for $(nproc) cores and ${SP_PER_NODE} SPs per node;" \
+                 "Intel MPI places the ranks. Use 24, 48, 72, 96, 120, 144 or 168 on a 192-core node." >&2 ;;
+    esac
+fi
 
 # exaqsub starts the ranks over ssh (-mpirsh ssh): drop Hydra settings meant for
 # the Slurm launcher, which conflict with it. Needs passwordless ssh between nodes.
@@ -99,6 +144,7 @@ mapfile -t HOSTS < <(scontrol show hostnames "${SLURM_JOB_NODELIST}")
 echo "PowerFLOW ${PF_VERSION}  case: ${PF_CASE}  mode: ${MODE}"
 echo "Nodes: ${NNODES}  SP per node: ${SP_PER_NODE}  SP total: ${SIM_NPROCS}"
 echo "Hostfile:"; cat "${HOSTFILE}"
+echo "I_MPI_PIN_PROCESSOR_LIST=${I_MPI_PIN_PROCESSOR_LIST:-<Intel MPI default>}"
 
 # ---------------------------------------------------------------------------
 # Run in the foreground inside this allocation

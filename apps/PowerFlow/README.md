@@ -40,13 +40,14 @@ PF_VERSION=6-2026-R2 PF_CASE=my_case.cdi DSLS_POWERFLOW_LICENSE=<port>@<license-
 | `SP_PER_NODE` | SP ranks per node; default all cores |
 | `DISC_NPROCS` | Discretizer processes; default 8 |
 | `USE_BUNDLED_IMPI=1` | Keep the Intel MPI bundled with PowerFLOW instead of the system one |
+| `PIN_EXPLICIT=0` | Leave rank placement to Intel MPI instead of the flexible-cores list |
 
 ## Settings that matter
 
 - **Intel MPI over EFA.** Set `I_MPI_OFI_LIBRARY_INTERNAL=0`, `I_MPI_FABRICS=shm:ofi`, `I_MPI_OFI_PROVIDER=efa`, `FI_EFA_FORK_SAFE=1` and `FI_MR_CACHE_MONITOR=memhooks`. With `I_MPI_DEBUG=5`, the start of `simulator.log` shows the libfabric provider. On a multi-node run it must be `efa`.
 - **`EXA_ALT_IMPI_ROOT` must be exported.** If it is only set as a shell variable, `exaqsub` silently uses the Intel MPI bundled with PowerFLOW.
 - **ssh launcher.** `-mpirsh ssh` needs passwordless ssh between compute nodes. Unset `HYDRA_BOOTSTRAP` and `HYDRA_LAUNCHER_EXTRA_ARGS` if the cluster sets them for the Slurm launcher.
-- **Pinning.** Bind one rank per core. Avoid `I_MPI_PIN_DOMAIN=numa`, which lets ranks move across a whole NUMA domain. On hpc8a.96xlarge and hpc7a.96xlarge, use 120, 144, 168 or 192 SPs per node ([flexible cores](../../Utils/flexible-cores)).
+- **Pinning.** Bind one rank per core. Avoid `I_MPI_PIN_DOMAIN=numa`, which lets ranks move across a whole NUMA domain. On hpc8a.96xlarge and hpc7a.96xlarge, use 120, 144, 168 or 192 SPs per node ([flexible cores](../../Utils/flexible-cores)). The script sets `I_MPI_PIN_PROCESSOR_LIST` to the flexible-cores list for `SP_PER_NODE`, because Intel MPI's own placement can load the CCDs unevenly below 192 ranks per node. The list's first entry is a free core of the last CCD (191), which the CP takes on the first node. On the other nodes the first SP takes it instead, and the list's last core, on the same CCD, stays free, so every CCD holds the same number of SPs on every node. This relies on the CP being the first rank on its node: check the "CPU pinning" table that `I_MPI_DEBUG=5` prints at the start of `simulator.log`. `PIN_EXPLICIT=0` leaves the placement to Intel MPI.
 - **Scratch.** Set `EXA_TMPDIR` to the shared file system, not `/tmp` on the root EBS volume.
 - **Remove `--debug`** from `exaqsub` options for performance runs.
 
