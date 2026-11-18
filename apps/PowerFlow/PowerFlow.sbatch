@@ -67,8 +67,13 @@ EXAQSUB="${EXA_DIST}/bin/exaqsub"
 # Intel MPI + EFA
 # ---------------------------------------------------------------------------
 source /etc/profile.d/modules.sh
-module load libfabric-aws
+# Intel MPI uses the EFA installer's libfabric, not its own copy, when
+# I_MPI_OFI_LIBRARY_INTERNAL=0 is exported before intelmpi loads and libfabric-aws
+# loads after it. With I_MPI_DEBUG=5 the start of simulator.log names the
+# libfabric version and provider.
+export I_MPI_OFI_LIBRARY_INTERNAL=0
 module load intelmpi
+module load libfabric-aws
 # Run with the Intel MPI loaded above instead of the one bundled with PowerFLOW.
 # It must be exported, or exaqsub never sees it. Set USE_BUNDLED_IMPI=1 to keep
 # the bundled one.
@@ -76,7 +81,6 @@ if [ "${USE_BUNDLED_IMPI:-0}" != "1" ]; then
     export EXA_ALT_IMPI_ROOT="${I_MPI_ROOT}"
 fi
 
-export I_MPI_OFI_LIBRARY_INTERNAL=0        # use the EFA installer's libfabric
 export I_MPI_FABRICS=shm:ofi
 export I_MPI_OFI_PROVIDER=efa
 export FI_EFA_FORK_SAFE=1
