@@ -19,6 +19,7 @@ This repo is maintained by AWS HPC Solution Architects, who will take care of up
 11. [LAMMPS](https://github.com/aws-samples/hpc-applications/tree/main/apps/LAMMPS)
 12. [GROMACS](apps/Gromacs/README.md)
 13. [Quantum ESPRESSO](apps/QuantumEspresso/README.md)
+14. [SIMULIA PowerFLOW](apps/PowerFlow/README.md)
 
 ## HPC synthetic benchmarks:
 1. [STREAM](https://github.com/aws-samples/hpc-applications/tree/main/apps/Stream) - Memory bandwidth benchmark
@@ -59,7 +60,7 @@ You can build a new HPC cluster with just 1-Click using either:
 In addition to application best practices, this repo will include some HPC application benchmarks. For all the included applications, we've run some benchmarks using public datasets. We'll publish our data and some charts to show the performance and scalability you should be aiming to achieve.
 
 ### Contribute your own benchmark results
-Eleven applications (all but Abaqus and Quantum ESPRESSO) ship a small, self-contained recorder at `apps/<App>/dynamodb/record-benchmark.sh`, and their benchmark launch scripts call it after every successful run. It captures one benchmark run into a shared **AI-Powered HPC** dataset used to train a model that predicts HPC performance on AWS. If you run these best practices on your own cluster, you can contribute your results to help improve those predictions. The recorders are self-contained and safe by default (they always write a local JSON record and only write to the database when you have access). See **[apps/BENCHMARK-RECORDERS.md](apps/BENCHMARK-RECORDERS.md)** for usage, parameters, the contribution workflow, and how to add the recorder to your `.sbatch`.
+Eleven applications (all but Abaqus, Quantum ESPRESSO and SIMULIA PowerFLOW) ship a small, self-contained recorder at `apps/<App>/dynamodb/record-benchmark.sh`, and their benchmark launch scripts call it after every successful run. It captures one benchmark run into a shared **AI-Powered HPC** dataset used to train a model that predicts HPC performance on AWS. If you run these best practices on your own cluster, you can contribute your results to help improve those predictions. The recorders are self-contained and safe by default (they always write a local JSON record and only write to the database when you have access). See **[apps/BENCHMARK-RECORDERS.md](apps/BENCHMARK-RECORDERS.md)** for usage, parameters, the contribution workflow, and how to add the recorder to your `.sbatch`.
 
 ## AWS HPC products and services being used
  * [AWS ParallelCluster](https://aws.amazon.com/hpc/parallelcluster/) and its [Documentation](https://docs.aws.amazon.com/parallelcluster/latest/ug/what-is-aws-parallelcluster.html)

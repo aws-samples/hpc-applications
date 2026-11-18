@@ -197,9 +197,10 @@ Either way nothing fails and you keep the JSON.
 **You normally don't need to do anything.** Every benchmark launch script under
 `apps/` calls its app's `record-benchmark.sh` automatically, right after the
 solve, except those of Abaqus (`Abaqus.sbatch`), Quantum ESPRESSO
-(`qe-benchmark.sbatch`, noted above) and STREAM (`stream.sbatch`), which ship no
-recorder, and STAR-CCM+'s `submit_server.sbatch` scripts, which start a server
-for an interactive client rather than a benchmark run. Just run the benchmark as
+(`qe-benchmark.sbatch`, noted above), STREAM (`stream.sbatch`) and SIMULIA
+PowerFLOW (`PowerFlow.sbatch`), which ship no recorder, and STAR-CCM+'s
+`submit_server.sbatch` scripts, which start a server for an interactive client
+rather than a benchmark run. Just run the benchmark as
 usual — and set `SOURCE=<YourOrg>` if you want your rows tagged. The built-in
 call is:
 
