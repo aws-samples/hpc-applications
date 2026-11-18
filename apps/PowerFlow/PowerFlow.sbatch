@@ -59,7 +59,7 @@ SIM_NPROCS=$(( NNODES * SP_PER_NODE ))
 # ---------------------------------------------------------------------------
 export EXA_DIST="${PF_ROOT}/${PF_VERSION}"
 export PATH="${EXA_DIST}/bin:${PATH}"
-export LD_LIBRARY_PATH="${EXA_DIST}/dist/x86_linux/lib:${EXA_DIST}/dist/x86_linux/lib64:${LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="${EXA_DIST}/dist/x86_linux/lib:${EXA_DIST}/dist/x86_linux/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 EXAQSUB="${EXA_DIST}/bin/exaqsub"
 [ -x "${EXAQSUB}" ] || { echo "ERROR: ${EXAQSUB} not found" >&2; exit 1; }
 
