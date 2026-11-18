@@ -149,7 +149,7 @@ echo "I_MPI_PIN_PROCESSOR_LIST=${I_MPI_PIN_PROCESSOR_LIST:-<Intel MPI default>}"
 # ---------------------------------------------------------------------------
 # Run in the foreground inside this allocation
 # ---------------------------------------------------------------------------
-COMMON_OPTS=(-nolock -foreground --impi -mpirsh ssh -mpifile "${HOSTFILE}")
+COMMON_OPTS=(-nolock -foreground -impi -mpirsh ssh -mpifile "${HOSTFILE}")
 
 case "${MODE}" in
     discretize)

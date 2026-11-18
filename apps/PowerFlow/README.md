@@ -9,7 +9,7 @@
 `exaqsub` can submit its own Slurm job through the site's queue-system scripts (`site/queue_systems/slurm`). On AWS, run it inside the Slurm job instead:
 
 ```bash
-exaqsub -nolock -foreground --impi -mpirsh ssh -mpifile <hostfile> -simulate --nprocs <SPs> case.cdi
+exaqsub -nolock -foreground -impi -mpirsh ssh -mpifile <hostfile> -simulate --nprocs <SPs> case.cdi
 ```
 
 A nested submission costs a second queue wait, while the first job holds its node idle. On dynamic nodes it also waits for the new instances to boot. The nested job gets no `--exclusive`, and it only inherits the MPI and EFA settings through sbatch's default environment export. With `-foreground`, one job owns the nodes and its environment.
