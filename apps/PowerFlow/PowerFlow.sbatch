@@ -4,7 +4,7 @@
 # so exaqsub does not submit a second (nested) Slurm job.
 #
 # Submit from the case directory:
-#   PF_VERSION=6-2026-R2 PF_CASE=my_case.cdi DSLS_POWERFLOW_LICENSE=<port>@<server> \
+#   PF_VERSION=<version> PF_CASE=my_case.cdi DSLS_POWERFLOW_LICENSE=<server>:<port> \
 #       sbatch --nodes=2 /path/to/PowerFlow.sbatch
 #   MODE=all SP_PER_NODE=144 ... sbatch --nodes=4 /path/to/PowerFlow.sbatch
 #SBATCH --exclusive
@@ -19,7 +19,7 @@ set -u
 # Case and sizing
 # ---------------------------------------------------------------------------
 PF_ROOT="${PF_ROOT:-/fsx/powerflow}"       # PowerFLOW installs: ${PF_ROOT}/<version>
-PF_VERSION="${PF_VERSION:?set PF_VERSION, e.g. 6-2026-R2}"
+PF_VERSION="${PF_VERSION:?set PF_VERSION to the directory of the install under PF_ROOT}"
 PF_CASE="${PF_CASE:?set PF_CASE to the .cdi file}"
 MODE="${MODE:-simulate}"                   # simulate | discretize | all (discretize + simulate)
 # The node's physical cores, from lscpu: nproc follows OMP_NUM_THREADS and counts
@@ -37,7 +37,7 @@ CORES="$(LC_ALL=C lscpu -p=CORE,SOCKET 2>/dev/null | awk '!/^#/ && !seen[$0]++ {
 SP_PER_NODE="${SP_PER_NODE:-$(( CORES - 1 ))}"
 DISC_NPROCS="${DISC_NPROCS:-8}"            # discretizer processes
 
-: "${DSLS_POWERFLOW_LICENSE:?set DSLS_POWERFLOW_LICENSE to <port>@<server>[,...]}"
+: "${DSLS_POWERFLOW_LICENSE:?set DSLS_POWERFLOW_LICENSE to <server>:<port>[,<server>:<port>...]}"
 export DSLS_POWERFLOW_LICENSE
 
 NNODES=${SLURM_JOB_NUM_NODES}
@@ -97,16 +97,20 @@ export I_MPI_DEBUG="${I_MPI_DEBUG:-5}"     # prints the provider and the pinning
 export I_MPI_PIN=1
 unset I_MPI_PIN_DOMAIN I_MPI_PIN_ORDER I_MPI_PIN_PROCESSOR_LIST
 
-# Explicit core list (Utils/flexible-cores): the same number of SPs on every CCD.
-# Intel MPI's own placement can load the CCDs unevenly when fewer than 192 ranks
-# run on a node. The list follows the flexible-cores rule: with k = SP_PER_NODE/24
-# ranks per CCD, every (8/k)-th core when k divides 8, else each CCD's first k cores.
+# Explicit core list (Utils/flexible-cores) for 24 to 168 SPs per node on a 192-core
+# node: the same number of SPs on every CCD. Intel MPI's own placement can load the
+# CCDs unevenly when fewer than 192 ranks run on a node. The list follows the
+# flexible-cores rule: with k = SP_PER_NODE/24 ranks per CCD, every (8/k)-th core
+# when k divides 8, else each CCD's first k cores.
 #
 # The CP: the first list entry is a free core of the last CCD. On the first node the
 # CP (listed first in the hostfile) takes it. On the other nodes there is no CP, so
-# the first SP takes it and the list's last core, on the same CCD, stays free: every
-# CCD still holds k SPs on every node. Check the "CPU pinning" table that
-# I_MPI_DEBUG=5 prints at the start of simulator.log.
+# the first SP takes it and the list's last core, on the same CCD, stays free. Every
+# process gets a core of its own wherever the CP is among its node's ranks, and every
+# CCD holds k SPs on every node when the CP is the first rank on its node or one of
+# its last k. The "CPU pinning" table that I_MPI_DEBUG=5 prints at the start of
+# simulator.log shows each rank's core but not which rank is the CP: during the run,
+# `ps -eo pid,psr,args` on the first node shows each process's core and command line.
 #
 # Set PIN_EXPLICIT=0 to leave the placement to Intel MPI.
 pf_pin_list() {
