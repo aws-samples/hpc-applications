@@ -22,11 +22,19 @@ PF_ROOT="${PF_ROOT:-/fsx/powerflow}"       # PowerFLOW installs: ${PF_ROOT}/<ver
 PF_VERSION="${PF_VERSION:?set PF_VERSION, e.g. 6-2026-R2}"
 PF_CASE="${PF_CASE:?set PF_CASE to the .cdi file}"
 MODE="${MODE:-simulate}"                   # simulate | discretize | all (discretize + simulate)
-# SP ranks per node. On hpc8a.96xlarge and hpc7a.96xlarge (24 CCDs of 8 cores)
-# use 120, 144, 168 or 192 so every CCD gets the same number of ranks
-# (see Utils/flexible-cores); the script pins them with the matching list.
-# With 192, the CP shares a core with an SP.
-SP_PER_NODE="${SP_PER_NODE:-$(nproc)}"
+# The node's physical cores, from lscpu: nproc follows OMP_NUM_THREADS and counts
+# SMT threads.
+CORES="$(LC_ALL=C lscpu -p=CORE,SOCKET 2>/dev/null | awk '!/^#/ && !seen[$0]++ { n++ } END { print n + 0 }')"
+[ "${CORES}" -gt 0 ] || { echo "ERROR: lscpu shows no cores on this node" >&2; exit 1; }
+# SP ranks per node. The default, one per physical core but one, leaves the CP a
+# core of its own on the first node (191 SPs on hpc8a.96xlarge and hpc7a.96xlarge).
+# Every node runs the same number of SPs, so one core stays idle on the others. The
+# default is not yet benchmarked against the other counts. On hpc8a.96xlarge and
+# hpc7a.96xlarge (24 CCDs of 8 cores), 24, 48, 72, 96, 120, 144 and 168 give every
+# CCD the same number of SPs, and the script pins them with the matching list (see
+# Utils/flexible-cores). With 192, the CP shares a core with an SP. Any other count
+# runs on Intel MPI's own placement, with a WARNING.
+SP_PER_NODE="${SP_PER_NODE:-$(( CORES - 1 ))}"
 DISC_NPROCS="${DISC_NPROCS:-8}"            # discretizer processes
 
 : "${DSLS_POWERFLOW_LICENSE:?set DSLS_POWERFLOW_LICENSE to <port>@<server>[,...]}"
@@ -105,14 +113,17 @@ pf_pin_list() {
     echo "${free},${list}"
 }
 if [ "${PIN_EXPLICIT:-1}" = "1" ]; then
-    case "$(nproc):${SP_PER_NODE}" in
+    case "${CORES}:${SP_PER_NODE}" in
         192:24|192:48|192:72|192:96|192:120|192:144|192:168)
             I_MPI_PIN_PROCESSOR_LIST="$(pf_pin_list "${SP_PER_NODE}")"
             export I_MPI_PIN_PROCESSOR_LIST ;;
+        "${CORES}:$(( CORES - 1 ))")
+            echo "Note: ${SP_PER_NODE} SPs per node leave the CP a core of its own;" \
+                 "Intel MPI places the ranks, one per core." ;;
         192:192)
             echo "Note: 192 SPs per node leave no free core; the CP shares one with an SP." ;;
         *)
-            echo "WARNING: no flexible-cores list for $(nproc) cores and ${SP_PER_NODE} SPs per node;" \
+            echo "WARNING: no flexible-cores list for ${CORES} cores and ${SP_PER_NODE} SPs per node;" \
                  "Intel MPI places the ranks. Use 24, 48, 72, 96, 120, 144 or 168 on a 192-core node." >&2 ;;
     esac
 fi
