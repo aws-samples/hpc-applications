@@ -15,9 +15,9 @@ SP_PER_NODE SPs on every node. These tests pin:
 - 192 SPs per node get a note and no list, 191 set by hand the default's note, the other counts a WARNING and no list,
   and PIN_EXPLICIT=0 neither; a core list set in the submitting shell never reaches exaqsub on those paths, and the
   script's own list replaces it on the others;
-- SP_PER_NODE, DISC_NPROCS, PIN_EXPLICIT, USE_BUNDLED_IMPI, lscpu's count, the required variables and exaqsub's
-  install are checked before the modules load and before any file is written, and the ends of the ranges and the
-  switches' values are accepted;
+- SP_PER_NODE, DISC_NPROCS (with MODE=discretize or all only, the modes that use it), PIN_EXPLICIT, USE_BUNDLED_IMPI,
+  lscpu's count, the required variables and exaqsub's install are checked before the modules load and before any file
+  is written, and the ends of the ranges and the switches' values are accepted;
 - I_MPI_OFI_LIBRARY_INTERNAL=0 is exported before intelmpi loads, and libfabric-aws loads after it; LD_LIBRARY_PATH
   holds PowerFLOW's two library directories and no empty entry;
 - exaqsub's command line for each MODE (an unknown MODE stops the job before exaqsub), the environment it gets
@@ -452,11 +452,13 @@ def test_on_a_path_with_a_list_the_scripts_list_replaces_the_submitting_shells(s
 
 SP_RANGE = "use a whole number from 1 to 192, this node's physical cores"
 DISC_RANGE = "use a whole number from 1 to 384, the job's cores"
+DISC_REFUSED = ("0", "08", "x", "385")
 REFUSED = [
     *(pytest.param({"SP_PER_NODE": v}, f"ERROR: SP_PER_NODE={v}: {SP_RANGE}", id=f"SP_PER_NODE={v!r}")
       for v in ("0", "0120", "abc", "-5", "+5", " 120", "1e2", "193", "9999999")),
-    *(pytest.param({"DISC_NPROCS": v}, f"ERROR: DISC_NPROCS={v}: {DISC_RANGE}", id=f"DISC_NPROCS={v!r}")
-      for v in ("0", "08", "x", "385")),
+    *(pytest.param({"DISC_NPROCS": v, "MODE": mode}, f"ERROR: DISC_NPROCS={v}: {DISC_RANGE}",
+                   id=f"DISC_NPROCS={v!r}, MODE={mode}")
+      for mode in ("discretize", "all") for v in DISC_REFUSED),
     *(pytest.param({name: v}, f"ERROR: {name}={v}: use 0 or 1", id=f"{name}={v!r}")
       for name in ("PIN_EXPLICIT", "USE_BUNDLED_IMPI") for v in ("2", "true", "yes")),
 ]
@@ -464,9 +466,30 @@ REFUSED = [
 
 @pytest.mark.parametrize("env, message", REFUSED)
 def test_a_value_out_of_its_range_stops_the_job_before_anything_runs(env, message, tmp_path, host_tools):
-    """On a 2-node job of 192-core nodes: SP_PER_NODE from 1 to 192 and DISC_NPROCS from 1 to 384, each a whole
-    number with no sign and no leading zero, and the switches unset, empty, 0 or 1."""
+    """On a 2-node job of 192-core nodes: SP_PER_NODE from 1 to 192 and, with MODE=discretize or all, DISC_NPROCS from
+    1 to 384, each a whole number with no sign and no leading zero, and the switches unset, empty, 0 or 1."""
     assert_refused(run(tmp_path, host_tools, env=env), message)
+
+
+@pytest.mark.parametrize("mode", [None, "simulate"], ids=["the default", "simulate"])
+@pytest.mark.parametrize("value", DISC_REFUSED)
+def test_disc_nprocs_is_not_checked_when_mode_does_not_run_the_discretizer(value, mode, tmp_path, host_tools):
+    """Only MODE=discretize and MODE=all pass DISC_NPROCS to exaqsub."""
+    call = started(run(tmp_path, host_tools, env={"DISC_NPROCS": value, "MODE": mode}))
+    assert call["args"] == [*COMMON, *simulate(382), CASE]
+
+
+def test_the_default_disc_nprocs_above_the_jobs_cores_does_not_stop_a_simulation(tmp_path, host_tools):
+    """The default 8 on one node of 4 cores."""
+    call = started(run(tmp_path, host_tools, nodes=1, cores=4))
+    assert call["args"] == [*COMMON, *simulate(3), CASE]
+
+
+@pytest.mark.parametrize("mode", ["discretize", "all"])
+def test_the_default_disc_nprocs_above_the_jobs_cores_stops_a_job_that_discretizes(mode, tmp_path, host_tools):
+    """The default 8 on one node of 4 cores."""
+    assert_refused(run(tmp_path, host_tools, nodes=1, cores=4, env={"MODE": mode}),
+                   "ERROR: DISC_NPROCS=8: use a whole number from 1 to 4, the job's cores")
 
 
 @pytest.mark.parametrize("cores", [None, 0], ids=["no lscpu", "lscpu shows no CPU"])

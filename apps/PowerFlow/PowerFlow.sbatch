@@ -46,9 +46,13 @@ pf_count() { ( LC_ALL=C; [[ "$1" =~ ^[1-9][0-9]{0,5}$ ]] ) && [ "$1" -le "$2" ];
 pf_count "${SP_PER_NODE}" "${CORES}" || {
     echo "ERROR: SP_PER_NODE=${SP_PER_NODE}: use a whole number from 1 to ${CORES}, this node's physical cores" >&2
     exit 1; }
-pf_count "${DISC_NPROCS}" "$(( NNODES * CORES ))" || {
-    echo "ERROR: DISC_NPROCS=${DISC_NPROCS}: use a whole number from 1 to $(( NNODES * CORES )), the job's cores" >&2
-    exit 1; }
+# Only the modes that run the discretizer use DISC_NPROCS, so only they check it.
+case "${MODE}" in
+    discretize|all)
+        pf_count "${DISC_NPROCS}" "$(( NNODES * CORES ))" || {
+            echo "ERROR: DISC_NPROCS=${DISC_NPROCS}: use a whole number from 1 to $(( NNODES * CORES )), the job's cores" >&2
+            exit 1; } ;;
+esac
 for v in PIN_EXPLICIT USE_BUNDLED_IMPI; do
     case "${!v-}" in ''|0|1) ;; *) echo "ERROR: ${v}=${!v}: use 0 or 1" >&2; exit 1 ;; esac
 done

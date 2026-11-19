@@ -40,11 +40,11 @@ Set the script's `#SBATCH --partition` and `--constraint` lines to your cluster'
 | `DSLS_POWERFLOW_LICENSE` | DSLS license servers, `<server>:<port>[,<server>:<port>...]` (required) |
 | `MODE` | `simulate` (default), `discretize`, or `all` |
 | `SP_PER_NODE` | SP ranks per node, from 1 to the node's physical cores; default one per physical core but one (191 on hpc8a.96xlarge), not yet benchmarked against the other counts |
-| `DISC_NPROCS` | Discretizer processes, from 1 to the job's cores; default 8 |
+| `DISC_NPROCS` | Discretizer processes, from 1 to the job's cores, used and checked with `MODE=discretize` or `all`; default 8 |
 | `USE_BUNDLED_IMPI=1` | Keep the Intel MPI bundled with PowerFLOW instead of the system one |
 | `PIN_EXPLICIT=0` | Leave rank placement to Intel MPI instead of the flexible-cores list |
 
-The script stops with an error message before it starts PowerFLOW when a required variable is unset, when `lscpu` shows no cores, when `SP_PER_NODE` or `DISC_NPROCS` is not a whole number in its range, when `USE_BUNDLED_IMPI` or `PIN_EXPLICIT` is set to anything but 0 or 1, or when `exaqsub` is not in `PF_ROOT/PF_VERSION/bin`.
+The script stops with an error message before it starts PowerFLOW when a required variable is unset, when `lscpu` shows no cores, when `SP_PER_NODE` is not a whole number in its range (or `DISC_NPROCS`, with `MODE=discretize` or `all`), when `USE_BUNDLED_IMPI` or `PIN_EXPLICIT` is set to anything but 0 or 1, or when `exaqsub` is not in `PF_ROOT/PF_VERSION/bin`.
 
 ## Settings that matter
 
