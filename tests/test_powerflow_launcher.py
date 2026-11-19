@@ -6,11 +6,12 @@ SP_PER_NODE SPs on every node. These tests pin:
   list, also with OMP_NUM_THREADS=1 and OMP_THREAD_LIMIT=1 exported and with SMT on: the script counts the node's
   physical cores with lscpu, in the C locale, and never calls nproc;
 - at 24, 48, 72, 96, 120, 144 and 168 SPs per node on a 192-core node, I_MPI_PIN_PROCESSOR_LIST is core 191 followed
-  by the list of the same count in Utils/flexible-cores/hello-cpu.intelmpi.explicit.sbatch. Under Intel MPI's
-  explicit-list rule (on each node, the i-th rank takes the list's i-th entry), every process gets a core of its own
-  and every CCD (8 cores) the same number of SPs, on the first node and on the others. With the CP at another index
-  among the first node's ranks, every process still gets a core of its own, and the CCDs stay even exactly when the CP
-  is the first rank or one of the last k (k = SP_PER_NODE / 24);
+  by the list of the same count in Utils/flexible-cores/hello-cpu.intelmpi.explicit.sbatch. Whether Intel MPI hands a
+  node's ranks the list's cores in list order (the i-th rank takes the i-th entry) or in ascending order (the i-th rank
+  takes the i-th lowest core), and wherever the CP is among the first node's ranks, every process gets a core of its
+  own on every node. Every CCD (8 cores) holds the same number of SPs on the other nodes, and on the first node when
+  the CP is one of its last k ranks (k = SP_PER_NODE / 24), the only positions of the CP for which that holds in both
+  orders;
 - 192 SPs per node get a note and no list, 191 set by hand the default's note, the other counts a WARNING and no list,
   and PIN_EXPLICIT=0 neither; a core list set in the submitting shell never reaches exaqsub on those paths, and the
   script's own list replaces it on the others;
@@ -279,18 +280,34 @@ def assert_refused(job: Job, message: str) -> None:
     assert sorted(p.name for p in job.case_dir.iterdir()) == [CASE]
 
 
-def placement(hostfile: list[str], pinned: str) -> dict[str, list[tuple[str, int]]]:
-    """Each node's processes, in rank order, with their cores, under Intel MPI's explicit-list rule: the ranks follow
-    the hostfile ("cp <host>", then "<SPs> <host>" lines), and on each node the i-th rank takes the list's i-th entry,
-    from its start again past its end."""
-    cores = [int(c) for c in pinned.split(",")]
-    nodes: dict[str, list[tuple[str, int]]] = {}
+# Two orders in which Intel MPI can hand a node's ranks the cores of I_MPI_PIN_PROCESSOR_LIST: the list's own (the
+# i-th rank takes the list's i-th entry) and ascending (the i-th rank takes the list's i-th lowest core). The
+# placement tests hold in both.
+ORDERS = {"list order": list, "ascending order": sorted}
+
+
+def node_ranks(hostfile: list[str], cp_index: int) -> dict[str, list[str]]:
+    """Each node's ranks, in rank order, from the hostfile ("cp <host>", then "<SPs> <host>" lines): the SPs of its
+    line and, on the CP's node, the CP at `cp_index` among them."""
+    nodes: dict[str, list[str]] = {}
+    cp_hosts = []
     for line in hostfile:
         what, host = line.split()
         ranks = nodes.setdefault(host, [])
-        for _ in range(1 if what == "cp" else int(what)):
-            ranks.append(("cp" if what == "cp" else "sp", cores[len(ranks) % len(cores)]))
+        if what == "cp":
+            cp_hosts.append(host)
+        else:
+            ranks.extend(["sp"] * int(what))
+    assert len(cp_hosts) == 1, hostfile
+    nodes[cp_hosts[0]].insert(cp_index, "cp")
     return nodes
+
+
+def placement(ranks: list[str], pinned: str, order: str) -> list[tuple[str, int]]:
+    """A node's processes, in rank order, with the cores that `order` gives them from the list, from its start again
+    past its end."""
+    cores = ORDERS[order](int(c) for c in pinned.split(","))
+    return [(what, cores[i % len(cores)]) for i, what in enumerate(ranks)]
 
 
 def even_ccds(cores, k: int) -> bool:
@@ -345,33 +362,43 @@ def test_the_list_is_core_191_then_the_flexible_cores_list_of_the_same_count(sps
 @pytest.mark.parametrize("nodes", [1, 2, 3])
 @pytest.mark.parametrize("sps", LISTED)
 def test_the_list_gives_every_process_a_core_and_k_sps_to_every_ccd_on_every_node(sps, nodes, tmp_path, host_tools):
-    """The CP alone on core 191 on the first node; on the others, the first SP on 191 and the list's last core free."""
+    """In both orders and wherever the CP is among the first node's ranks, every process gets a core of its own on
+    every node, and every CCD holds k SPs on the other nodes, and on the first node when the CP is one of its last k
+    ranks."""
     call = started(run(tmp_path, host_tools, nodes=nodes, env={"SP_PER_NODE": str(sps)}))
     pinned = call["env"]["I_MPI_PIN_PROCESSOR_LIST"]
-    last = int(pinned.split(",")[-1])
-    on = placement(call["hostfile"], pinned)
-    assert list(on) == [f"n{i}" for i in range(1, nodes + 1)]
-    for i, (host, ranks) in enumerate(on.items()):
-        used = [core for _, core in ranks]
-        assert len(used) == len(set(used)), (host, ranks)
-        assert even_ccds([core for what, core in ranks if what == "sp"], sps // 24), (host, ranks)
-        if i == 0:
-            assert ranks[0] == ("cp", 191) and [what for what, _ in ranks].count("cp") == 1, ranks
-        else:
-            assert ranks[0] == ("sp", 191) and last not in used, (host, ranks)
+    k = sps // 24
+    for order in ORDERS:
+        for cp in range(sps + 1):
+            on = node_ranks(call["hostfile"], cp)
+            assert list(on) == [f"n{i}" for i in range(1, nodes + 1)]
+            for host, ranks in on.items():
+                procs = placement(ranks, pinned, order)
+                used = [core for _, core in procs]
+                assert len(used) == len(set(used)), (order, cp, host, procs)
+                if host != "n1" or cp > sps - k:
+                    assert even_ccds([core for what, core in procs if what == "sp"], k), (order, cp, host, procs)
 
 
 @pytest.mark.parametrize("sps", LISTED)
-def test_with_the_cp_at_any_index_the_ccds_stay_even_only_at_the_first_or_one_of_the_last_k(sps, tmp_path, host_tools):
-    """The first node runs SP_PER_NODE + 1 ranks on as many distinct list entries, so every process gets a core of its
-    own wherever the CP is among them. The CP takes the list entry at its own index and the SPs every other one, which
-    give every CCD k SPs exactly when the CP's index is 0 or one of the last k."""
+def test_with_the_cp_at_any_index_the_ccds_stay_even_in_both_orders_only_at_one_of_the_last_k(sps, tmp_path,
+                                                                                               host_tools):
+    """The first node runs SP_PER_NODE + 1 ranks on as many distinct list entries. In list order every CCD holds k SPs
+    exactly when the CP is the first rank or one of the last k, in ascending order exactly when it is one of the last
+    k + 1: in both, exactly when it is one of the last k."""
     call = started(run(tmp_path, host_tools, env={"SP_PER_NODE": str(sps)}))
-    pinned = [int(c) for c in call["env"]["I_MPI_PIN_PROCESSOR_LIST"].split(",")]
+    pinned = call["env"]["I_MPI_PIN_PROCESSOR_LIST"]
     k = sps // 24
-    assert len(pinned) == len(set(pinned)) == sps + 1
-    even = {cp for cp in range(sps + 1) if even_ccds(pinned[:cp] + pinned[cp + 1:], k)}
-    assert even == {0, *range(sps + 1 - k, sps + 1)}
+    entries = pinned.split(",")
+    assert len(entries) == len(set(entries)) == sps + 1
+    even = {order: {cp for cp in range(sps + 1)
+                    if even_ccds([core for what, core in placement(node_ranks(call["hostfile"], cp)["n1"], pinned,
+                                                                         order) if what == "sp"], k)}
+            for order in ORDERS}
+    last_k = set(range(sps + 1 - k, sps + 1))
+    assert even["list order"] == {0, *last_k}
+    assert even["ascending order"] == {sps - k, *last_k}
+    assert even["list order"] & even["ascending order"] == last_k
 
 
 def test_192_sps_per_node_get_the_note_and_no_list(tmp_path, host_tools):
