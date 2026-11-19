@@ -46,9 +46,13 @@ pf_count() { ( LC_ALL=C; [[ "$1" =~ ^[1-9][0-9]{0,5}$ ]] ) && [ "$1" -le "$2" ];
 pf_count "${SP_PER_NODE}" "${CORES}" || {
     echo "ERROR: SP_PER_NODE=${SP_PER_NODE}: use a whole number from 1 to ${CORES}, this node's physical cores" >&2
     exit 1; }
-pf_count "${DISC_NPROCS}" "$(( NNODES * CORES ))" || {
-    echo "ERROR: DISC_NPROCS=${DISC_NPROCS}: use a whole number from 1 to $(( NNODES * CORES )), the job's cores" >&2
-    exit 1; }
+# Only the modes that run the discretizer use DISC_NPROCS, so only they check it.
+case "${MODE}" in
+    discretize|all)
+        pf_count "${DISC_NPROCS}" "$(( NNODES * CORES ))" || {
+            echo "ERROR: DISC_NPROCS=${DISC_NPROCS}: use a whole number from 1 to $(( NNODES * CORES )), the job's cores" >&2
+            exit 1; } ;;
+esac
 for v in PIN_EXPLICIT USE_BUNDLED_IMPI; do
     case "${!v-}" in ''|0|1) ;; *) echo "ERROR: ${v}=${!v}: use 0 or 1" >&2; exit 1 ;; esac
 done
@@ -67,10 +71,10 @@ EXAQSUB="${EXA_DIST}/bin/exaqsub"
 # Intel MPI + EFA
 # ---------------------------------------------------------------------------
 source /etc/profile.d/modules.sh
-# Intel MPI uses the EFA installer's libfabric, not its own copy, when
-# I_MPI_OFI_LIBRARY_INTERNAL=0 is exported before intelmpi loads and libfabric-aws
-# loads after it. With I_MPI_DEBUG=5 the start of simulator.log names the
-# libfabric version and provider.
+# I_MPI_OFI_LIBRARY_INTERNAL=0 exported before intelmpi loads, and libfabric-aws
+# loaded after it, ask Intel MPI for the EFA installer's libfabric instead of its own
+# copy. Check which one PowerFLOW's ranks load: with I_MPI_DEBUG=5 the start of
+# simulator.log names the libfabric version and provider.
 export I_MPI_OFI_LIBRARY_INTERNAL=0
 module load intelmpi
 module load libfabric-aws
@@ -103,12 +107,11 @@ unset I_MPI_PIN_DOMAIN I_MPI_PIN_ORDER I_MPI_PIN_PROCESSOR_LIST
 # flexible-cores rule: with k = SP_PER_NODE/24 ranks per CCD, every (8/k)-th core
 # when k divides 8, else each CCD's first k cores.
 #
-# The CP: the first list entry is a free core of the last CCD. On the first node the
-# CP (listed first in the hostfile) takes it. On the other nodes there is no CP, so
-# the first SP takes it and the list's last core, on the same CCD, stays free. Every
-# process gets a core of its own wherever the CP is among its node's ranks, and every
-# CCD holds k SPs on every node when the CP is the first rank on its node or one of
-# its last k. The "CPU pinning" table that I_MPI_DEBUG=5 prints at the start of
+# The CP: the list adds core 191, which the flexible-cores list leaves free on the
+# last CCD, because the first node also runs the CP. With one core more than
+# SP_PER_NODE in the list, every process gets a core of its own on every node, and
+# every CCD holds k SPs on every node when the CP is one of the last k ranks on its
+# node. The "CPU pinning" table that I_MPI_DEBUG=5 prints at the start of
 # simulator.log shows each rank's core but not which rank is the CP: during the run,
 # `ps -eo pid,psr,args` on the first node shows each process's core and command line.
 #
@@ -126,7 +129,7 @@ pf_pin_list() {
         done
     done
     list=${list%,}
-    # A core of the last CCD that no SP uses, for the CP.
+    # A core of the last CCD that the flexible-cores list leaves free.
     for (( free = nccd * g - 1; free >= (nccd - 1) * g; free-- )); do
         case ",${list}," in *",${free},"*) ;; *) break ;; esac
     done
