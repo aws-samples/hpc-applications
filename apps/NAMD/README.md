@@ -246,9 +246,11 @@ In the run directory's `namd.out`:
 - `Charm++> Running in SMP mode: <n> processes, <PPN> worker threads (PEs) + 1 comm threads per process`: nodes ×
   `PROCS_PER_NODE` processes, with the `PPN` asked for;
 - `Charm++> cpu affinity enabled.`: Charm++ binds the threads to cores;
-- `Charm++> cpuaffinity PE-core map (OS indices): <the +pemap value>`, and one line per process on the first node,
-  `Charm++> set comm <k> on node <k> to PU P#<core>`: the cores the launcher passed (none when Charm++ places the
-  threads);
+- `Charm++> cpuaffinity PE-core map (OS indices): <the +pemap value>`: the worker threads' cores, as the launcher
+  passed them (no such line when Charm++ places the threads). The log does not name the communication threads' cores.
+  While NAMD runs, a thread's cores are the `Cpus_allowed_list` line of `/proc/<pid>/task/<tid>/status` on its node,
+  for namd3's process id `<pid>` and the thread's id `<tid>`: one core for a pinned thread. Each process's
+  communication thread is its main thread, whose thread id is the process id;
 - `Info: MIXED PRECISION AVX-512 TILES OPTIMIZATIONS: ENABLED`: the AVX-512 tile-list kernels are on. NAMD's `+notiles`
   option turns them off.
 
