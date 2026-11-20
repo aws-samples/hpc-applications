@@ -12,10 +12,16 @@ These tests pin:
   counts as none. The banner, the run directory and NAMDRESULT then say "unknown", and the run goes on;
 - the build: with NAMD_ENV unset, the build of the node's instance family under BASE_DIR/x86_64/<version>-<family>/
   (the highest version), else the only build there, with a NOTE, else a stop that asks for NAMD_ENV; and an AVX-512
-  build on a CPU without AVX-512, refused before anything runs.
+  build on a CPU without AVX-512, refused before anything runs;
+- cores per node on hpc8a.96xlarge and hpc7a.96xlarge: PPN 23, 47, 71, 95, 119, 143 and 167 pin the communication
+  thread to the first core of the flexible-cores list of PPN + 1 cores in
+  Utils/flexible-cores/hello-cpu.openmpi.explicit.sbatch and the PEs to the rest, which puts (PPN + 1) / 24 threads on
+  every CCD, on every node; PPN 191 and 192 fill the node with no list; any other PPN stops the job before anything
+  runs. With no instance type, lscpu decides (in the C locale), and only below a full node: a 192-core AMD node gets
+  the same check and lists, any other node none, each with a NOTE. Other types get no list and no check.
 
-They run the script with stubs of curl (the instance metadata and the deck downloads), srun, fi_info, nproc and
-mpirun, from a temporary directory, with a clean environment and a PATH that holds no other MPI, Slurm, ssh, curl, aws
+They run the script with stubs of curl (the instance metadata and the deck downloads), srun, fi_info, nproc, lscpu
+and mpirun, from a temporary directory, with a clean environment and a PATH that holds no other MPI, Slurm, ssh, curl, aws
 or sudo command: no NAMD, MPI, Slurm or network is needed. The stub mpirun notes its arguments and prints a synthetic
 namd.out. The script reads /proc/cpuinfo, so these tests run a copy of it that reads a synthetic cpuinfo instead and
 differs from the script in that path alone (checked here). Every value is synthetic.
@@ -39,6 +45,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "apps" / "NAMD" / "x86" / "namd-benchmark.sbatch"
+FLEXIBLE_CORES = REPO / "Utils" / "flexible-cores" / "hello-cpu.openmpi.explicit.sbatch"
 BASH = shutil.which("bash")
 pytestmark = pytest.mark.skipif(BASH is None, reason="needs bash")
 
@@ -121,6 +128,24 @@ exit "${STUB_FI_RC:-0}"
 NPROC_STUB = r"""#!/bin/bash
 echo 192
 """
+# lscpu, as LC_ALL=C lscpu prints its summary: STUB_LSCPU is amd-192 (AuthenticAMD, 2 sockets of 96 cores), intel-192
+# (GenuineIntel, 2 x 96), amd-96 (AuthenticAMD, 2 x 48) or fail (exit 1). It logs the LC_ALL it was given ("unset"
+# when none).
+LSCPU_STUB = r"""#!/bin/bash
+printf '%s\n' "${LC_ALL-unset}" >> "${STATE}/lscpu.log"
+case "${STUB_LSCPU:-amd-192}" in
+    amd-192) vendor=AuthenticAMD per=96 ;;
+    intel-192) vendor=GenuineIntel per=96 ;;
+    amd-96) vendor=AuthenticAMD per=48 ;;
+    *) exit 1 ;;
+esac
+echo "Architecture:                    x86_64"
+echo "CPU(s):                          $(( 2 * per ))"
+echo "Vendor ID:                       ${vendor}"
+echo "  Thread(s) per core:            1"
+echo "  Core(s) per socket:            ${per}"
+echo "  Socket(s):                     2"
+"""
 # mpirun: for each call it notes, in its own directory, its arguments (one per line), its working directory,
 # FI_PROVIDER ("unset" when none) and a copy of the run config (its last argument); then it prints a synthetic
 # namd.out (STUB_NAMD_OUT: complete, no-wallclock, zero-days, no-bench or sci-days) and ends with STUB_RC. Like NAMD,
@@ -177,6 +202,7 @@ class Job:
     curl: list[str]       # each curl call's arguments
     srun: list[str]       # each srun call's arguments
     fi_info: list[str]    # each fi_info call's arguments
+    lscpu: list[str]      # each lscpu call's LC_ALL
     base: Path            # BASE_DIR
     state: Path
 
@@ -271,7 +297,7 @@ def run(work: Path, tools: Path, nodes: int = 1, env: dict[str, str | None] | No
     for d in (stubs, state, submit, base, served, tmp):
         d.mkdir(parents=True, exist_ok=True)
     for name, text in {"curl": CURL_STUB, "srun": SRUN_STUB, "fi_info": FI_INFO_STUB, "nproc": NPROC_STUB,
-                       "mpirun": MPIRUN_STUB}.items():
+                       "lscpu": LSCPU_STUB, "mpirun": MPIRUN_STUB}.items():
         (stubs / name).write_text(text)
         (stubs / name).chmod(0o755)
     for model in DECKS:
@@ -307,7 +333,7 @@ def run(work: Path, tools: Path, nodes: int = 1, env: dict[str, str | None] | No
     def log(name: str) -> list[str]:
         return (state / name).read_text().splitlines() if (state / name).exists() else []
 
-    return Job(proc, calls, log("curl.log"), log("srun.log"), log("fi_info.log"), base, state)
+    return Job(proc, calls, log("curl.log"), log("srun.log"), log("fi_info.log"), log("lscpu.log"), base, state)
 
 
 def started(job: Job) -> dict:
@@ -590,3 +616,139 @@ def test_an_avx2_build_runs_on_a_cpu_with_avx512_too(tmp_path, host_tools):
     job = run(tmp_path, host_tools, builds=(("3.0.2-hpc6a", {"NAMD_TARGET_CPU": "hpc6a", "NAMD_ISA": "avx2"}),),
               env={"NAMD_ENV": str(tmp_path / "base" / "x86_64" / "3.0.2-hpc6a" / "namd-3.0.2-x86-env.sh")})
     started(job)
+
+
+# The PPN of each flexible-cores count below a full node, and the counts.
+LISTED_PPN = (23, 47, 71, 95, 119, 143, 167)
+FLEX_TYPES = ("hpc8a.96xlarge", "hpc7a.96xlarge")
+
+
+def flexible_cores_lists() -> dict[int, list[int]]:
+    """The OPEN_MPI_PROCESSOR_LIST of each cores-per-node count in hello-cpu.openmpi.explicit.sbatch's case."""
+    lists: dict[int, list[int]] = {}
+    count = None
+    for line in FLEXIBLE_CORES.read_text().splitlines():
+        if m := re.fullmatch(r"\s*(\d+)\)", line):
+            count = int(m.group(1))
+        elif (m := re.fullmatch(r'\s*OPEN_MPI_PROCESSOR_LIST="([0-9,]+)"', line)) and count is not None:
+            lists[count] = [int(c) for c in m.group(1).split(",")]
+            count = None
+    assert sorted(lists) == [24, 48, 72, 96, 120, 144, 168, 192], sorted(lists)
+    return lists
+
+
+def maps(call: dict) -> tuple[str | None, str | None]:
+    """namd3's +commap and +pemap values (None when absent)."""
+    words = namd_words(call)
+    value = lambda opt: words[words.index(opt) + 1] if opt in words else None  # noqa: E731
+    return value("+commap"), value("+pemap")
+
+
+def assert_no_maps(call: dict) -> None:
+    assert maps(call) == (None, None), namd_words(call)
+    assert "+setcpuaffinity" in namd_words(call)
+
+
+@pytest.mark.parametrize("ppn", LISTED_PPN)
+@pytest.mark.parametrize("itype", FLEX_TYPES)
+def test_below_a_full_node_the_threads_are_pinned_to_the_flexible_cores_list(itype, ppn, tmp_path, host_tools):
+    """The communication thread on the list's first core, the PEs on the rest: every core once, and (PPN + 1) / 24
+    threads on every CCD."""
+    builds = (("3.0.2-hpc8a", None), ("3.0.2-hpc7a", None))
+    job = run(tmp_path, host_tools, itype=itype, builds=builds, env={"PPN": str(ppn)})
+    call = started(job)
+    commap, pemap = maps(call)
+    listed = flexible_cores_lists()[ppn + 1]
+    assert [int(commap)] + [int(c) for c in pemap.split(",")] == listed
+    cores = [int(commap)] + [int(c) for c in pemap.split(",")]
+    assert len(cores) == len(set(cores)) == ppn + 1
+    assert {ccd: sum(c // 8 == ccd for c in cores) for ccd in range(24)} == dict.fromkeys(range(24), (ppn + 1) // 24)
+    assert namd_words(call)[1:4] == ["+ppn", str(ppn), "+setcpuaffinity"]
+    assert namd_words(call)[-1] == "run-ApoA1.namd"
+    assert f"Flexible cores: the communication thread on core {commap} and the {ppn} PEs on the rest of the " \
+           f"{ppn + 1}-core list (Utils/flexible-cores/)" in job.out
+    assert job.lscpu == []
+
+
+def test_two_nodes_use_the_same_node_local_list(tmp_path, host_tools):
+    job = run(tmp_path, host_tools, nodes=2, env={"PPN": "95", "MODEL": "STMV"})
+    commap, pemap = maps(started(job))
+    listed = flexible_cores_lists()[96]
+    assert commap == str(listed[0]) and pemap == ",".join(map(str, listed[1:]))
+
+
+@pytest.mark.parametrize("ppn", [191, 192])
+@pytest.mark.parametrize("itype", FLEX_TYPES)
+def test_a_full_node_gets_no_list(itype, ppn, tmp_path, host_tools):
+    builds = (("3.0.2-hpc8a", None), ("3.0.2-hpc7a", None))
+    job = run(tmp_path, host_tools, itype=itype, builds=builds, env={"PPN": str(ppn)})
+    assert_no_maps(started(job))
+
+
+def flex_error(ppn: int, node: str, on: str) -> str:
+    return (f"ERROR: PPN={ppn} worker threads and the communication thread use {ppn + 1} cores per node, which would "
+            f"load the 24 CCDs of {node} unevenly; on {on} use PPN=23, 47, 71, 95, 119, 143, 167, 191 or 192 (see "
+            "Utils/flexible-cores/)")
+
+
+@pytest.mark.parametrize("ppn", [63, 100, 1])
+@pytest.mark.parametrize("itype", FLEX_TYPES)
+def test_another_ppn_on_hpc8a_and_hpc7a_stops_the_job_before_anything_runs(itype, ppn, tmp_path, host_tools):
+    builds = (("3.0.2-hpc8a", None), ("3.0.2-hpc7a", None))
+    job = run(tmp_path, host_tools, itype=itype, builds=builds, env={"PPN": str(ppn)})
+    assert_refused(job, flex_error(ppn, itype, "this type"))
+    assert deck_downloads(job) == [] and job.srun == []
+
+
+@pytest.mark.parametrize("itype, cpus", [("hpc6a.48xlarge", 96), ("c8i.96xlarge", 192), ("hpc7a.48xlarge", 96)])
+def test_other_types_and_sizes_get_no_list_and_no_check(itype, cpus, tmp_path, host_tools):
+    cpuinfo = CPUINFO_AVX2 if itype.startswith("hpc6a") else CPUINFO_AVX512
+    job = run(tmp_path, host_tools, itype=itype, builds=ALL_TARGETS, cpuinfo=cpuinfo,
+              env={"PPN": "63", "SLURM_CPUS_ON_NODE": str(cpus)})
+    assert_no_maps(started(job))
+    assert job.lscpu == []
+    assert "NOTE:" not in job.proc.stderr, job.proc.stderr
+
+
+NOTE_APPLY = ("NOTE: no instance type from the instance metadata; lscpu shows a 192-core AMD node, which could be an "
+              "hpc8a.96xlarge or hpc7a.96xlarge, so their cores-per-node check and flexible-cores lists apply")
+NOTE_SKIP = ("NOTE: no instance type from the instance metadata, and lscpu does not show a 192-core AMD node, so the "
+             "flexible-cores check and lists for hpc8a.96xlarge and hpc7a.96xlarge are skipped")
+
+
+def test_with_no_type_a_192_core_amd_node_gets_the_check(tmp_path, host_tools):
+    job = run(tmp_path / "63", host_tools, imds="none", env={"PPN": "63", "STUB_LSCPU": "amd-192"})
+    assert_refused(job, flex_error(63, "this 192-core AMD node", "this node"))
+    assert NOTE_APPLY in job.err
+
+
+def test_with_no_type_a_192_core_amd_node_gets_the_lists(tmp_path, host_tools):
+    job = run(tmp_path, host_tools, imds="none", env={"PPN": "95", "STUB_LSCPU": "amd-192"})
+    commap, pemap = maps(started(job))
+    listed = flexible_cores_lists()[96]
+    assert commap == str(listed[0]) and pemap == ",".join(map(str, listed[1:]))
+    assert NOTE_APPLY in job.err
+    (run_dir,) = job.run_dirs()
+    assert "-1xunknown-95ppn-" in run_dir.name
+
+
+@pytest.mark.parametrize("ppn", [63, 95])
+@pytest.mark.parametrize("node", ["intel-192", "amd-96", "fail"])
+def test_with_no_type_any_other_node_runs_with_no_list_and_a_note(node, ppn, tmp_path, host_tools):
+    job = run(tmp_path, host_tools, imds="none", env={"PPN": str(ppn), "STUB_LSCPU": node})
+    assert_no_maps(started(job))
+    assert NOTE_SKIP in job.err
+
+
+@pytest.mark.parametrize("ppn", [191, 192])
+def test_with_no_type_a_full_node_asks_lscpu_nothing(ppn, tmp_path, host_tools):
+    job = run(tmp_path, host_tools, imds="none", env={"PPN": str(ppn)})
+    assert_no_maps(started(job))
+    assert job.lscpu == []
+    assert "lscpu" not in job.proc.stderr
+
+
+def test_lscpu_is_read_in_the_c_locale(tmp_path, host_tools):
+    job = run(tmp_path, host_tools, imds="none", env={"PPN": "95", "LC_ALL": "de_DE.UTF-8"})
+    started(job)
+    assert job.lscpu == ["C"]

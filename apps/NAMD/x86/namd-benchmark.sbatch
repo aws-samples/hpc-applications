@@ -22,7 +22,9 @@
 #               instance family under ${BASE_DIR}/x86_64/, see below)
 #   MODEL       ApoA1 | STMV                       (default ApoA1)
 #   TIMESTEPS   numsteps override, 1..10000000     (default: model default)
-#   PPN         worker threads (PEs) per node      (default: cores/node - 1)
+#   PPN         worker threads (PEs) per node      (default: cores/node - 1;
+#               on hpc8a.96xlarge and hpc7a.96xlarge 23, 47, 71, 95, 119,
+#               143, 167, 191 or 192, see below)
 #   BASE_DIR    run-output root (absolute path)    (default /fsx/namd)
 
 set -uo pipefail
@@ -104,6 +106,72 @@ if [ "${NAMD_ISA:-}" = avx512 ] && ! grep -qw avx512f /proc/cpuinfo; then
   fail "${NAMD_ENV} is an AVX-512 build (NAMD_ISA=avx512), and this node's CPU has no AVX-512: build TARGET_CPU=hpc6a for it, or set NAMD_ENV to that build's env script"
 fi
 
+# --- Cores per node on hpc8a.96xlarge and hpc7a.96xlarge --------------------
+# 192 cores in 24 CCDs of 8, one L3 cache per CCD. NAMD's process on each node
+# uses PPN + 1 cores: its PPN worker threads and its communication thread. Only
+# 24, 48, 72, 96, 120, 144, 168 or 192 cores per node give every CCD the same
+# number of threads (Utils/flexible-cores/), so on these types PPN is 23, 47,
+# 71, 95, 119, 143, 167, 191 or 192, and any other value stops the job here,
+# before anything runs. Below a full node, the threads are pinned to the
+# flexible-cores list of PPN + 1 cores: the communication thread to its first
+# core (+commap), the worker threads to the others (+pemap). PPN 191 or 192
+# fills the node, and Charm++ places the threads.
+# With no instance type from the instance metadata, a node that lscpu shows as
+# AMD with 192 cores (sockets x cores per socket) could be either type and gets
+# the same check and lists; any other node runs with no list, with a NOTE on
+# stderr. lscpu is asked, and a NOTE printed, only where the type changes what
+# the job does: below a full node. Other instance types and sizes get no list
+# and no check.
+amd_192_cores() {
+  local info vendor sockets per_socket
+  info="$(LC_ALL=C lscpu 2>/dev/null)" || return 1
+  vendor="$(awk -F: '/^[[:space:]]*Vendor ID:/ { gsub(/[[:space:]]/, "", $2); print $2; exit }' <<< "${info}")"
+  sockets="$(awk -F: '/^[[:space:]]*Socket\(s\):/ { gsub(/[[:space:]]/, "", $2); print $2; exit }' <<< "${info}")"
+  per_socket="$(awk -F: '/^[[:space:]]*Core\(s\) per socket:/ { gsub(/[[:space:]]/, "", $2); print $2; exit }' <<< "${info}")"
+  [ "${vendor}" = AuthenticAMD ] && [[ "${sockets}" =~ ^[1-9][0-9]{0,2}$ ]] \
+    && [[ "${per_socket}" =~ ^[1-9][0-9]{0,3}$ ]] && (( sockets * per_socket == 192 ))
+}
+# flex_cores_list <cores>: the flexible-cores list for <cores> per node (24 to
+# 168, a multiple of 24), by Utils/flexible-cores/'s rule: with k = cores / 24
+# threads on each CCD of 8 cores, every (8 / k)-th core of each CCD when k
+# divides 8, and each CCD's first k cores otherwise.
+flex_cores_list() {
+  local k=$(( $1 / 24 )) step ccd i list=()
+  if (( 8 % k == 0 )); then step=$(( 8 / k )); else step=1; fi
+  for (( ccd = 0; ccd < 24; ccd++ )); do
+    for (( i = 0; i < k * step; i += step )); do list+=( $(( ccd * 8 + i )) ); done
+  done
+  local IFS=,
+  echo "${list[*]}"
+}
+FLEX_NODE=""   # the node the check applies to, as the messages name it ("": no check)
+FLEX_ON=""
+case "${INSTANCE_TYPE}" in
+  hpc8a.96xlarge|hpc7a.96xlarge)
+    FLEX_NODE="${INSTANCE_TYPE}"; FLEX_ON="this type" ;;
+  "")
+    if (( PPN + 1 < CORES_PER_NODE )); then
+      if amd_192_cores; then
+        FLEX_NODE="this 192-core AMD node"; FLEX_ON="this node"
+        echo "NOTE: no instance type from the instance metadata; lscpu shows a 192-core AMD node, which could be an hpc8a.96xlarge or hpc7a.96xlarge, so their cores-per-node check and flexible-cores lists apply" >&2
+      else
+        echo "NOTE: no instance type from the instance metadata, and lscpu does not show a 192-core AMD node, so the flexible-cores check and lists for hpc8a.96xlarge and hpc7a.96xlarge are skipped" >&2
+      fi
+    fi ;;
+esac
+FLEX_ARGS=()
+if [ -n "${FLEX_NODE}" ]; then
+  case "${PPN}" in
+    191|192) ;;   # the whole node
+    23|47|71|95|119|143|167)
+      FLEX_LIST="$(flex_cores_list $(( PPN + 1 )))"
+      FLEX_ARGS=( +commap "${FLEX_LIST%%,*}" +pemap "${FLEX_LIST#*,}" )
+      echo "Flexible cores: the communication thread on core ${FLEX_LIST%%,*} and the ${PPN} PEs on the rest of the $(( PPN + 1 ))-core list (Utils/flexible-cores/)" ;;
+    *)
+      fail "PPN=${PPN} worker threads and the communication thread use $(( PPN + 1 )) cores per node, which would load the 24 CCDs of ${FLEX_NODE} unevenly; on ${FLEX_ON} use PPN=23, 47, 71, 95, 119, 143, 167, 191 or 192 (see Utils/flexible-cores/)" ;;
+  esac
+fi
+
 echo "================================================================================"
 echo "NAMD benchmark — $(date)"
 echo "  model=${MODEL}  nodes=${NODES} x ${INSTANCE_TYPE:-unknown}  ppn=${PPN}  cores/node=${CORES_PER_NODE}"
@@ -182,7 +250,7 @@ if [ "${NODES}" -gt 1 ]; then
 fi
 set -o pipefail
 mpirun "${MPI_ARGS[@]}" \
-     "${NAMD3}" +ppn "${PPN}" +setcpuaffinity "${RUNCONF}" 2>&1 | tee namd.out
+     "${NAMD3}" +ppn "${PPN}" +setcpuaffinity ${FLEX_ARGS[@]+"${FLEX_ARGS[@]}"} "${RUNCONF}" 2>&1 | tee namd.out
 rc=${PIPESTATUS[0]}
 [ "${rc}" -eq 0 ] || fail "NAMD run exited non-zero (rc=${rc}); see ${WORK}/namd.out"
 

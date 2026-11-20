@@ -95,15 +95,35 @@ The launcher:
    `${BASE_DIR}/Run/<job>-<MODEL>-<cluster>-<nodes>x<instance type>-<PPN>ppn-<UTC time>/`;
 4. drops the page cache and enables transparent huge pages on every node, where `sudo` allows it;
 5. starts `namd3` with `mpirun`: one process per node, with `+ppn PPN` worker threads and `+setcpuaffinity`. On more
-   than one node, Open MPI sends its traffic over EFA (`--mca pml cm --mca mtl ofi`, `FI_PROVIDER=efa`).
+   than one node, Open MPI sends its traffic over EFA (`--mca pml cm --mca mtl ofi`, `FI_PROVIDER=efa`). Below a full
+   node of hpc8a.96xlarge or hpc7a.96xlarge, the threads are pinned to a flexible-cores list (see below).
 
 | Variable | Default | Description |
 |---|---|---|
 | `NAMD_ENV` | the build of the node's instance family | The build's env script |
 | `MODEL` | `ApoA1` | `ApoA1` or `STMV` |
 | `TIMESTEPS` | the deck's | The run's `numsteps`, 1 to 10,000,000 |
-| `PPN` | the node's CPUs − 1 | Worker threads (PEs) per node, 1 to 192 |
+| `PPN` | the node's CPUs − 1 | Worker threads (PEs) per node, 1 to 192; on hpc8a.96xlarge and hpc7a.96xlarge 23, 47, 71, 95, 119, 143, 167, 191 or 192 (see below) |
 | `BASE_DIR` | `/fsx/namd` | Root of the deck cache and the run directories (an absolute path) |
+
+## Cores per node on hpc8a.96xlarge and hpc7a.96xlarge
+
+hpc8a.96xlarge and hpc7a.96xlarge have 192 cores in 24 CCDs of 8, each CCD with an L3 cache of its own. NAMD's
+process on each node uses `PPN` + 1 cores, for its worker threads and its communication thread, and only 24, 48, 72,
+96, 120, 144, 168 or 192 cores per node give every CCD the same number of threads
+([Utils/flexible-cores](../../Utils/flexible-cores/)). So on these two types the launcher takes `PPN` = 23, 47, 71,
+95, 119, 143, 167, 191 or 192, and stops at any other value before anything runs, with an `ERROR:` that names those
+values.
+
+- Below a full node (`PPN` 23 to 167), it pins the threads to the flexible-cores list of `PPN` + 1 cores: the
+  communication thread to the list's first core (`+commap`), and the worker threads to the others (`+pemap`). The job
+  log names the list on a line that starts with `Flexible cores:`, and every node of the run uses the same cores.
+- At `PPN` 191 or 192 the process fills the node, and Charm++ places the threads.
+- With no instance type from the instance metadata, a node that `lscpu` shows as AMD with 192 cores could be either
+  type, so it gets the same check and lists, with a `NOTE:` on stderr. Any other node runs with no list, with a `NOTE:`
+  that the check was skipped. The launcher reads `lscpu` only below a full node, where the type changes what the job
+  does.
+- Other instance types and sizes get no list and no check.
 
 ## Benchmark models
 
@@ -138,6 +158,8 @@ In the run directory's `namd.out`:
 - `Charm++> Running in SMP mode: <n> processes, <PPN> worker threads (PEs) + 1 comm threads per process`: one process
   per node, with the `PPN` asked for;
 - `Charm++> cpu affinity enabled.`: Charm++ binds the threads to cores;
+- with a flexible-cores list, `Charm++> cpuaffinity PE-core map (OS indices): <the worker threads' cores>` and
+  `Charm++> set comm 0 on node 0 to PU P#<core>`: the cores the launcher passed;
 - `Info: MIXED PRECISION AVX-512 TILES OPTIMIZATIONS: ENABLED`: the AVX-512 tile-list kernels are on. NAMD's `+notiles`
   option turns them off.
 
