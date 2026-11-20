@@ -27,7 +27,7 @@ import re
 from pathlib import Path
 from textwrap import dedent
 
-from hypothesis import assume, given, settings, strategies as st
+from hypothesis import assume, example, given, settings, strategies as st
 
 
 # ---------------------------------------------------------------------------
@@ -179,10 +179,14 @@ namd_log_noise = st.sampled_from([
 
 
 def _bench_line(days_per_ns: float, cpus: int = 100) -> str:
-    """Mirror a real NAMD `Info: Benchmark time:` line layout."""
+    """Mirror a real NAMD `Info: Benchmark time:` line layout. NAMD prints
+    its numbers with six significant digits, so a small days/ns keeps its
+    precision (six decimals would round 0.000123456 to 0.000123, and move
+    ns/day by 0.4%, past the tests' 0.1%).
+    """
     return (
         f"Info: Benchmark time: {cpus} CPUs "
-        f"{days_per_ns / 10:.6f} s/step {days_per_ns:.6f} days/ns "
+        f"{days_per_ns / 10:.6g} s/step {days_per_ns:.6g} days/ns "
         f"1000.0 MB memory"
     )
 
@@ -212,6 +216,7 @@ class TestBenchmarkTimeParsing:
         between=st.lists(namd_log_noise, min_size=0, max_size=10),
         suffix=st.lists(namd_log_noise, min_size=0, max_size=10),
     )
+    @example(days_per_ns=0.000123456, wall=1.0, prefix=[], between=[], suffix=[])
     def test_parses_days_per_ns_and_converts(
         self, days_per_ns, wall, prefix, between, suffix,
     ) -> None:
