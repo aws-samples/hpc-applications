@@ -2,48 +2,39 @@
 """
 Generate the WRF Arm performance chart: Graviton3E (hpc7g) vs Graviton4 (m8g)
 for CONUS 12km and CONUS 2.5km benchmarks. Speedup normalised to 1 node hpc7g
-on each mesh. The Graviton3E 1N 2.5km baseline is estimated (OOM risk / not
-run) as 2 x the 2N time — matches the OpenFOAM Arm chart convention.
+on each mesh. The Graviton3E 1N 2.5km baseline is not measured: it is
+estimated as 2 x the 2N time, the convention of the OpenFOAM Arm chart.
 
 Usage:
     python3 generate_arm_chart.py
 """
 
+import matplotlib
+matplotlib.use("Agg")  # write the PNG without a display
 import matplotlib.pyplot as plt
 import numpy as np
 
 # ---------------------------------------------------------------------------
-# Measured WRF CONUS benchmark data (total wall time, seconds)
+# Measured WRF CONUS benchmark data: speedup on the total wall time (output
+# included), against 1 node hpc7g on each mesh (= 1.00, higher is faster).
+# Only relative values are embedded here.
 # ---------------------------------------------------------------------------
 # All runs: OpenMPI 5 over EFA, GCC 14 build via Spack, WRF 4.6.1 dm+sm,
 # OMP_NUM_THREADS=1 (pure MPI), 64 cores/node on hpc7g, 192 cores/node on m8g.
 # Graviton4 4N 12km is not plotted — the 425x300 grid cannot decompose cleanly
 # at >= 512 ranks (minimum 10 cells/rank/direction constraint).
 
-nodes_12km_g3 = np.array([1, 2, 4])
-time_12km_g3  = np.array([546.05, 311.83, 213.95])
-nodes_12km_g4 = np.array([1, 2])
-time_12km_g4  = np.array([216.80, 160.33])
+nodes_12km_g3   = np.array([1, 2, 4])
+speedup_12km_g3 = np.array([1.0000, 1.7511, 2.5522])
+nodes_12km_g4   = np.array([1, 2])
+speedup_12km_g4 = np.array([2.5187, 3.4058])
 
-nodes_2p5km_g3 = np.array([2, 4])
-time_2p5km_g3  = np.array([6152.40, 3732.59])
-nodes_2p5km_g4 = np.array([1, 2, 4])
-time_2p5km_g4  = np.array([4001.33, 2439.88, 1642.47])
-
-# 1N hpc7g 2.5km is OOM-risky and was not run — estimate as 2 x 2N time
-# (same convention used in the OpenFOAM Arm chart when a 1N run was impossible).
-t_g3_1n_2p5km_est = 2.0 * time_2p5km_g3[0]
-
-# ---------------------------------------------------------------------------
-# Speedup normalised to 1 node Graviton3E (hpc7g) for each mesh
-# ---------------------------------------------------------------------------
-baseline_12km  = time_12km_g3[0]                 # real 1N hpc7g run
-baseline_2p5km = t_g3_1n_2p5km_est               # estimated
-
-speedup_12km_g3  = baseline_12km  / time_12km_g3
-speedup_12km_g4  = baseline_12km  / time_12km_g4
-speedup_2p5km_g3_real = baseline_2p5km / time_2p5km_g3
-speedup_2p5km_g4 = baseline_2p5km / time_2p5km_g4
+# The 2.5km reference, 1N hpc7g, is the estimate (2 x the 2N time), so the 2N
+# hpc7g point is 2.00 by construction.
+nodes_2p5km_g3        = np.array([2, 4])
+speedup_2p5km_g3_real = np.array([2.0000, 3.2966])
+nodes_2p5km_g4        = np.array([1, 2, 4])
+speedup_2p5km_g4      = np.array([3.0752, 5.0432, 7.4916])
 
 # Prepend the estimated G3 1N 2.5km baseline (speedup=1.0) for plotting
 nodes_2p5km_g3_all   = np.array([1, 2, 4])

@@ -1,0 +1,11 @@
+General
+{
+  nodump
+}
+Directory {
+  global rundir
+  local /tmp/rundir
+}
+contact {
+  inititer 3
+}

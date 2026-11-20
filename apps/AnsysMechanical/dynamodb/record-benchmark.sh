@@ -1,0 +1,487 @@
+#!/bin/bash
+# =============================================================================
+# Ansys Mechanical -> AI-Powered HPC benchmark contribution recorder
+# =============================================================================
+# Records one Ansys Mechanical benchmark run into the shared AI-Powered HPC
+# DynamoDB dataset so it can train the HPC performance-prediction model.
+#
+# This script is SELF-CONTAINED: it has no dependency on any other file in this
+# repository. Copy just this one file to your cluster (or `curl` it) and run it.
+#
+# It is also SAFE by default:
+#   * It ALWAYS writes the record as a local JSON file you can inspect/keep.
+#   * It only calls `aws dynamodb put-item` when AWS credentials with write
+#     access are available (or you pass --put). With no credentials it just
+#     saves the JSON and tells you where it is. Nothing fails.
+#   * `--dry-run` prints the record to stdout and touches neither disk nor AWS.
+#
+# ---------------------------------------------------------------------------
+# What gets recorded (the canonical schema the model ingests)
+# ---------------------------------------------------------------------------
+# Required (the run is rejected by the model if any of these is missing):
+#   instance_type, operating_system, num_cores, num_instances, libraries
+# Strongly recommended (this is what makes the row USEFUL for training):
+#   benchmark_case            the dataset/case name (e.g. V24sp-1)
+#   time_to_solution_seconds  solve time: MAPDL's Elapsed Time (sec), the model's target
+#   analysis_type             static | modal | transient | thermal | ...
+#   solver_type               solver family: sparse-direct-* | pcg-iterative | jcg-iterative
+#   mdofs                     model size in millions of degrees of freedom
+# Optional but valuable:
+#   model_name, num_gpus, release, mechanical_version, core_solver_rating,
+#   core_solver_speedup, core_solver_efficiency, cores_per_node
+#
+# The record lands in a DynamoDB table named  External_<Source>_Mechanical  in
+# the owner's account/region. The ingestion side reads the record by
+# the canonical attribute names below, so keep them as they
+# are.
+#
+# ---------------------------------------------------------------------------
+# Quick start
+# ---------------------------------------------------------------------------
+#   # On a SLURM compute node, right after the solve (auto-detects most fields):
+#   ./record-benchmark.sh --case V24sp-1 --analysis-type static \
+#       --mdofs 12.5 --time-to-solution 845 --core-solver-rating 1234 \
+#       --source AcmeCorp
+#
+#   # Off-cluster / replaying a result (pass everything explicitly):
+#   ./record-benchmark.sh --case V24ln-2 --analysis-type modal \
+#       --instance-type hpc6id.32xlarge --os "Amazon Linux 2" \
+#       --num-cores 64 --num-nodes 1 --mpi intelmpi --version 2024R2 \
+#       --mdofs 8.0 --time-to-solution 612 --source AcmeCorp --dry-run
+#
+# Run  ./record-benchmark.sh --help  for the full option list.
+# =============================================================================
+
+set -uo pipefail
+
+# --- Application identity (do not change) ------------------------------------
+readonly APPLICATION="mechanical"
+readonly APP_TABLE_SEGMENT="Mechanical"   # matches Python str.capitalize("mechanical")
+
+# --- Defaults ----------------------------------------------------------------
+SOURCE="${SOURCE:-Community}"
+REGION="${DYNAMODB_REGION:-us-east-1}"
+TABLE=""
+OUTDIR="${PWD}"
+DRY_RUN=0
+DO_PUT="auto"
+
+INSTANCE_TYPE="${INSTANCE_TYPE:-}"
+OPERATING_SYSTEM="${OPERATING_SYSTEM:-}"
+NUM_CORES="${NUM_CORES:-}"
+NUM_INSTANCES="${NUM_INSTANCES:-}"
+CORES_PER_NODE="${CORES_PER_NODE:-}"
+MPI_IMPLEMENTATION="${MPI_IMPLEMENTATION:-}"
+BENCHMARK_CASE="${BENCHMARK_CASE:-}"
+RECORD_ID="${RECORD_ID:-}"
+ENGINE_VERSION="${MECHANICAL_VERSION:-}"
+
+# Mechanical performance metrics (env-overridable so a launch script can export them).
+TIME_TO_SOLUTION="${TIME_TO_SOLUTION:-}"
+CORE_SOLVER_RATING="${CORE_SOLVER_RATING:-}"
+CORE_SOLVER_SPEEDUP="${CORE_SOLVER_SPEEDUP:-}"
+CORE_SOLVER_EFFICIENCY="${CORE_SOLVER_EFFICIENCY:-}"
+
+# Mechanical dataset characteristics (also env-overridable).
+ANALYSIS_TYPE="${ANALYSIS_TYPE:-}"
+SOLVER_TYPE="${SOLVER_TYPE:-}"
+_solver_type_flag=0   # 1 once --solver-type is given on the command line
+MODEL_NAME="${MODEL_NAME:-}"
+MDOFS="${MDOFS:-}"
+NUM_GPUS="${NUM_GPUS:-}"
+RELEASE="${RELEASE:-}"
+
+# Directory scanned for the solver output to recover metrics not passed in
+# (defaults to the current dir, which is the run dir when called from a job).
+RUN_DIR="${RUN_DIR:-$PWD}"
+
+declare -a EXTRA_METRICS=()
+declare -a EXTRA_CHARS=()
+
+usage() {
+    sed -n '2,56p' "$0" | sed 's/^# \{0,1\}//'
+    cat <<'EOF'
+
+OPTIONS
+  Identity / destination:
+    --source LABEL            Your org/handle, e.g. AcmeCorp (default: Community).
+                              Becomes External_<LABEL>_Mechanical + provenance.
+    --table NAME              Override the destination table name entirely.
+    --region REGION           AWS region of the table (default: us-east-1).
+    --id ID                   Record id (DynamoDB key). Auto-generated if omitted.
+
+  Core run configuration (auto-detected on SLURM/EC2 when omitted):
+    --instance-type TYPE      EC2 instance type (e.g. hpc6id.32xlarge).
+    --os NAME                 Operating system (e.g. "Amazon Linux 2").
+    --num-cores N             Total cores (MPI ranks) used.
+    --num-nodes N             Number of instances/nodes used.
+    --cores-per-node N        Cores per node (derived from the two above if omitted).
+    --mpi NAME                MPI implementation (e.g. intelmpi).
+    --version VER             Mechanical version (e.g. 2024R2).
+
+  Result + dataset description (recommended):
+    --case NAME               Benchmark case / dataset id (e.g. V24sp-1).
+    --time-to-solution SEC    Solve time: MAPDL's Elapsed Time (sec), the model target.
+    --analysis-type T         static | modal | transient | thermal | harmonic.
+    --solver-type T           Solver family: sparse-direct-symmetric,
+                              sparse-direct-nonsymmetric, sparse-direct-complex,
+                              pcg-iterative or jcg-iterative.
+    --mdofs X                 Model size in millions of degrees of freedom.
+    --model-name NAME         Model description / name.
+    --num-gpus N              GPUs used (0 for CPU-only).
+    --release VER             Product release label (e.g. 2024 R2).
+    --core-solver-rating X    Mechanical core-solver rating.
+    --core-solver-speedup X   Core-solver speedup.
+    --core-solver-efficiency X Core-solver efficiency.
+    --metric NAME=VALUE       Any extra numeric performance metric (repeatable).
+    --char NAME=VALUE         Any extra dataset characteristic (repeatable).
+
+  Behavior:
+    --put                     Force the DynamoDB put-item (error out if it fails).
+                              With no AWS CLI on the PATH, keep the JSON and exit 0.
+    --no-put                  Never call AWS; only write the JSON file.
+    --dry-run                 Print the record to stdout; touch no file and no AWS.
+    --run-dir DIR             Dir to scan for the solver output when metrics aren't
+                              supplied (default: current dir). Lets a launch
+                              script call the recorder with no arguments.
+    --out DIR                 Directory for the saved JSON (default: current dir).
+    -h, --help                Show this help.
+EOF
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --source)                 SOURCE="$2"; shift 2;;
+        --table)                  TABLE="$2"; shift 2;;
+        --region)                 REGION="$2"; shift 2;;
+        --id)                     RECORD_ID="$2"; shift 2;;
+        --instance-type)          INSTANCE_TYPE="$2"; shift 2;;
+        --os)                     OPERATING_SYSTEM="$2"; shift 2;;
+        --num-cores)              NUM_CORES="$2"; shift 2;;
+        --num-nodes)              NUM_INSTANCES="$2"; shift 2;;
+        --cores-per-node)         CORES_PER_NODE="$2"; shift 2;;
+        --mpi)                    MPI_IMPLEMENTATION="$2"; shift 2;;
+        --version)                ENGINE_VERSION="$2"; shift 2;;
+        --case)                   BENCHMARK_CASE="$2"; shift 2;;
+        --time-to-solution)       TIME_TO_SOLUTION="$2"; shift 2;;
+        --analysis-type)          ANALYSIS_TYPE="$2"; shift 2;;
+        --solver-type)            SOLVER_TYPE="$2"; _solver_type_flag=1; shift 2;;
+        --mdofs)                  MDOFS="$2"; shift 2;;
+        --model-name)             MODEL_NAME="$2"; shift 2;;
+        --num-gpus)               NUM_GPUS="$2"; shift 2;;
+        --release)                RELEASE="$2"; shift 2;;
+        --core-solver-rating)     CORE_SOLVER_RATING="$2"; shift 2;;
+        --core-solver-speedup)    CORE_SOLVER_SPEEDUP="$2"; shift 2;;
+        --core-solver-efficiency) CORE_SOLVER_EFFICIENCY="$2"; shift 2;;
+        --metric)                 EXTRA_METRICS+=("$2"); shift 2;;
+        --char)                   EXTRA_CHARS+=("$2"); shift 2;;
+        --put)                    DO_PUT="yes"; shift;;
+        --no-put)                 DO_PUT="no"; shift;;
+        --dry-run)                DRY_RUN=1; shift;;
+        --run-dir)                RUN_DIR="$2"; shift 2;;
+        --out)                    OUTDIR="$2"; shift 2;;
+        -h|--help)                usage; exit 0;;
+        *) echo "ERROR: unknown option '$1' (try --help)" >&2; exit 2;;
+    esac
+done
+
+# imds <path>: the instance metadata's answer at <path> (IMDSv2), or nothing.
+# Each request gives up after 2 seconds (1 to connect), and an HTTP error, or an
+# answer cut off at that limit, gives nothing.
+imds() {
+    local path="$1" token answer
+    token=$(curl -fsS --connect-timeout 1 --max-time 2 -X PUT \
+        "http://169.254.169.254/latest/api/token" \
+        -H "X-aws-ec2-metadata-token-ttl-seconds: 60" 2>/dev/null) || return 0
+    answer=$(curl -fsS --connect-timeout 1 --max-time 2 -H "X-aws-ec2-metadata-token: $token" \
+        "http://169.254.169.254/latest/meta-data/${path}" 2>/dev/null) || return 0
+    printf '%s' "$answer"
+}
+# imds_instance_type: the instance type from the instance metadata, when the
+# answer is an instance type name (tested in the C locale: in some locales [a-z]
+# leaves out i). Anything else, a proxy's page for example, counts as none.
+imds_instance_type() {
+    local itype
+    itype="$(imds instance-type)"
+    if ( LC_ALL=C; [[ "$itype" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ); then printf '%s' "$itype"; fi
+}
+json_escape() { local s="${1//\\/\\\\}"; printf '%s' "${s//\"/\\\"}"; }
+is_number() { [[ "$1" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; }
+
+declare -a ITEM_LINES=()
+add_s() { [ -n "${2:-}" ] || return 0; ITEM_LINES+=("    \"$1\": {\"S\": \"$(json_escape "$2")\"}"); }
+add_n() {
+    [ -n "${2:-}" ] || return 0
+    if ! is_number "$2"; then echo "WARN: ignoring non-numeric value for '$1': '$2'" >&2; return 0; fi
+    ITEM_LINES+=("    \"$1\": {\"N\": \"$2\"}")
+}
+add_kv() {
+    local fn="$1" pair="$2" name="${2%%=*}" val="${2#*=}"
+    if [ "$pair" = "$name" ] || [ -z "$name" ]; then echo "WARN: ignoring malformed '$pair' (expected name=value)" >&2; return 0; fi
+    "$fn" "$name" "$val"
+}
+
+[ -n "$INSTANCE_TYPE" ]    || INSTANCE_TYPE="$(imds_instance_type)"
+[ -n "$NUM_CORES" ]        || NUM_CORES="${SLURM_NTASKS:-${SLURM_NPROCS:-}}"
+[ -n "$NUM_INSTANCES" ]    || NUM_INSTANCES="${SLURM_JOB_NUM_NODES:-}"
+if [ -z "$OPERATING_SYSTEM" ] && [ -r /etc/os-release ]; then
+    OPERATING_SYSTEM="$(. /etc/os-release 2>/dev/null && printf '%s' "${PRETTY_NAME:-}")"
+fi
+# --- cores_per_node: derive only when it is genuinely a single value -----------
+# NEVER invent a uniform per-node count for a layout that is not uniform. The old
+# rule (ceil(num_cores / num_nodes)) turned an 85-core / 2-node allocation into
+# "cores_per_node = 43", which is one node's share reported as though it applied to
+# both -- incorrect topology written straight into the benchmark dataset.
+#
+# Two no-derive conditions, so a wrong value cannot appear even if the caller
+# forgets to describe the layout:
+#   1. a task_placement characteristic was supplied  -> the real layout is on
+#      record, so any single number would contradict it;
+#   2. num_cores is not an exact multiple of num_nodes -> no single value exists.
+# An explicitly supplied --cores-per-node is always honoured.
+_has_task_placement=0
+for _pair in "${EXTRA_CHARS[@]:-}"; do
+    case "$_pair" in task_placement=*) _has_task_placement=1;; esac
+done
+
+if [ -z "$CORES_PER_NODE" ] && is_number "${NUM_CORES:-}" && is_number "${NUM_INSTANCES:-}" \
+        && [ "${NUM_INSTANCES:-0}" -gt 0 ] 2>/dev/null; then
+    if [ "$_has_task_placement" -eq 1 ]; then
+        echo "NOTE: task_placement supplied; not deriving cores_per_node (the layout is not a single value)." >&2
+    elif [ $(( NUM_CORES % NUM_INSTANCES )) -ne 0 ]; then
+        echo "WARN: ${NUM_CORES} cores over ${NUM_INSTANCES} node(s) is not uniform; omitting cores_per_node." >&2
+        echo "      Pass --char task_placement=<host:cores:...> to record the real layout." >&2
+    else
+        CORES_PER_NODE=$(( NUM_CORES / NUM_INSTANCES ))
+    fi
+fi
+
+# --- solver_type: one value per item ------------------------------------------
+# The family can come from --solver-type, from --char solver_type=..., or from
+# SOLVER_TYPE in the environment (how the sbatch passes it on). A value on the
+# command line beats the environment, as for every other field, and --solver-type
+# beats --char, so the item takes one source's value and a SOLVER_TYPE left in the
+# environment cannot replace the family a command line gives. A NOTE names a
+# --char set aside by --solver-type, or SOLVER_TYPE set aside by a --char.
+_char_solver_type=0
+for _pair in "${EXTRA_CHARS[@]:-}"; do
+    case "$_pair" in solver_type=*) _char_solver_type=1;; esac
+done
+if [ "$_char_solver_type" -eq 1 ] && [ -n "$SOLVER_TYPE" ]; then
+    if [ "$_solver_type_flag" -eq 1 ]; then
+        echo "NOTE: --solver-type given; ignoring --char solver_type." >&2
+    else
+        echo "NOTE: --char solver_type given; ignoring SOLVER_TYPE from the environment." >&2
+        SOLVER_TYPE=""
+    fi
+fi
+if [ -z "$MPI_IMPLEMENTATION" ] && command -v mpirun >/dev/null 2>&1; then
+    _mpiv="$(mpirun --version 2>&1)"
+    if   echo "$_mpiv" | grep -qi "Intel";    then MPI_IMPLEMENTATION="intelmpi"
+    elif echo "$_mpiv" | grep -qi "Open MPI"; then MPI_IMPLEMENTATION="openmpi"
+    fi
+fi
+MPI_VERSION="$(mpirun --version 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
+LIBFABRIC_VERSION="$(fi_info --version 2>/dev/null | awk '/libfabric:/ {print $2; exit}')"
+EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print $2; exit}')"
+
+# --- Timing validity ---------------------------------------------------------
+# time_to_solution_seconds is the model's target metric, so it must be a finite
+# POSITIVE number. This applies to an explicitly supplied value exactly as much
+# as to a derived one: recording 0 or -5 quietly poisons the training set.
+is_positive_number() { is_number "$1" && awk -v x="$1" 'BEGIN { exit !(x + 0 > 0) }'; }
+
+if [ -n "$TIME_TO_SOLUTION" ] && ! is_positive_number "$TIME_TO_SOLUTION"; then
+    echo "WARN: ignoring --time-to-solution '$TIME_TO_SOLUTION' (must be a number > 0)." >&2
+    TIME_TO_SOLUTION=""
+fi
+
+# --- Fallback: recover the solve time from the solver output -----------------
+# MAPDL writes an "Elapsed Time (sec) = <N>" line near the end of its output.
+# Launch scripts that already time the solve should export TIME_TO_SOLUTION
+# instead of relying on this.
+#
+# Timing is only derived from a solve this script can VERIFY completed, because
+# a truncated log still carries an intermediate elapsed value that looks
+# perfectly valid. The authoritative implementation of these rules is
+# ../lib/mapdl-verdict.sh (unit-tested in ../tests); the compact copy below
+# keeps this recorder self-contained, which is a deliberate property - it must
+# stay runnable as a single copied file.
+# The benign pattern is ANCHORED at both ends: a block that carries the expected
+# termination text PLUS another genuine failure must NOT count as benign.
+#
+# This MUST classify identically to ../lib/mapdl-verdict.sh, which is the
+# authoritative implementation -- if the two disagree, the same solver output is
+# accepted live and rejected on replay (or vice versa). Kept in step deliberately:
+# same whitespace normalisation (squeeze, then trim BOTH ends) and the same
+# literal-apostrophe possessive. The apostrophe arrives as an awk variable
+# because the program body is single-quoted here.
+mapdl_unexpected_error_blocks() {   # <file> -> count of non-benign error blocks
+    awk -v apos="'" '
+      function flush() {
+          if (inblk) {
+              gsub(/[[:space:]]+/, " ", buf)
+              sub(/^[[:space:]]+/, "", buf); sub(/[[:space:]]+$/, "", buf)
+              re = "^The number of (iterations|substeps) exceeds [0-9]+(\\. The run is terminated| and the run was terminated) at the user(" apos "|’)s request\\.?$"
+              if (buf !~ re) n++
+          }
+          inblk = 0; buf = ""
+      }
+      /\*\*\* ERROR \*\*\*/                   { flush(); inblk = 1; next }
+      inblk && /^[[:space:]]*$/               { flush(); next }
+      inblk && /\*\*\* (WARNING|NOTE) \*\*\*/ { flush(); next }
+      inblk && /^[[:space:]]*\*-|^[[:space:]]*\|-/ { flush(); next }
+      inblk                                   { buf = buf " " $0; next }
+      END { flush(); print n + 0 }
+    ' "$1" 2>/dev/null
+}
+
+if [ -z "$TIME_TO_SOLUTION" ]; then
+    # Include the launcher's own output-<jobid>.log naming, not just output.log.
+    _out=""
+    for _cand in "$RUN_DIR"/output.log "$RUN_DIR"/output-*.log "$RUN_DIR"/*.out; do
+        [ -r "$_cand" ] || continue
+        if [ -z "$_out" ] || [ "$_cand" -nt "$_out" ]; then _out="$_cand"; fi
+    done
+    if [ -n "$_out" ]; then
+        if ! grep -q 'RUN COMPLETED' "$_out" 2>/dev/null; then
+            echo "NOTE: '$_out' has no 'RUN COMPLETED' marker; not deriving a solve time from" >&2
+            echo "      an unverified run. Pass --time-to-solution explicitly if you trust it." >&2
+        elif [ "$(mapdl_unexpected_error_blocks "$_out")" -ne 0 ]; then
+            echo "NOTE: '$_out' contains unexpected MAPDL error block(s); not deriving a solve" >&2
+            echo "      time from a run that did not finish cleanly." >&2
+        else
+            # Take the number immediately AFTER the '='. MAPDL's summary line ends
+            # with a Date field (`... = 600.000   Date = 08/29/2026 |`), so taking
+            # the LAST number on the line records the YEAR as the solve time.
+            _mln="$(grep -hiE 'Elapsed [Tt]ime *\(sec\)' "$_out" 2>/dev/null | tail -1)"
+            if [ -n "$_mln" ]; then
+                TIME_TO_SOLUTION="$(printf '%s\n' "$_mln" \
+                    | sed -E 's/.*[Ee]lapsed [Tt]ime *\(sec\) *= *(-?[0-9]+(\.[0-9]+)?).*/\1/')"
+                if ! is_positive_number "${TIME_TO_SOLUTION:-}"; then
+                    echo "NOTE: '$_out' reports a non-positive elapsed time ('${TIME_TO_SOLUTION:-none}'); ignoring it." >&2
+                    TIME_TO_SOLUTION=""
+                else
+                    echo "NOTE: derived time_to_solution_seconds=${TIME_TO_SOLUTION} from ${_out} (verified complete)." >&2
+                fi
+            fi
+        fi
+    fi
+fi
+
+SOURCE="$(printf '%s' "$SOURCE" | tr -cd '[:alnum:]')"
+[ -n "$SOURCE" ] || SOURCE="Community"
+[ -n "$TABLE" ]  || TABLE="External_${SOURCE}_${APP_TABLE_SEGMENT}"
+
+errors=0
+require() { if [ -z "${2:-}" ]; then echo "ERROR: missing required field: $1" >&2; errors=1; fi; }
+require "instance_type (--instance-type)" "$INSTANCE_TYPE"
+require "operating_system (--os)"         "$OPERATING_SYSTEM"
+require "num_cores (--num-cores)"         "$NUM_CORES"
+require "num_instances (--num-nodes)"     "$NUM_INSTANCES"
+if [ -z "${MPI_IMPLEMENTATION}${MPI_VERSION}${LIBFABRIC_VERSION}${EFA_VERSION}${ENGINE_VERSION}" ]; then
+    echo "ERROR: cannot compose 'libraries' (provide at least --mpi or --version)" >&2; errors=1
+fi
+if [ "$errors" -ne 0 ]; then echo "Aborting: fill the missing field(s) above. See --help." >&2; exit 1; fi
+
+[ -n "$BENCHMARK_CASE" ]   || echo "NOTE: no --case given; the case/dataset name strongly improves model accuracy." >&2
+[ -n "$TIME_TO_SOLUTION" ] || echo "NOTE: no --time-to-solution given; this is the model's primary target metric." >&2
+[ -n "$MDOFS" ]            || echo "NOTE: no --mdofs given; model size (millions of DOFs) is a key driver of runtime." >&2
+
+RECORDED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+if [ -z "$RECORD_ID" ]; then
+    _jid="${SLURM_JOB_ID:-$RANDOM}"; _case="${BENCHMARK_CASE:-run}"
+    RECORD_ID="${APPLICATION}-${SOURCE}-${INSTANCE_TYPE:-na}-${NUM_CORES}c-${_case}-${RECORDED_AT//[:-]/}-${_jid}"
+fi
+
+declare -a LIBS=()
+[ -n "$MPI_IMPLEMENTATION" ] && LIBS+=("mpi:${MPI_IMPLEMENTATION}")
+[ -n "$MPI_VERSION" ]        && LIBS+=("mpi-version:${MPI_VERSION}")
+[ -n "$LIBFABRIC_VERSION" ]  && LIBS+=("libfabric:${LIBFABRIC_VERSION}")
+[ -n "$EFA_VERSION" ]        && LIBS+=("efa:${EFA_VERSION}")
+[ -n "$ENGINE_VERSION" ]     && LIBS+=("mechanical:${ENGINE_VERSION}")
+libraries_json=""
+for lib in "${LIBS[@]}"; do
+    frag="{\"S\": \"$(json_escape "$lib")\"}"
+    if [ -z "$libraries_json" ]; then libraries_json="$frag"; else libraries_json="$libraries_json, $frag"; fi
+done
+
+add_s "record_id"            "$RECORD_ID"
+add_s "application"          "$APPLICATION"
+add_s "benchmark_case"       "$BENCHMARK_CASE"
+add_s "instance_type"        "$INSTANCE_TYPE"
+add_s "operating_system"     "$OPERATING_SYSTEM"
+add_n "num_cores"            "$NUM_CORES"
+add_n "num_instances"        "$NUM_INSTANCES"
+add_n "cores_per_node"       "$CORES_PER_NODE"
+add_s "mpi_implementation"   "$MPI_IMPLEMENTATION"
+ITEM_LINES+=("    \"libraries\": {\"L\": [$libraries_json]}")
+add_n "time_to_solution_seconds" "$TIME_TO_SOLUTION"
+add_n "core_solver_rating"     "$CORE_SOLVER_RATING"
+add_n "core_solver_speedup"    "$CORE_SOLVER_SPEEDUP"
+add_n "core_solver_efficiency" "$CORE_SOLVER_EFFICIENCY"
+for pair in "${EXTRA_METRICS[@]:-}"; do [ -n "$pair" ] && add_kv add_n "$pair"; done
+add_s "analysis_type"        "$ANALYSIS_TYPE"
+add_s "solver_type"          "$SOLVER_TYPE"
+add_s "model_name"           "$MODEL_NAME"
+add_n "mdofs"                "$MDOFS"
+add_n "num_gpus"             "$NUM_GPUS"
+add_s "release"              "$RELEASE"
+for pair in "${EXTRA_CHARS[@]:-}"; do
+    [ -n "$pair" ] || continue
+    # One value per attribute: the solver_type chosen above is already in the item.
+    if [ -n "$SOLVER_TYPE" ] && [ "${pair%%=*}" = "solver_type" ]; then continue; fi
+    add_kv add_s "$pair"
+done
+add_s "mechanical_version"   "$ENGINE_VERSION"
+add_s "provenance_origin"    "external"
+add_s "provenance_source_id" "$SOURCE"
+add_s "recorded_at"          "$RECORDED_AT"
+
+ITEM_JSON="{"$'\n'
+for i in "${!ITEM_LINES[@]}"; do
+    ITEM_JSON+="${ITEM_LINES[$i]}"
+    [ "$i" -lt $(( ${#ITEM_LINES[@]} - 1 )) ] && ITEM_JSON+=","
+    ITEM_JSON+=$'\n'
+done
+ITEM_JSON+="}"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+    # Banner on stderr so stdout stays pure JSON and can be piped to jq/python.
+    echo "# DRY RUN — would write to table '${TABLE}' (region ${REGION}); no file, no AWS." >&2
+    echo "$ITEM_JSON"; exit 0
+fi
+
+mkdir -p "$OUTDIR"
+JSON_FILE="${OUTDIR}/$(printf '%s' "$RECORD_ID" | tr -cd '[:alnum:]._-').json"
+printf '%s\n' "$ITEM_JSON" > "$JSON_FILE"
+echo "Record written: ${JSON_FILE}"
+
+attempt_put=0
+case "$DO_PUT" in
+    yes) attempt_put=1;;
+    no)  attempt_put=0;;
+    auto) attempt_put=1;;
+esac
+if [ "$attempt_put" -eq 1 ]; then
+    if ! command -v aws >/dev/null 2>&1; then
+        echo "NOTE: AWS CLI not found; kept JSON only. To share it, attach ${JSON_FILE} to a Benchmark results issue:" >&2
+        echo "      https://github.com/aws-samples/hpc-applications/issues/new?template=benchmark-results.yml" >&2
+        echo "      The issue is public, and so are the JSON and its file's name: rename a confidential case in both first." >&2; exit 0
+    fi
+    # Test the command directly rather than a separate `$?` read, so the status
+    # cannot be clobbered by anything between the call and the check.
+    if put_err="$( aws dynamodb put-item --region "$REGION" --table-name "$TABLE" \
+                       --item "file://${JSON_FILE}" 2>&1 )"; then
+        echo "Stored in DynamoDB: table=${TABLE} record_id=${RECORD_ID}"
+    else
+        if [ "$DO_PUT" = "yes" ]; then echo "ERROR: put-item failed: ${put_err}" >&2; exit 1; fi
+        echo "NOTE: could not write to DynamoDB (expected without write access to the owner's account)." >&2
+        echo "      Your result is saved at ${JSON_FILE}. To share it, attach it to a Benchmark results issue:" >&2
+        echo "      https://github.com/aws-samples/hpc-applications/issues/new?template=benchmark-results.yml" >&2
+        echo "      The issue is public, and so are the JSON and its file's name: rename a confidential case in both first." >&2
+    fi
+else
+    echo "Skipped DynamoDB write (--no-put). JSON saved at ${JSON_FILE}."
+fi
+exit 0

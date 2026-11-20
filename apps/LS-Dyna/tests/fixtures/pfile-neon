@@ -1,0 +1,5 @@
+general { nodump }
+decomp { silist 1 sy 200.0 }
+dir { global  tempdir local /tmp/tempdir }
+
+

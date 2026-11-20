@@ -6,15 +6,18 @@
 #SBATCH --gpus-per-node=8
 #SBATCH --ntasks-per-node=8
 #SBATCH --output=/fsx/HPL-Run/gpu/hpl-gpu-%j.out
-#SBATCH --container-mounts=/fsx:/fsx,/opt/slurm:/opt/slurm,/etc/munge:/etc/munge,/run/munge:/run/munge,/var/spool/slurmd:/var/spool/slurmd
+#SBATCH --container-mounts=/fsx:/fsx
 
 #############################################################
-# GPU HPL — runs entirely inside the NGC container
+# GPU HPL — single node, runs entirely inside the NGC container
 #
 # Usage:
-#   sbatch --container-image='nvcr.io#nvidia/hpc-benchmarks:25.02' hpl_gpu_container.sbatch
-#   sbatch --container-image='nvcr.io#nvidia/hpc-benchmarks:25.02' -p p5 hpl_gpu_container.sbatch
-#   HPL_RUN_MXP=1 sbatch --container-image='nvcr.io#nvidia/hpc-benchmarks:25.02' hpl_gpu_container.sbatch
+#   sbatch --container-image='nvcr.io#nvidia/hpc-benchmarks:26.02.01' hpl_gpu_container.sbatch
+#   sbatch --container-image='nvcr.io#nvidia/hpc-benchmarks:26.02.01' -p p5 hpl_gpu_container.sbatch
+#   HPL_RUN_MXP=1 sbatch --container-image='nvcr.io#nvidia/hpc-benchmarks:26.02.01' hpl_gpu_container.sbatch
+#
+# For multi-node runs over EFA use hpl_gpu.sbatch, which launches
+# one containerised rank per GPU on every node with srun.
 #############################################################
 
 : "${HPL_NB:=1024}"
@@ -29,7 +32,11 @@ GPU_MEM_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits |
 NUM_CORES=$(nproc)
 CORES_PER_GPU=$((NUM_CORES / NUM_GPUS))
 NUM_NODES=${SLURM_JOB_NUM_NODES:-1}
-TOTAL_GPUS=$((NUM_GPUS * NUM_NODES))
+if [ "$NUM_NODES" -gt 1 ]; then
+    echo "ERROR: hpl_gpu_container.sbatch runs on a single node; use hpl_gpu.sbatch for multi-node runs." >&2
+    exit 1
+fi
+TOTAL_GPUS=${NUM_GPUS}
 
 echo "============================================"
 echo "HPL GPU | Job ${SLURM_JOB_ID}"
@@ -65,15 +72,11 @@ cd "$WORK_DIR"
 NB=${HPL_NB}
 N=$(awk "BEGIN{n=int(sqrt(${HPL_MEM_FRACTION} * ${TOTAL_GPUS} * ${GPU_MEM_MB} * 1024 * 1024 / 8) / ${NB}) * ${NB}; print n}")
 
-# Process grid: P x Q = TOTAL_GPUS
-if [ "$NUM_NODES" -eq 1 ]; then
-    P=1; Q=${TOTAL_GPUS}
-else
-    P=${NUM_NODES}; Q=${NUM_GPUS}
-fi
+# Process grid: P=1, Q=GPUs (1D over NVSwitch)
+P=1; Q=${TOTAL_GPUS}
 
 echo ""
-echo "=== HPL FP64: N=${N} NB=${NB} P=${P} Q=${Q} (${NUM_NODES} nodes) ==="
+echo "=== HPL FP64: N=${N} NB=${NB} P=${P} Q=${Q} ==="
 
 cat > HPL.dat <<EOF
 HPLinpack benchmark input file
@@ -112,45 +115,19 @@ EOF
 export HPL_ALLOC_HUGEPAGES=1
 export HPL_CHUNK_SIZE_NBS=64 HPL_CTA_PER_FCT=32
 export HPL_DIST_TRSM_FLAG=1 HPL_CUSOLVER_MP_TESTS=0 WARMUP_END_PROG=5
-export PATH=/opt/slurm/bin:$PATH
+export HPL_USE_NVSHMEM=1 HPL_P2P_AS_BCAST=1 HPL_NVSHMEM_SWAP=1
+export HPL_FCT_COMM_POLICY=0
 
-if [ "$NUM_NODES" -eq 1 ]; then
-    export HPL_USE_NVSHMEM=1 HPL_P2P_AS_BCAST=1 HPL_NVSHMEM_SWAP=1
-    export HPL_FCT_COMM_POLICY=0
-else
-    # Multi-node: NVSHMEM over EFA via libfabric transport
-    export HPL_USE_NVSHMEM=1 HPL_P2P_AS_BCAST=1 HPL_NVSHMEM_SWAP=1
-    export HPL_FCT_COMM_POLICY=0
-    export NVSHMEM_REMOTE_TRANSPORT=libfabric
-    export FI_PROVIDER=efa
-    export FI_EFA_USE_DEVICE_RDMA=1
-    export NVSHMEM_LIBFABRIC_MAX_NIC_PER_PE=4
-fi
-
-if [ "$NUM_NODES" -eq 1 ]; then
-    # Single-node: use mpirun inside the container
-    mpirun --allow-run-as-root -np ${TOTAL_GPUS} --bind-to none --oversubscribe \
-        -x HPL_USE_NVSHMEM -x HPL_P2P_AS_BCAST -x HPL_NVSHMEM_SWAP \
-        -x HPL_FCT_COMM_POLICY -x HPL_ALLOC_HUGEPAGES -x HPL_CHUNK_SIZE_NBS \
-        -x HPL_CTA_PER_FCT -x HPL_DIST_TRSM_FLAG -x HPL_CUSOLVER_MP_TESTS \
-        -x WARMUP_END_PROG \
-        /workspace/hpl.sh --dat ${WORK_DIR}/HPL.dat \
-            --cpu-affinity "${CPU_AFF}" --mem-affinity "${MEM_AFF}" \
-            --no-multinode \
-        2>&1 | tee hpl-fp64.log
-else
-    # Multi-node: srun launches containers on each node
-    # Mount host EFA 1.47.0 stack (libfabric 2.4.0, rdma-core 61.0, OpenMPI, OFI-NCCL)
-    # Mount patched NVSHMEM with EFA libfabric transport
-    srun --mpi=pmix --ntasks-per-node=${NUM_GPUS} \
-        --export=ALL,NVSHMEM_REMOTE_TRANSPORT=libfabric,FI_PROVIDER=efa,FI_EFA_USE_DEVICE_RDMA=1,NVSHMEM_LIBFABRIC_MAX_NIC_PER_PE=4 \
-        --container-image="nvcr.io#nvidia/hpc-benchmarks:25.02" \
-        --container-mounts="${WORK_DIR}:${WORK_DIR},/fsx:/fsx,/opt/amazon/efa:/opt/amazon/efa,/opt/amazon/openmpi:/opt/amazon/openmpi,/opt/amazon/ofi-nccl:/opt/amazon/ofi-nccl,/opt/amazon/pmix:/opt/amazon/pmix,/fsx/host-efa-lib:/host-efa-lib,/fsx/nvshmem-efa/lib:/patched-nvshmem" \
-        --container-env=LD_LIBRARY_PATH=/patched-nvshmem:/host-efa-lib:/opt/amazon/efa/lib64:/opt/amazon/openmpi/lib64:/opt/amazon/ofi-nccl/lib64:/opt/amazon/pmix/lib:\$LD_LIBRARY_PATH \
-        /workspace/hpl.sh --dat ${WORK_DIR}/HPL.dat \
-            --cpu-affinity "${CPU_AFF}" --mem-affinity "${MEM_AFF}" \
-        2>&1 | tee hpl-fp64.log
-fi
+# Single node: mpirun inside the container
+mpirun --allow-run-as-root -np ${TOTAL_GPUS} --bind-to none --oversubscribe \
+    -x HPL_USE_NVSHMEM -x HPL_P2P_AS_BCAST -x HPL_NVSHMEM_SWAP \
+    -x HPL_FCT_COMM_POLICY -x HPL_ALLOC_HUGEPAGES -x HPL_CHUNK_SIZE_NBS \
+    -x HPL_CTA_PER_FCT -x HPL_DIST_TRSM_FLAG -x HPL_CUSOLVER_MP_TESTS \
+    -x WARMUP_END_PROG \
+    /workspace/hpl.sh --dat ${WORK_DIR}/HPL.dat \
+        --cpu-affinity "${CPU_AFF}" --mem-affinity "${MEM_AFF}" \
+        --no-multinode \
+    2>&1 | tee hpl-fp64.log
 
 ############################################################
 # HPL-MxP (optional)

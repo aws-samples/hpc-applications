@@ -7,7 +7,9 @@ The shell scripts under apps/LAMMPS/ contain pure-function logic
 (env-script string generation, install-path construction, log-line
 parsing, command-line generation, DynamoDB JSON construction). We
 re-implement the same logic in Python below and exercise it with
-Hypothesis-generated inputs to verify the properties hold.
+Hypothesis-generated inputs to verify the properties hold. Property 8
+runs the benchmark scripts' own set_run_length (the deck's run line)
+under bash instead.
 
 Run with:
     python -m pip install -r tests/requirements.txt
@@ -18,8 +20,13 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 from textwrap import dedent
 
+import pytest
 from hypothesis import given, settings, strategies as st
 
 
@@ -101,7 +108,7 @@ def lmp_var_args(scale: int, timesteps: int) -> list[str]:
         "-var", "x", str(scale),
         "-var", "y", str(scale),
         "-var", "z", str(scale),
-        "-var", "t", str(timesteps),
+        "-var", "nsteps", str(timesteps),
     ]
 
 
@@ -250,8 +257,8 @@ def test_loop_time_parser_rejects_non_matches(garbage):
 def test_workdir_uniqueness_for_distinct_inputs(a, b):
     if a == b:
         return  # equal inputs are allowed to yield equal paths
-    pa = workdir("/fsx/lammps", "lammps", "lj", "hpc-4", *a)
-    pb = workdir("/fsx/lammps", "lammps", "lj", "hpc-4", *b)
+    pa = workdir("/fsx/lammps", "lammps", "lj", "cluster", *a)
+    pb = workdir("/fsx/lammps", "lammps", "lj", "cluster", *b)
     assert pa != pb
 
 
@@ -264,11 +271,11 @@ def test_workdir_uniqueness_for_distinct_inputs(a, b):
        timesteps=st.integers(min_value=1, max_value=10**6))
 def test_scale_emits_xyz_vars(scale, timesteps):
     args = lmp_var_args(scale, timesteps)
-    # -var x SCALE -var y SCALE -var z SCALE -var t TIMESTEPS
+    # -var x SCALE -var y SCALE -var z SCALE -var nsteps TIMESTEPS
     assert args[:3] == ["-var", "x", str(scale)]
     assert args[3:6] == ["-var", "y", str(scale)]
     assert args[6:9] == ["-var", "z", str(scale)]
-    assert args[9:] == ["-var", "t", str(timesteps)]
+    assert args[9:] == ["-var", "nsteps", str(timesteps)]
 
 
 # ---------------------------------------------------------------------------
@@ -364,3 +371,125 @@ def test_dynamo_record_schema(job_id, model, scale, nodes, rpn, threads,
 
     # The whole record must be JSON-serialisable (DynamoDB ingests via JSON)
     json.dumps(rec)
+
+
+# ---------------------------------------------------------------------------
+# Property 8 — Run length: the benchmark scripts' own set_run_length
+# ---------------------------------------------------------------------------
+# The bench/ decks end with "run 100" and read no step-count variable. Both
+# benchmark scripts copy the deck into the run directory with that line made
+# "run ${nsteps}" (set_run_length) and pass -var nsteps. These properties run
+# the function as written in each script, under bash.
+
+REPO = Path(__file__).resolve().parents[1]
+BENCHMARK_SCRIPTS = [
+    REPO / "apps" / "LAMMPS" / "x86" / "lammps-benchmark.sbatch",
+    REPO / "apps" / "LAMMPS" / "Arm" / "lammps-benchmark.sbatch",
+]
+# MODEL: (deck, default SCALE, default TIMESTEPS), as apps/LAMMPS/README.md lists them
+MODEL_DEFAULTS = {
+    "lj": ("in.lj", "8", "15000"),
+    "rhodo": ("in.rhodo", "1", "6000"),
+    "rhodo_scaled": ("in.rhodo.scaled", "4", "6000"),
+    "eam": ("in.eam", "4", "30000"),
+}
+
+
+def _has_gnu_sed() -> bool:
+    """set_run_length edits the deck with GNU sed's `sed -i -E`; BSD sed (macOS) reads -i's next word as a suffix."""
+    if shutil.which("sed") is None:
+        return False
+    proc = subprocess.run(["sed", "--version"], capture_output=True, text=True, check=False)
+    return proc.returncode == 0 and "GNU sed" in proc.stdout
+
+
+needs_bash_and_gnu_sed = pytest.mark.skipif(
+    shutil.which("bash") is None or not _has_gnu_sed(),
+    reason="runs the benchmark scripts' set_run_length, which needs bash and GNU sed",
+)
+
+
+def script_function(path: Path, name: str) -> str:
+    """The text of a top-level shell function of a script."""
+    match = re.search(rf"^{name}\(\) \{{\n.*?^\}}\n", path.read_text(), re.M | re.S)
+    assert match, f"{name}() not found in {path}"
+    return match.group(0)
+
+
+def run_set_run_length(script: Path, deck_text: str) -> tuple[int, str, str]:
+    """Run the script's set_run_length on a deck; return (exit code, deck after, stderr)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        deck = Path(tmp) / "in.deck"
+        deck.write_text(deck_text)
+        proc = subprocess.run(
+            ["bash", "-c", script_function(script, "set_run_length") + 'set_run_length "$1"',
+             "bash", str(deck)],
+            capture_output=True, text=True, check=False,
+        )
+        return proc.returncode, deck.read_text(), proc.stderr
+
+
+# Deck lines that are not run commands, the tricky ones included: a comment
+# that mentions run, rerun, run_style.
+other_lines = st.lists(st.sampled_from([
+    "units           lj", "variable        x index 1", "atom_style      atomic",
+    "region          box block 0 ${xx} 0 ${yy} 0 ${zz}", "thermo          50",
+    "fix             1 all nve", "", "# run 100", "   # run 5 more steps",
+    "rerun           dump.lammpstrj dump x y z", "run_style       verlet",
+    "minimize        1.0e-4 1.0e-6 100 1000",
+]), max_size=8)
+blanks = st.text(alphabet=" \t", max_size=3)
+gaps = st.text(alphabet=" \t", min_size=1, max_size=3)
+
+
+@needs_bash_and_gnu_sed
+@given(before=other_lines, after=other_lines, lead=blanks, gap=gaps, trail=blanks,
+       steps=st.integers(min_value=0, max_value=10**9))
+def test_set_run_length_replaces_the_one_plain_run_line(before, after, lead, gap, trail, steps):
+    run_line = f"{lead}run{gap}{steps}{trail}"
+    deck = "\n".join([*before, run_line, *after]) + "\n"
+    want = "\n".join([*before, f"{lead}run{gap}" + "${nsteps}" + trail, *after]) + "\n"
+    for script in BENCHMARK_SCRIPTS:
+        rc, got, _ = run_set_run_length(script, deck)
+        assert rc == 0, script
+        assert got == want, script
+
+
+@needs_bash_and_gnu_sed
+@given(lines=other_lines,
+       runs=st.lists(st.sampled_from([
+           "run 100", "run             100", "run 100 post no", "run 100 upto",
+           "run 1000 every 100 NULL", "run ${t}", "run $t", "run v_n", "run 1e3", "run 100.0",
+           "run ${nsteps}",
+       ]), max_size=3),
+       position=st.integers(min_value=0, max_value=8))
+def test_set_run_length_refuses_any_other_deck(lines, runs, position):
+    plain = [r for r in runs if re.fullmatch(r"run\s+\d+", r)]
+    if len(runs) == 1 and plain:
+        return  # one plain run line: the deck the previous property covers
+    deck_lines = list(lines)
+    for r in runs:
+        deck_lines.insert(min(position, len(deck_lines)), r)
+    deck = "\n".join(deck_lines) + "\n"
+    # The refusal says why: how many run lines there are, or which one is not plain.
+    why = f"its run line is '{runs[0]}'" if len(runs) == 1 else f"has {len(runs)} run lines"
+    for script in BENCHMARK_SCRIPTS:
+        rc, got, err = run_set_run_length(script, deck)
+        assert rc != 0, script
+        assert got == deck, script  # left as it was
+        assert why in err, (script, err)
+
+
+def test_both_scripts_set_the_run_length_and_defaults_alike():
+    functions = {script_function(s, "set_run_length") for s in BENCHMARK_SCRIPTS}
+    assert len(functions) == 1, "x86 and Arm set_run_length differ"
+    for script in BENCHMARK_SCRIPTS:
+        text = script.read_text()
+        assert '-var nsteps "${TIMESTEPS}"' in text, script
+        assert "-var t " not in text, script
+        branches = dict(re.findall(r"^    (\w+)\)\n(.*?)^        ;;", text, re.M | re.S))
+        for model, (deck, scale, steps) in MODEL_DEFAULTS.items():
+            body = branches[model]
+            assert f'DECK_FILE="{deck}"' in body, (script, model)
+            assert f"DEFAULT_SCALE={scale}\n" in body, (script, model)
+            assert f"DEFAULT_TIMESTEPS={steps}\n" in body, (script, model)

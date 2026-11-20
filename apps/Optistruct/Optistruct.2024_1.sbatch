@@ -17,13 +17,22 @@ module load libfabric-aws
 export I_MPI_DEBUG=5
 
 OPTISTRUCT_VER="2024.1"
-INPUT_FILE=${2:-"/path/to/Engine_Assy.fem"}
+INPUT_FILE=${2:-"/path/to/model.fem"}
 export ALTAIR_HOME="/fsx/Altair"
 export RADFLEX_PATH="${ALTAIR_HOME}/${OPTISTRUCT_VER}/altair/hwsolvers/common/bin/linux64"
 export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:${RADFLEX_PATH}
 
-export TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-instanceType=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type)
+# The instance type, from the instance metadata (IMDSv2), for the run
+# directory's name only. Each request gives up after 5 seconds (2 to connect),
+# and -f turns an HTTP error into no answer. An answer cut off at that limit,
+# or one that is not an instance type name (tested in the C locale: in some
+# locales [a-z] leaves out i), a proxy's page for example, counts as none, so
+# it never names the run directory; the name then has no instance type, and
+# the job goes on.
+TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") || TOKEN=""
+export TOKEN
+instanceType=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-type) || instanceType=""
+( LC_ALL=C; [[ "${instanceType}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || instanceType=""
 
 export ALM_HHWU=T
 export ALM_HHWU_TOKEN=$(aws secretsmanager get-secret-value --secret-id arn:xxx --query SecretString --output text --region xxx)
@@ -61,4 +70,35 @@ scontrol show nodes $SLURM_NODELIST | grep NodeHostName= | awk '{print $2}' | se
 mpirun -n $SLURM_JOB_NUM_NODES --map-by ppr:1:node /bin/bash -c "sync && echo 3 | sudo tee /proc/sys/vm/drop_caches"
 mpirun -n $SLURM_JOB_NUM_NODES --map-by ppr:1:node /bin/bash -c "echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled"
 
+_rec_t0="$(date +%s)"
 "${ALTAIR_HOME}/${OPTISTRUCT_VER}/altair/scripts/optistruct" ${INPUT_FILE} -mpipath /opt/intel/mpi/2021.13/bin -mpi i -ddm -np $MPI_PROC -nt ${NTHREADS} -hostfile hostfile -core in -tmpdir "${SCRATCH_DIR}" -out -outfile output.txt
+
+# ---------------------------------------------------------------------------
+# Record this benchmark to the AI-Powered HPC dataset (best-effort, non-fatal).
+# The recorder self-collects host details from the environment; this launch
+# script times the solve (wall clock) and passes it, so no arguments are
+# needed. Only a SUCCESSFUL solve is recorded, and the job's exit status is
+# preserved (a recorder problem never changes it). Point DYNAMODB_RECORDER at
+# the script if it isn't found automatically; set SOURCE=<YourOrg> to tag your
+# contributions. See apps/Optistruct/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
+# ---------------------------------------------------------------------------
+_rec_rc=$?
+_rec_secs=$(( $(date +%s) - ${_rec_t0:-$(date +%s)} ))
+[ "${_rec_secs}" -gt 0 ] 2>/dev/null || _rec_secs=""
+_recorder="${DYNAMODB_RECORDER:-}"
+for _c in "${_recorder}" \
+          "${SLURM_SUBMIT_DIR:-.}/dynamodb/record-benchmark.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
+          "${SLURM_SUBMIT_DIR:-.}/apps/Optistruct/dynamodb/record-benchmark.sh"; do
+    if [ -n "${_c}" ] && [ -x "${_c}" ]; then _recorder="${_c}"; break; fi
+done
+if [ "${_rec_rc}" -eq 0 ] && [ -n "${_recorder}" ] && [ -x "${_recorder}" ]; then
+    OPTISTRUCT_VERSION="${OPTISTRUCT_VER}" BENCHMARK_CASE="$(basename "${INPUT_FILE%.*}")" \
+    TIME_TO_SOLUTION="${_rec_secs}" RUN_DIR="${workdir}" "${_recorder}" \
+        || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
+elif [ "${_rec_rc}" -ne 0 ]; then
+    echo "NOTE: solver exited ${_rec_rc}; skipping benchmark recording." >&2
+else
+    echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2
+fi
+exit ${_rec_rc}

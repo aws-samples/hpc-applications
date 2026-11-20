@@ -28,7 +28,18 @@ if [ -z "$libfabric_version" ] ; then
 fi
 
 execDate=$(date -Is)
-region=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)
+# The availability zone, from the instance metadata (IMDSv2), for the record's
+# aws_region. The script asks for its own token (in its own variable, so a
+# caller's TOKEN is left as it is): a TOKEN from the job may be missing, or
+# expired after a long run. Each request gives up after 5 seconds (2 to
+# connect), and -f turns an HTTP error into no answer. An answer cut off at
+# that limit, or one that is not a zone name (two lowercase letters, then
+# hyphen-separated lowercase letters and digits, tested in the C locale: in
+# some locales [a-z] leaves out i), a proxy's page for example, counts as none:
+# aws_region is then empty, and the record keeps valid JSON.
+imds_token=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") || imds_token=""
+region=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: ${imds_token}" http://169.254.169.254/latest/meta-data/placement/availability-zone) || region=""
+( LC_ALL=C; [[ "${region}" =~ ^[a-z]{2}(-[a-z0-9]+)+$ ]] ) || region=""
 
 # Detect cluster platform: ParallelCluster or PCS
 if [ -f /opt/parallelcluster/.bootstrapped ]; then

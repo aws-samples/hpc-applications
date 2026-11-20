@@ -1,0 +1,48 @@
+Transcript Start Time:  12:00:00, 26 Oct 2026
+-------------------------------------------------------------------------------
+ID         Hostname  Core     O.S.      PID          CPU Model Name
+-------------------------------------------------------------------------------
+n192-383   node2     192/192  Linux-64  2000-2191    synthetic
+n0-191     node1     192/192  Linux-64  1000-1191    synthetic
+host       node1              Linux-64  999          synthetic
+MPI Option Selected: intel
+Selected system interconnect: AWS EFA
+-------------------------------------------------------------------------------
+  Average wall-clock time per case input:       2.345 sec
+Cell count = 15000000
+  Average wall-clock time per data input:       0.678 sec
+  (rp-unsteady?) #t
+> ;; warm up
+ (if (rp-unsteady?)
+ (benchmark '(ti-menu-load-string (string-append "sol dti "  (getenv "FLUENT_BENCH_ITERATIONS_WARMUP") " ,")))
+(benchmark '(ti-menu-load-string (string-append "it " (getenv "FLUENT_BENCH_ITERATIONS_WARMUP"))))
+)
+sol dti 10 ,
+Updating solution at time levels N and N-1.
+Flow time = 0.0010s, time step = 101
+9 more time steps
+> /para time reset
+> (set! solve-time/n-iter (%iterate 0))
+solve-time/n-iter
+> ;; benchmark
+ (if (rp-unsteady?)
+ (benchmark '(ti-menu-load-string (string-append "sol dti "  (getenv "FLUENT_BENCH_ITERATIONS") " ,")))
+(benchmark '(ti-menu-load-string (string-append "it " (getenv "FLUENT_BENCH_ITERATIONS"))))
+)
+sol dti 25 ,
+Updating solution at time levels N and N-1.
+Flow time = 0.0011s, time step = 111
+24 more time steps
+> (format #t "~%~%Solve Times")
+Solve Times
+> 	  (format #t   "~%Number of Iterations                  = ~8d iter"
+		  solve-time/n-iter)
+Number of Iterations                  =      250 iter
+>       (format #t   "~%Million Cell Iteration Per CPU Second  = ~8.2f MIUPS"
+		  (* (/ number-of-cells 1000000.0) (/ solve-time/n-iter (/ solve-time/cpu (compute-node-count)))))
+Million Cell Iteration Per CPU Second  =    23.40 MIUPS
+>       (format #t   "~%Million Cell Iteration Per Wall Second = ~8.2f MIUPS"
+		  (* (/ number-of-cells 1000000.0) (/ solve-time/n-iter solve-time/wall )))
+Million Cell Iteration Per Wall Second =    23.45 MIUPS
+> exit yes
+Transcript Stop Time:  12:02:00, 26 Oct 2026

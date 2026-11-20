@@ -1,0 +1,330 @@
+# Contributing Benchmark Results — DynamoDB Recorders
+
+Each application ships a small, self-contained recorder at:
+
+```
+apps/<App>/dynamodb/record-benchmark.sh
+```
+
+It captures **one** benchmark run and stores it, in a canonical schema, into the
+shared **AI-Powered HPC** benchmark dataset (Amazon DynamoDB). That dataset is
+used to train a model that predicts HPC application performance on AWS and
+recommends optimal cluster configurations. Contributing your own results
+enriches the dataset and improves those predictions.
+
+Recorders are available for: **Fluent, OpenFOAM, ANSYS Mechanical, CFX, LS-DYNA,
+OptiStruct, STAR-CCM+, WRF, GROMACS, OpenRadioss, LAMMPS**.
+
+> **Exception: Quantum ESPRESSO.** `apps/QuantumEspresso` does not ship a
+> recorder yet, and its launch scripts therefore do not call one. QE runs
+> contribute nothing to the dataset until that is added. See
+> [`apps/QuantumEspresso/README.md`](QuantumEspresso/README.md).
+
+---
+
+## Design principles
+
+- **Self-contained.** One file, no dependencies on anything else in this repo.
+  Copy (or `curl`) just the script for your application and run it.
+- **Safe by default.**
+  - It **always** writes the record as a local JSON file you can inspect/keep.
+  - It only calls `aws dynamodb put-item` when AWS write access is available (or
+    you pass `--put`). With no credentials it just saves the JSON and tells you
+    where it is — nothing fails.
+  - `--dry-run` prints the record to stdout and touches neither disk nor AWS.
+- **Auto-detecting.** On a SLURM/EC2 node it fills in instance type, OS, core
+  count, node count, MPI, libfabric and EFA versions for you, so you pass as
+  little as possible.
+- **Attributed.** Every row is tagged with your source as external provenance.
+
+## Requirements
+
+- `bash` and `curl` (`curl` is only used for EC2 metadata auto-detection).
+- AWS CLI v2 — **only** if you intend to write straight to DynamoDB (`--put`).
+
+---
+
+## Quick start
+
+On a SLURM compute node, right after your solve (instance/OS/cores/nodes/MPI are
+auto-detected):
+
+```bash
+apps/Fluent/dynamodb/record-benchmark.sh \
+    --case f1_racecar_140m --num-cells-million 140 \
+    --time-per-iteration 0.42 --num-iterations 25 \
+    --source AcmeCorp
+```
+
+Off-cluster, or replaying a saved result — pass everything explicitly and
+preview it first with `--dry-run`:
+
+```bash
+apps/Gromacs/dynamodb/record-benchmark.sh \
+    --case benchPEP-h --atoms-million 12 --ns-per-day 42.5 --time-to-solution 600 \
+    --instance-type hpc7a.96xlarge --os "Amazon Linux 2" \
+    --num-cores 192 --num-nodes 1 --mpi openmpi-4 --version 2024.1 \
+    --source AcmeCorp --dry-run
+```
+
+Always check the authoritative option list for your app:
+
+```bash
+apps/<App>/dynamodb/record-benchmark.sh --help
+```
+
+---
+
+## Parameters
+
+### Common to every application
+
+**Identity / destination**
+| Flag | Meaning |
+|------|---------|
+| `--source LABEL` | Your org/handle (default `Community`). Becomes the table suffix `External_<LABEL>_<App>` and the row's provenance. Letters/digits only. |
+| `--table NAME` | Override the destination table name entirely. |
+| `--region REGION` | AWS region of the table (default `us-east-1`). |
+| `--id ID` | Record id (the table key). Auto-generated if omitted. |
+
+**Core run configuration** — auto-detected on SLURM/EC2 when omitted:
+| Flag | Meaning |
+|------|---------|
+| `--instance-type TYPE` | EC2 instance type (e.g. `hpc7a.96xlarge`). |
+| `--os NAME` | Operating system (e.g. `"Amazon Linux 2"`). |
+| `--num-cores N` | Total cores / MPI ranks used. |
+| `--num-nodes N` | Number of instances / nodes. |
+| `--cores-per-node N` | Cores per node (derived from the two above if omitted). |
+| `--mpi NAME` | MPI implementation (e.g. `openmpi-4`, `intelmpi`). |
+| `--version VER` | Application version (e.g. `2024R2`, `v2512`, `2024.1`). |
+
+**Result + dataset description** — recommended; this is what makes a row useful
+for training:
+| Flag | Meaning |
+|------|---------|
+| `--case NAME` | Benchmark case / dataset id (e.g. `f1_racecar_140m`, `CONUS-2.5km`). |
+| `--time-to-solution SEC` | Total solver wall-clock seconds — the model's primary target. |
+| *(app-specific size/rate metrics)* | See the per-app table below. |
+
+**Extensible** — capture anything not covered by a dedicated flag:
+| Flag | Meaning |
+|------|---------|
+| `--metric NAME=VALUE` | Any extra **numeric** performance metric (repeatable). |
+| `--char NAME=VALUE` | Any extra **string** dataset characteristic (repeatable). |
+
+**Behavior**
+| Flag | Meaning |
+|------|---------|
+| `--put` | Force the DynamoDB write (error out if it fails). With no AWS CLI on the `PATH` it writes no row: it keeps the JSON, prints a `NOTE:` that says how to share it, and exits 0. |
+| `--no-put` | Never call AWS; only write the JSON file. |
+| `--dry-run` | Print the record; touch no file and no AWS. |
+| `--run-dir DIR` | Directory scanned for the solver log, to recover the metrics no flag or variable gave (default: current dir). |
+| `--out DIR` | Directory for the saved JSON (default: current dir). |
+| `-h`, `--help` | Full option list (authoritative for that app). |
+
+### Required fields
+
+The model rejects a row that is missing any of:
+`instance_type`, `operating_system`, `num_cores`, `num_instances`, `libraries`.
+
+On a cluster these are auto-detected. The instance type comes from the EC2
+instance metadata: each request gives up after 2 seconds, and an answer that is
+not an instance type name counts as none, so where the metadata gives none, pass
+`--instance-type`. Off-cluster, pass `--instance-type`, `--os`, `--num-cores`,
+`--num-nodes`, and at least one of `--mpi` / `--version` (so the `libraries`
+list can be composed).
+
+### App-specific result & size fields
+
+| App | Discipline | Key result metric(s) | Size metric | Notable extra characteristics |
+|-----|-----------|----------------------|-------------|-------------------------------|
+| **Fluent** | CFD | `--time-to-solution` **or** `--time-per-iteration` + `--num-iterations`; `--solver-rating`, `--solver-speed` (classic `fluentbench.pl`); `--miups` (the 2026 R1 harness; the recorder derives the time per iteration from it and the mesh's cell count, the transcript's `Cell count = N`, recorded as `mesh_cells`, or else from `--num-cells-million`) | `--num-cells-million` | `--case`, `--turbulence-model`, `--solver-type`, `--analysis-type`, `--cell-type`; `x86/Fluent-Benchmark.2026R1.sbatch` also passes `--char warmup_iterations=<N>` (the `WARMUP_ITERATIONS` setting, which the 2026 R1 harness runs twice) and `--char timed_iterations=<N>` (the iterations the harness timed: for a transient case, every iteration of its timed time steps) |
+| **OpenFOAM** | CFD | `--time-to-solution`; `--metric num_iterations=<N>` (the SIMPLE iterations run, the case's `endTime`) | `--mesh-cells-million` | `--solver` (e.g. `simpleFoam`), `--turbulence-model`, `--solver-type`, `--analysis-type` |
+| **GROMACS** | MD | `--time-to-solution`, `--ns-per-day` | `--atoms-million` | `--analysis-type` (NVE/NVT/NPT); the CPU launchers add the run length, whether PME tuning was left on and the threads per rank (`--metric nsteps=<N> --char pme_tuning=on\|off --metric threads_per_rank=<n>`) |
+| **WRF** | Weather | `--time-to-solution` | `--num-cells-million` (domain 1's `e_we × e_sn × e_vert` / 10^6) | `--analysis-type` (forecast/idealized); the WRF scripts also pass `--char simulated_minutes=<min>`, `--char num_timesteps=<N>` and `--char io_form=<n>` |
+| **CFX** | CFD | `--time-to-solution` (the wall clock around `cfx5solve`); the sbatch example adds `--metric cfd_solver_wall_seconds=<s>` (the iterations' time) and `--metric num_iterations=<n>` (outer loop iterations) | `--mesh-cells-million` (millions of elements, from the solver's output file) | see `--help` |
+| **STAR-CCM+** | CFD | `--time-to-solution` | see `--help` | see `--help` |
+| **ANSYS Mechanical** | FEA / structural | `--time-to-solution` (MAPDL's `Elapsed Time (sec)`; the sbatch also records `wall_clock_seconds`) | `--mdofs` (or `MDOFS`) | `--solver-type` (or `SOLVER_TYPE`): `sparse-direct-nonsymmetric`, `sparse-direct-symmetric`, `sparse-direct-complex`, `jcg-iterative`, `pcg-iterative`; `--analysis-type`; `--char memory_mode=InCore\|OutOfCore` (the sbatch records it from MAPDL's `Memory Option:` line, and `unknown` for an output without that line) |
+| **LS-DYNA / OptiStruct / OpenRadioss** | FEA / structural | `--time-to-solution` | see `--help` | see `--help` |
+| **LAMMPS** | MD | `--time-to-solution` (the launchers pass LAMMPS's `Loop time`), `--timesteps-per-sec` | `--atoms-million` | `--case` (the `MODEL`), `--char scale=<SCALE>`, `--char timesteps=<N>` (the timesteps LAMMPS ran), `--metric atom_steps_per_sec=<X>` |
+
+> For Fluent, if you omit `--time-to-solution` but pass `--time-per-iteration`
+> and `--num-iterations`, total solve time is computed as their product.
+> For anything without a dedicated flag, use `--metric name=value` (numbers) and
+> `--char name=value` (strings).
+
+---
+
+## Where the data goes
+
+- **Table:** `External_<Source>_<App>` in the dataset owner's account
+  (region `us-east-1` by default). `<App>` is the capitalized engine name, e.g.
+  `External_AcmeCorp_Fluent`, `External_AcmeCorp_Openfoam`,
+  `External_AcmeCorp_Gromacs`, `External_AcmeCorp_Wrf`.
+- The ingestion side reads each record by the canonical attribute names the
+  recorder writes, so keep the names as they are.
+- Each row carries: the required fields, your result metrics, dataset
+  characteristics, a generated `record_id`, a `recorded_at` UTC timestamp, and
+  provenance (`provenance_origin=external`, `provenance_source_id=<Source>`).
+
+## Contribution workflow
+
+1. Run the recorder right after your benchmark.
+2. It **always** saves a local JSON file named `<record_id>.json`.
+3. Then one of:
+   - **You have write access** (or pass `--put` with valid credentials): the row
+     is written straight to DynamoDB.
+   - **You don't** (the usual case for external contributors): the write is
+     skipped gracefully. Open a
+     [Benchmark results issue](https://github.com/aws-samples/hpc-applications/issues/new?template=benchmark-results.yml)
+     for each run, and attach the saved JSON or paste it into the form; the
+     dataset owner loads it for you. The issue is public, and so are the JSON
+     and its file's name: share only public benchmark cases (or rename a
+     confidential one first, in `benchmark_case`, in `record_id`, in any other
+     field that names it, such as ANSYS Mechanical's `model_name`, in the file's
+     name and in the issue's title), and no licence server, licence key or
+     customer name. If you attach or paste something you should not have,
+     editing the issue does not remove it: GitHub keeps the earlier text in the
+     issue's edit history, which anyone can open. Ask the maintainers in a
+     comment to remove it, without repeating what it was.
+
+Either way nothing fails and you keep the JSON.
+
+---
+
+## Automatic recording (built into this repo's benchmark launch scripts)
+
+**You normally don't need to do anything.** Every benchmark launch script under
+`apps/` calls its app's `record-benchmark.sh` automatically, right after the
+solve, except those of Abaqus (`Abaqus.sbatch`), Quantum ESPRESSO
+(`qe-benchmark.sbatch`, noted above), STREAM (`stream.sbatch`) and SIMULIA
+PowerFLOW (`PowerFlow.sbatch`), which ship no recorder, and STAR-CCM+'s
+`submit_server.sbatch` scripts, which start a server for an interactive client
+rather than a benchmark run. Just run the benchmark as
+usual — and set `SOURCE=<YourOrg>` if you want your rows tagged. The built-in
+call is:
+
+- **Nothing to pass.** The launch script exports what it already knows (instance
+  type, cores, nodes, MPI, the app version, the benchmark case and the measured
+  solve time) to the recorder via the environment, and the recorder recovers
+  anything still missing by parsing the solver log in the run directory
+  (`--run-dir`, defaulting to the job's working directory). Several launch
+  scripts also pass what makes runs comparable, read from the run's settings,
+  input files and the solver's output (run length, problem size, the solver's
+  own phase time), as recorder arguments (`--metric`, `--char` or a size flag;
+  see each application's row above). You pass nothing; a recorder you name in
+  `DYNAMODB_RECORDER` (or `CONTRIB_RECORDER`) gets the same arguments, so it
+  must accept them.
+- **Non-fatal, and it never changes your job's result.** A missing recorder,
+  missing AWS credentials or a parse miss only prints a `NOTE:`; recording never
+  changes the job's exit status. That status is the solver's (for Fluent's
+  benchmark scripts, that of `fluentbench.pl` or the 2026 R1 harness, which run
+  Fluent), or, for ANSYS Mechanical and LS-DYNA, their script's verdict on the
+  solver's output (see
+  [`AnsysMechanical/Readme.md`](AnsysMechanical/Readme.md#exit-codes-do-not-use-them-to-decide-success)
+  and [`LS-Dyna/Readme.md`](LS-Dyna/Readme.md#running-ls-dyna)). The one
+  exception is GROMACS's `GPU/gromacs-mps-benchmark.sbatch`: it runs several
+  simulations at once and ends with status 0 once its recording step has run,
+  whatever the simulations' exit status.
+- **Successful solves only.** Launch scripts that don't use `set -e` capture the
+  solver's exit code and skip recording (and skip a zero/garbage time) when the
+  solve failed, so the dataset isn't polluted with failed runs. The benchmark
+  scripts of CFX, GROMACS (the x86, Arm and GPU single-simulation launchers),
+  LAMMPS, OpenFOAM, WRF and ANSYS Mechanical, and LS-DYNA's `LS-Dyna.sbatch`,
+  also record a run only when the solver's output shows it complete. Fluent's
+  benchmark scripts (`x86/Fluent-Benchmark.2026R1.sbatch`, the classic
+  `fluentbench.pl` scripts and `gpu/Fluent-Benchmark-GPU.sbatch`) go by the
+  output alone: they record a run when the output of its case and core count
+  gives the case's rating, whatever the exit status. Fluent's journal scripts
+  record a run only when Fluent exits with status 0. Each application's README
+  says what its script checks, or for Fluent,
+  [`Fluent-Benchmark-2026R1.md`](Fluent/Fluent-Benchmark-2026R1.md) and its
+  [`Readme.md`](Fluent/Readme.md).
+- **Local-first.** As always it writes a local JSON record every run and only
+  performs the DynamoDB `put-item` when write access is available.
+
+### Controlling the built-in call
+
+| Environment variable | Effect |
+|----------------------|--------|
+| `SOURCE=<YourOrg>` | Tag your contributions — rows go to `External_<YourOrg>_<App>`. |
+| `DYNAMODB_RECORDER=/path/to/record-benchmark.sh` | Override the recorder location if the launch script can't find it automatically. **GROMACS and LAMMPS use `CONTRIB_RECORDER` instead**, because their launch scripts already reserve `DYNAMODB_RECORDER` for a separate internal uploader. |
+| `DYNAMODB_REGION=<region>` | Destination table region (default `us-east-1`). |
+
+The launch script finds the recorder automatically relative to
+`SLURM_SUBMIT_DIR` (a plain `git clone` + `sbatch` just works); set the override
+only if you keep the recorder elsewhere, e.g. on shared storage.
+
+---
+
+## Adding the recorder to your own `.sbatch`
+
+If you maintain a custom job script, add a recording step at the **end**, after
+the solver finishes and you've parsed the metric(s) you care about:
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=fluent-f1
+#SBATCH --nodes=2
+#SBATCH --ntasks-per-node=96
+#SBATCH --exclusive
+#SBATCH --time=04:00:00
+
+module load libfabric-aws openmpi
+
+# Point at the recorder for your app (use an absolute path on shared storage,
+# e.g. /fsx/hpc-applications/apps/Fluent/dynamodb/record-benchmark.sh)
+RECORDER=/fsx/hpc-applications/apps/Fluent/dynamodb/record-benchmark.sh
+CASE=f1_racecar_140m
+
+# 1) Run the solver
+fluentbench.pl "${CASE}" -t"${SLURM_NTASKS}" -cnf=hostfile -mpi=openmpi -norm \
+    | tee "solve.${SLURM_JOB_ID}.out"
+
+# 2) Parse the metric(s) from the solver output
+per_iter=$(awk '/Solver wall time per iteration/{v=$(NF-1)} END{print v}' "${CASE}"-*.out)
+
+# 3) Record only a SUCCESSFUL solve (guard against storing empty/garbage rows)
+if [ -n "${per_iter}" ]; then
+    # If your MPI stack exported LD_PRELOAD (some Fluent builds do), drop it —
+    # a stray preload can crash the Python-based AWS CLI:
+    unset LD_PRELOAD
+
+    # Run once (not once per rank). instance_type/os/num_cores/num_nodes/MPI
+    # are auto-detected from SLURM + EC2.
+    srun --ntasks=1 --nodes=1 "${RECORDER}" \
+        --case "${CASE}" --num-cells-million 140 \
+        --time-per-iteration "${per_iter}" --num-iterations 25 \
+        --source AcmeCorp
+else
+    echo "Solve produced no timing; not recording." >&2
+fi
+```
+
+The same three-step pattern (run → parse → record) applies to every app; only
+the parsing and the app-specific flags change. Practical tips:
+
+- **Record once**, not once per MPI rank — invoke it as a single task
+  (`srun -n1 -N1 ...`), or outside `mpirun`.
+- **Guard it** so you only record runs that actually produced a result.
+- **Preview with `--dry-run`** first; remove it once the output looks right, and
+  add `--put` if you have write access to the dataset.
+
+## Environment-variable equivalents
+
+Every core field also reads from an environment variable, which is handy for
+templating jobs: `SOURCE`, `DYNAMODB_REGION`, `INSTANCE_TYPE`,
+`OPERATING_SYSTEM`, `NUM_CORES`, `NUM_INSTANCES`, `CORES_PER_NODE`,
+`MPI_IMPLEMENTATION`, `BENCHMARK_CASE`, `TIME_TO_SOLUTION`, and
+`<APP>_VERSION` (e.g. `FLUENT_VERSION`, `OPENFOAM_VERSION`, `GROMACS_VERSION`,
+`WRF_VERSION`). Command-line flags take precedence over environment variables.
+
+## Notes
+
+- No `--source`? Rows default to `External_Community_<App>`.
+- Each row gets a unique `record_id`, so re-running never destructively
+  overwrites earlier contributions.
+- A few apps (e.g. GROMACS) also carry a separate internal
+  `record_to_dynamodb.sh` in the same folder — that is the dataset owner's own
+  path into the app's primary table, **not** the contribution path. Use
+  `record-benchmark.sh` to contribute.

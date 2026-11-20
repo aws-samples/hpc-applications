@@ -4,7 +4,7 @@ This is the standard ANSYS FLUENT benchmarks suite.
 For permission to use or publish please contact ANSYS Inc..
 
 Running FLUENT benchmarks...
-                Host: ip-10-42-0-23
+                Host: <hostname>
                 Date: Sun Feb 25 09:49:22 2024
 Creating benchmarks archive fluent_benchmarks.zip
 On successful completion, please send this file to ANSYS Inc.

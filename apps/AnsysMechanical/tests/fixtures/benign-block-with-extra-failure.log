@@ -1,0 +1,18 @@
+ Ansys Mechanical Enterprise
+
+ SOLVE FOR LS 1 OF 25
+
+ *** ERROR ***                           CP =     123.000   TIME= 09:00:00
+ The number of iterations exceeds 25 and the run was terminated at the
+ user's request.
+ The results database also failed to write and output is incomplete.
+
+ *---------------------------------------------------------------------------*
+ |                                                                           |
+ |                    DISTRIBUTED ANSYS RUN COMPLETED                        |
+ |                                                                           |
+ |---------------------------------------------------------------------------|
+ |                                                                           |
+ |        Elapsed Time (sec) =      123.000       Date  =  08/29/2026        |
+ |                                                                           |
+ *---------------------------------------------------------------------------*

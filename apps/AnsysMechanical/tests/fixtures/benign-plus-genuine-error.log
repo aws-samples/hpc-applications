@@ -1,0 +1,21 @@
+ Ansys Mechanical Enterprise
+
+ SOLVE FOR LS 1 OF 100
+
+ *** ERROR ***                           CP =     900.100   TIME= 09:48:00
+ The number of iterations exceeds 1.  The run is terminated at the
+ user's request.
+
+ *** ERROR ***                           CP =     901.200   TIME= 09:48:03
+ An unexpected condition occurred while writing the results file.  The
+ file may be incomplete.
+
+ *---------------------------------------------------------------------------*
+ |                                                                           |
+ |                    DISTRIBUTED ANSYS RUN COMPLETED                        |
+ |                                                                           |
+ |---------------------------------------------------------------------------|
+ |                                                                           |
+ |        Elapsed Time (sec) =      905.000       Date  =  08/29/2026        |
+ |                                                                           |
+ *---------------------------------------------------------------------------*

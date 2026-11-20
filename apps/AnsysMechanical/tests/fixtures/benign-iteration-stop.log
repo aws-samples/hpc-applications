@@ -1,0 +1,31 @@
+ Ansys Mechanical Enterprise
+
+ SOLVE FOR LS 1 OF 100
+
+ *** NOTE ***                            CP =      12.500   TIME= 09:31:44
+ Distributed sparse solver maximum pivot= 9.876543210E+11 at node 4321
+ UZ.
+
+  Equation solver memory allocated                     =   650.000 GB
+  Equation solver memory required for in-core mode     =   980.000 GB
+  Equation solver memory required for out-of-core mode =   340.000 GB
+
+ *** ERROR ***                           CP =    1100.000   TIME= 09:53:54
+ The number of iterations exceeds 1.  The run is terminated at the
+ user's request.
+
+--- S O L V E R   S T A T I S T I C S ------------------------------------------
+
+Solver: Sparse               (Method = DSP)
+Memory Option: Optimal Out-of-Core
+
+ *---------------------------------------------------------------------------*
+ |                                                                           |
+ |                    DISTRIBUTED ANSYS RUN COMPLETED                        |
+ |                                                                           |
+ |---------------------------------------------------------------------------|
+ |                                                                           |
+ |        CP Time      (sec) =     1100.000       Time  =  09:53:55          |
+ |        Elapsed Time (sec) =     1200.000       Date  =  08/29/2026        |
+ |                                                                           |
+ *---------------------------------------------------------------------------*
