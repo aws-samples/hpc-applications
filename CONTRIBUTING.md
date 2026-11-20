@@ -41,7 +41,7 @@ GitHub provides additional document on [forking a repository](https://help.githu
 
 
 ## Contributing benchmark results
-Benchmark results are contributions too. Eleven applications in this repository ship a recorder, and their benchmark
+Benchmark results are contributions too. Twelve applications in this repository ship a recorder, and their benchmark
 launch scripts save each successful run as a small JSON record. See [apps/BENCHMARK-RECORDERS.md](apps/BENCHMARK-RECORDERS.md)
 for how to tag your runs and share them with the AI-Powered HPC dataset, which trains a model that predicts HPC
 performance on AWS. To share a run, open a

@@ -13,7 +13,7 @@ recommends optimal cluster configurations. Contributing your own results
 enriches the dataset and improves those predictions.
 
 Recorders are available for: **Fluent, OpenFOAM, ANSYS Mechanical, CFX, LS-DYNA,
-OptiStruct, STAR-CCM+, WRF, GROMACS, OpenRadioss, LAMMPS**.
+OptiStruct, STAR-CCM+, WRF, GROMACS, OpenRadioss, LAMMPS, NAMD**.
 
 > **Exception: Quantum ESPRESSO.** `apps/QuantumEspresso` does not ship a
 > recorder yet, and its launch scripts therefore do not call one. QE runs
@@ -147,6 +147,7 @@ list can be composed).
 | **ANSYS Mechanical** | FEA / structural | `--time-to-solution` (MAPDL's `Elapsed Time (sec)`; the sbatch also records `wall_clock_seconds`) | `--mdofs` (or `MDOFS`) | `--solver-type` (or `SOLVER_TYPE`): `sparse-direct-nonsymmetric`, `sparse-direct-symmetric`, `sparse-direct-complex`, `jcg-iterative`, `pcg-iterative`; `--analysis-type`; `--char memory_mode=InCore\|OutOfCore` (the sbatch records it from MAPDL's `Memory Option:` line, and `unknown` for an output without that line) |
 | **LS-DYNA / OptiStruct / OpenRadioss** | FEA / structural | `--time-to-solution` | see `--help` | see `--help` |
 | **LAMMPS** | MD | `--time-to-solution` (the launchers pass LAMMPS's `Loop time`), `--timesteps-per-sec` | `--atoms-million` | `--case` (the `MODEL`), `--char scale=<SCALE>`, `--char timesteps=<N>` (the timesteps LAMMPS ran), `--metric atom_steps_per_sec=<X>` |
+| **NAMD** | MD | `--time-to-solution` (the launcher passes NAMD's `WallClock:` time), `--days-per-ns` (the last `Benchmark time:` line's; the recorder records ns/day = 1 / days/ns unless `--ns-per-day` is given) | `--atoms-million` (or the `Info: <N> ATOMS` line of `namd.out`) | `--case` (the `MODEL`); the recorder reads `nsteps`, `timestep_fs`, `namd_version` and `namd_platform` from `namd.out`, and `x86/namd-benchmark.sbatch` passes the processes per node, the worker threads per process and whether NAMD's AVX-512 tile-list kernels ran (`--metric procs_per_node=<P> --metric pes_per_proc=<PPN> --char avx512_tiles=on\|off`) |
 
 > For Fluent, if you omit `--time-to-solution` but pass `--time-per-iteration`
 > and `--num-iterations`, total solve time is computed as their product.
@@ -219,10 +220,11 @@ call is:
   missing AWS credentials or a parse miss only prints a `NOTE:`; recording never
   changes the job's exit status. That status is the solver's (for Fluent's
   benchmark scripts, that of `fluentbench.pl` or the 2026 R1 harness, which run
-  Fluent), or, for ANSYS Mechanical and LS-DYNA, their script's verdict on the
-  solver's output (see
-  [`AnsysMechanical/Readme.md`](AnsysMechanical/Readme.md#exit-codes-do-not-use-them-to-decide-success)
-  and [`LS-Dyna/Readme.md`](LS-Dyna/Readme.md#running-ls-dyna)). The one
+  Fluent), or, for ANSYS Mechanical, LS-DYNA and NAMD, their script's verdict on
+  the solver's output (see
+  [`AnsysMechanical/Readme.md`](AnsysMechanical/Readme.md#exit-codes-do-not-use-them-to-decide-success),
+  [`LS-Dyna/Readme.md`](LS-Dyna/Readme.md#running-ls-dyna) and
+  [`NAMD/README.md`](NAMD/README.md#metrics)). The one
   exception is GROMACS's `GPU/gromacs-mps-benchmark.sbatch`: it runs several
   simulations at once and ends with status 0 once its recording step has run,
   whatever the simulations' exit status.
@@ -230,8 +232,11 @@ call is:
   solver's exit code and skip recording (and skip a zero/garbage time) when the
   solve failed, so the dataset isn't polluted with failed runs. The benchmark
   scripts of CFX, GROMACS (the x86, Arm and GPU single-simulation launchers),
-  LAMMPS, OpenFOAM, WRF and ANSYS Mechanical, and LS-DYNA's `LS-Dyna.sbatch`,
-  also record a run only when the solver's output shows it complete. Fluent's
+  LAMMPS, NAMD, OpenFOAM, WRF and ANSYS Mechanical, and LS-DYNA's
+  `LS-Dyna.sbatch`, also record a run only when the solver's output shows it
+  complete (NAMD's `x86/namd-benchmark.sbatch`: `namd.out` ends with NAMD's
+  `WallClock:` line, and its last `Benchmark time:` line gives a positive
+  days/ns). Fluent's
   benchmark scripts (`x86/Fluent-Benchmark.2026R1.sbatch`, the classic
   `fluentbench.pl` scripts and `gpu/Fluent-Benchmark-GPU.sbatch`) go by the
   output alone: they record a run when the output of its case and core count
