@@ -42,9 +42,11 @@ The build script:
    the target's `-march` and `-mtune`, against the Open MPI module;
 4. configures NAMD for that Charm++, the system TCL and the static FFTW, and compiles it with the options of the
    target's NAMD arch file and the target's `-march` and `-mtune` (through `./config --cxx-opts` and `--cc-opts`);
-5. installs `namd3` under `${BASE_DIR}/x86_64/<version>-<target>/`, with an env script, `namd-<version>-x86-env.sh`,
-   that loads the Open MPI and `libfabric-aws` modules, puts `namd3` on the `PATH`, and names the target
-   (`NAMD_TARGET_CPU`) and its instruction set (`NAMD_ISA`).
+5. builds NAMD's `psfgen`, with the molfile plugins of NAMD's source, which the launcher builds the 20STMV system
+   with (a `psfgen` that does not build leaves `namd3` installed, with a `NOTE:`, since only `MODEL=20STMV` needs it);
+6. installs `namd3` and `psfgen` under `${BASE_DIR}/x86_64/<version>-<target>/bin/`, with an env script,
+   `namd-<version>-x86-env.sh`, that loads the Open MPI and `libfabric-aws` modules, puts them on the `PATH`, and
+   names the target (`NAMD_TARGET_CPU`) and its instruction set (`NAMD_ISA`).
 
 | `TARGET_CPU` | For | `-march` / `-mtune` | NAMD arch file | Instruction set |
 |---|---|---|---|---|
@@ -94,7 +96,8 @@ pass `sbatch --time` for a longer run. The launcher:
    takes the only build under `${BASE_DIR}/x86_64/`, with a `NOTE:` on stderr that names it; with several, it stops and
    asks for `NAMD_ENV`. An AVX-512 build on a node whose CPU has no AVX-512 stops the job before anything runs;
 2. on more than one node, checks EFA with `fi_info -p efa`;
-3. fetches the deck into a cache on first use (its files, not the downloaded archive), and copies it into a run
+3. fetches the deck into a cache on first use (its files, not the downloaded archive; for 20STMV, builds it, see
+   "Benchmark models"), and copies it into a run
    directory of its own, `${BASE_DIR}/Run/<job>-<MODEL>-<cluster>-<nodes>x<instance type>-<PPN>ppn-<UTC time>/` (with
    `<PROCS_PER_NODE>x<PPN>ppn` for more than one process per node). The run's config names its output files without
    the deck's `/usr/tmp/` directory, so NAMD writes them (`.coor`, `.vel`, `.xsc`) in the run directory;
@@ -110,7 +113,7 @@ pass `sbatch --time` for a longer run. The launcher:
 | Variable | Default | Description |
 |---|---|---|
 | `NAMD_ENV` | the build of the node's instance family | The build's env script |
-| `MODEL` | `ApoA1` | `ApoA1`, `ATPase` (F1-ATPase), `STMV` or `DHFR` |
+| `MODEL` | `ApoA1` | `ApoA1`, `ATPase` (F1-ATPase), `STMV`, `DHFR` or `20STMV` |
 | `TIMESTEPS` | `1000` | The run's `numsteps` (and a `run` line's steps), 1 to 10,000,000 |
 | `PPN` | the process's cores − 1 | Worker threads (PEs) per process, 1 to 192. With one process per node on hpc8a.96xlarge and hpc7a.96xlarge: 23, 47, 71, 95, 119, 143, 167, 191 or 192 (see below). With more than one, the process's cores − 1 |
 | `PROCS_PER_NODE` | `1` | NAMD processes per node: a number that divides the node's cores and leaves each process at least two (see "Processes per node") |
@@ -177,13 +180,32 @@ values.
 | `ApoA1` | Apolipoprotein A1 | 92,224 | 500 | 108 × 108 × 80 | [`apoa1.tar.gz`](https://www.ks.uiuc.edu/Research/namd/utilities/apoa1.tar.gz) |
 | `ATPase` | F1-ATPase | 327,506 | 500 | 192 × 144 × 144 | [`f1atpase.tar.gz`](https://www.ks.uiuc.edu/Research/namd/utilities/f1atpase.tar.gz) |
 | `STMV` | Satellite tobacco mosaic virus | 1,066,628 | 500 | 216 × 216 × 216 | [`stmv.tar.gz`](https://www.ks.uiuc.edu/Research/namd/utilities/stmv.tar.gz) |
+| `20STMV` | 5 × 2 × 2 copies of STMV's periodic cell | 21,332,560 | 1,200 | 540 × 216 × 216 | Built from `stmv.tar.gz` with [`stmv_sc14.tar.gz`](https://www.ks.uiuc.edu/Research/namd/utilities/stmv_sc14.tar.gz) |
 
 ApoA1, F1-ATPase and STMV come from the [NAMD utilities page](https://www.ks.uiuc.edu/Research/namd/utilities/), each
-with PME and a time step of 1 fs. DHFR comes from [NAMD's benchmark page](https://www.ks.uiuc.edu/Research/namd/benchmarks/),
-whose deck is set up for NAMD's GPU modes. The launcher runs its GPU-offload NVE config, `dhfr_gpuoff_nve.namd`, which
-sets no GPU option (its `doGPUres` is 0): PME, a time step of 2 fs with rigid bonds, and full electrostatics every
-second step. In the run's config, `doBenchmark` and `skipFFTWconfig` become 0, so NAMD runs every step asked for, with
-no `benchmarkTime` limit, and keeps its default FFTW planning and load balancer, as the other decks do.
+with PME and a time step of 1 fs. DHFR comes from [NAMD's benchmark
+page](https://www.ks.uiuc.edu/Research/namd/benchmarks/), whose deck is set up for NAMD's GPU modes. The launcher runs
+its GPU-offload NVE config, `dhfr_gpuoff_nve.namd`, which sets no GPU option (its `doGPUres` is 0): PME, a time step of
+2 fs with rigid bonds, and full electrostatics every second step. In the run's config, `doBenchmark` and
+`skipFFTWconfig` become 0, so NAMD runs every step asked for, with no `benchmarkTime` limit, and keeps its default FFTW
+planning and load balancer, as the other decks do.
+
+NAMD publishes no 20STMV deck, only the scripts that build it from STMV, from its SC14 benchmarks
+([`stmv_sc14.tar.gz`](https://www.ks.uiuc.edu/Research/namd/utilities/stmv_sc14.tar.gz), on the utilities page;
+see [NAMD's benchmark page](https://www.ks.uiuc.edu/Research/namd/benchmarks/)). On the first `MODEL=20STMV` run,
+the launcher fetches the STMV deck (into its own cache, as `MODEL=STMV` does) and the scripts, runs their
+`make_5x2x2stmv.pgn` with the build's `psfgen`, which writes the 21-million-atom system as a js structure
+(`5x2x2stmv.js`) and a namdbin coordinate file (`5x2x2stmv.coor`), and keeps them, with the scripts and STMV's
+parameter file, in `${BASE_DIR}/benchmarks/20STMV/`. `psfgen` runs on one core of the job's first node while the
+other nodes wait, so run the first 20STMV job on one node. A build without `psfgen` stops the job before anything
+is fetched. The system is built in a directory of its own and moved into place only once `psfgen` has written both
+files. The run directories link these files instead of copying them.
+
+The scripts' config, `20stmv2fs.namd` (NPT, a time step of 2 fs with rigid bonds, a 12 Å cutoff, and PME every
+third step), reads a compressed structure, which only NAMD's memory-optimized build (`./config --with-memopt`)
+reads. This build is a regular one, so the run's config takes the alternative the file carries, commented out:
+NAMD's plugin I/O (`usePluginIO yes`) and the js structure. A regular build keeps the whole structure in every NAMD
+process, so run 20STMV with one process per node, the default.
 
 The launcher runs 1,000 steps of each deck by default (`TIMESTEPS`; DHFR's config takes them through its
 `num_steps_run`). It fetches each deck on first use and keeps it at `${BASE_DIR}/benchmarks/<MODEL>/`; delete that
@@ -200,9 +222,11 @@ Info: Benchmark time: <CPUs> CPUs <s> s/step <d> days/ns <MB> MB memory
 NAMD prints a timing line every 5 × `stepspercycle` steps, 100 for these decks (DHFR's config leaves `stepspercycle`
 at NAMD's default, 20): `Initial time:` for the first three, then `Benchmark time:` up to step 900, each one the wall
 time per step over the 100 steps before it. A run of 1,000 steps, the launcher's default, prints six `Benchmark time:`
-lines, for steps 400 to 900; the utilities decks' own 500 steps print two. NAMD's user guide ("Improving Parallel Scaling") points to these lines to measure parallel performance.
-The launcher takes the days/ns of the last one and reports ns/day = 1 / (days/ns), with NAMD's closing `WallClock:`
-time.
+lines, for steps 400 to 900; the utilities decks' own 500 steps print two. 20STMV's config has a `stepspercycle` of
+24, so NAMD prints its timing lines every 120 steps: five `Benchmark time:` lines in 1,000 steps, for steps 480 to
+960, and six in the config's own 1,200. NAMD's user guide ("Improving Parallel Scaling") points to these lines to
+measure parallel performance. The launcher takes the days/ns of the last one and reports ns/day = 1 / (days/ns), with
+NAMD's closing `WallClock:` time.
 
 When NAMD fails, the job ends with NAMD's exit status, after an `ERROR:` that names the run's `namd.out`. When NAMD
 exits 0, the launcher reports a result only from a complete run: `namd.out` must have NAMD's closing `WallClock:` line,
@@ -253,8 +277,8 @@ made with other layouts or kernels stay apart.
 
 | File | Description |
 |---|---|
-| [`x86/build_namd_x86.sbatch`](x86/build_namd_x86.sbatch) | Builds static FFTW, Charm++ (`mpi-linux-x86_64-smp`, on the system Open MPI) and NAMD; installs `namd3` and its env script |
-| [`x86/namd-benchmark.sbatch`](x86/namd-benchmark.sbatch) | Runs ApoA1, F1-ATPase, STMV or DHFR with `mpirun`; fetches and caches the deck; reports days/ns and ns/day, and records a complete run |
+| [`x86/build_namd_x86.sbatch`](x86/build_namd_x86.sbatch) | Builds static FFTW, Charm++ (`mpi-linux-x86_64-smp`, on the system Open MPI), NAMD and its `psfgen`; installs `namd3`, `psfgen` and the env script |
+| [`x86/namd-benchmark.sbatch`](x86/namd-benchmark.sbatch) | Runs ApoA1, F1-ATPase, STMV, DHFR or 20STMV with `mpirun`; fetches and caches the deck (builds 20STMV's); reports days/ns and ns/day, and records a complete run |
 | [`dynamodb/record-benchmark.sh`](dynamodb/record-benchmark.sh) | Records one run in the shared AI-Powered HPC benchmark dataset (see "Contribute your results") |
 | [`dynamodb/README.md`](dynamodb/README.md) | How to run the recorder by hand |
 | [`tests/test_namd_launcher.py`](../../tests/test_namd_launcher.py), [`tests/test_namd_build.py`](../../tests/test_namd_build.py), [`tests/test_namd_properties.py`](../../tests/test_namd_properties.py), [`tests/test_namd_recorder.py`](../../tests/test_namd_recorder.py) | Tests of the two scripts and the recorder, with stubs only: no NAMD, MPI, Slurm or AWS needed |

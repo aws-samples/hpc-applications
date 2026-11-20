@@ -7,7 +7,7 @@ The shell scripts under apps/NAMD/ contain pure-function logic:
   * env-script string generation (the heredoc in build_namd_x86.sbatch)
   * NAMD stdout parsing for `Info: Benchmark time: ... <days/ns> days/ns`
     and `WallClock: <s>`, with days/ns -> ns/day = 1 / days_per_ns
-  * MODEL validation (ApoA1 / ATPase / STMV / DHFR) and deck-cache reuse
+  * MODEL validation (ApoA1 / ATPase / STMV / DHFR / 20STMV) and deck-cache reuse
 
 We re-implement that logic in Python below and exercise it with
 Hypothesis-generated inputs to verify the properties hold. The Python
@@ -110,11 +110,11 @@ def parse_namd_output(text: str) -> tuple[float, float, float | None]:
     return days_per_ns, ns_per_day, wall
 
 
-SUPPORTED_MODELS = ("ApoA1", "ATPase", "STMV", "DHFR")
+SUPPORTED_MODELS = ("ApoA1", "ATPase", "STMV", "DHFR", "20STMV")
 
 
 def model_is_valid(model: str) -> bool:
-    """Mirror of the `case ${MODEL} in ApoA1|ATPase|STMV|DHFR)` guard."""
+    """Mirror of the `case ${MODEL} in ApoA1|ATPase|STMV|DHFR|20STMV)` guard."""
     return model in SUPPORTED_MODELS
 
 

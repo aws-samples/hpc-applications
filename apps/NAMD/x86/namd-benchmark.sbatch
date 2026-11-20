@@ -7,8 +7,8 @@
 #SBATCH --time=02:00:00
 #SBATCH --output=namd-x86-%j.out
 #
-# Run a standard NAMD benchmark (ApoA1 / F1-ATPase / STMV / DHFR) on x86 HPC
-# instances over EFA.
+# Run a standard NAMD benchmark (ApoA1 / F1-ATPase / STMV / DHFR / 20STMV) on
+# x86 HPC instances over EFA.
 #
 # NAMD is built on Charm++ (MPI/SMP backend over the system OpenMPI). This
 # launcher uses mpirun to start PROCS_PER_NODE processes per node (default 1),
@@ -28,7 +28,7 @@
 # Override via --export=ALL,...:
 #   NAMD_ENV    env script from the build (default: the build of this node's
 #               instance family under ${BASE_DIR}/x86_64/, see below)
-#   MODEL       ApoA1 | ATPase | STMV | DHFR       (default ApoA1)
+#   MODEL       ApoA1 | ATPase | STMV | DHFR | 20STMV   (default ApoA1)
 #   TIMESTEPS   the run's numsteps, 1..10000000    (default 1000: six
 #               Benchmark time lines, see below)
 #   PPN         worker threads (PEs) per process   (default: the process's
@@ -56,8 +56,8 @@ fail() { echo "ERROR: $*" >&2; exit 1; }
 
 # --- Validate MODEL ------------------------------------------------------
 case "${MODEL}" in
-  ApoA1|ATPase|STMV|DHFR) ;;
-  *) fail "MODEL='${MODEL}' invalid (supported: ApoA1, ATPase, STMV, DHFR)" ;;
+  ApoA1|ATPase|STMV|DHFR|20STMV) ;;
+  *) fail "MODEL='${MODEL}' invalid (supported: ApoA1, ATPase, STMV, DHFR, 20STMV)" ;;
 esac
 
 # --- Validate overrides --------------------------------------------------
@@ -254,23 +254,80 @@ declare -A DECK_URL=(
   [DHFR]="https://www.ks.uiuc.edu/Research/namd/benchmarks/systems/dhfr_gpu.tar.gz"
 )
 declare -A DECK_CONF=( [ApoA1]="apoa1.namd" [ATPase]="f1atpase.namd" [STMV]="stmv.namd"
-                       [DHFR]="dhfr_gpuoff_nve.namd" )
+                       [DHFR]="dhfr_gpuoff_nve.namd" [20STMV]="20stmv2fs.namd" )
+# NAMD publishes no 20STMV deck, only the scripts that build it from STMV.
+STMV20_KIT_URL="https://www.ks.uiuc.edu/Research/namd/utilities/stmv_sc14.tar.gz"
 CACHE_DIR="${BASE_DIR}/benchmarks/${MODEL}"
 CONF="${DECK_CONF[${MODEL}]}"
-if [ ! -s "${CACHE_DIR}/${CONF}" ]; then
-  echo "==> fetching ${MODEL} deck from ${DECK_URL[${MODEL}]}"
-  mkdir -p "${CACHE_DIR}"
+
+# fetch_deck <what> <url> <dir>: download a tarball and put its files (not the
+# downloaded archive) into <dir>, which it creates. The decks extract into a
+# subdirectory (apoa1/, f1atpase/, stmv/, dhfr_gpu/ or stmv_sc14/), whose files
+# are flattened into <dir>. A failed download removes <dir> and stops the job.
+fetch_deck() {
+  local what="$1" url="$2" dir="$3" tmp
+  echo "==> fetching ${what} from ${url}"
+  mkdir -p "${dir}"
   tmp="$(mktemp -d)"
-  if curl -fsSL --max-time 600 --retry 3 -o "${tmp}/deck.tar.gz" "${DECK_URL[${MODEL}]}"; then
+  if curl -fsSL --max-time 600 --retry 3 -o "${tmp}/deck.tar.gz" "${url}"; then
     mkdir "${tmp}/deck"
     tar xzf "${tmp}/deck.tar.gz" -C "${tmp}/deck"
-    # decks extract into a subdir (apoa1/, f1atpase/, stmv/ or dhfr_gpu/);
-    # flatten its files, not the downloaded archive, into the cache
-    find "${tmp}/deck" -type f -exec cp -n {} "${CACHE_DIR}/" \;
+    find "${tmp}/deck" -type f -exec cp -n {} "${dir}/" \;
     rm -rf "${tmp}"
   else
-    rm -rf "${tmp}" "${CACHE_DIR}"
-    fail "failed to download ${MODEL} deck from ${DECK_URL[${MODEL}]} after retries"
+    rm -rf "${tmp}" "${dir}"
+    fail "failed to download ${what} from ${url} after retries"
+  fi
+}
+
+# --- 20STMV: built from STMV with NAMD's construction scripts --------------
+# 20STMV is 5 x 2 x 2 copies of STMV's periodic cell (21 million atoms). NAMD
+# publishes the scripts that build it (stmv_sc14.tar.gz, from the SC14 paper):
+# psfgen replicates STMV into a js structure, 5x2x2stmv.js, and a namdbin
+# coordinate file, 5x2x2stmv.coor. On first use the launcher fetches the STMV
+# deck into its own cache (as MODEL=STMV does) and the scripts, runs their
+# make_5x2x2stmv.pgn with the psfgen on the PATH (the build installs one beside
+# namd3), and keeps the result, with the scripts and STMV's parameter file, in
+# ${BASE_DIR}/benchmarks/20STMV/. It builds in a directory of its own and moves
+# it into place only once psfgen has written both files, so a cache that holds
+# 20stmv2fs.namd holds the whole system.
+build_20stmv() {
+  local stmv="${BASE_DIR}/benchmarks/STMV" psfgen build
+  psfgen="$(command -v psfgen || true)"
+  [ -x "${psfgen}" ] || fail "MODEL=20STMV builds its system with psfgen, and none is on the PATH after sourcing ${NAMD_ENV}: build NAMD with x86/build_namd_x86.sbatch, which installs psfgen beside namd3, or put a 20STMV deck built with NAMD's scripts in ${CACHE_DIR}/"
+  [ -s "${stmv}/${DECK_CONF[STMV]}" ] || fetch_deck "STMV deck" "${DECK_URL[STMV]}" "${stmv}"
+  [ -s "${stmv}/stmv.psf" ] && [ -s "${stmv}/stmv.pdb" ] && [ -s "${stmv}/par_all27_prot_na.inp" ] \
+    || fail "the STMV deck in ${stmv} has no stmv.psf, stmv.pdb or par_all27_prot_na.inp, which 20STMV is built from; delete ${stmv} to fetch it again"
+  mkdir -p "${BASE_DIR}/benchmarks"
+  build="$(mktemp -d "${BASE_DIR}/benchmarks/.20STMV-build.XXXXXX")"
+  fetch_deck "the 20STMV construction scripts" "${STMV20_KIT_URL}" "${build}"
+  if [ ! -s "${build}/make_5x2x2stmv.pgn" ] || [ ! -s "${build}/${CONF}" ]; then
+    rm -rf "${build}"
+    fail "${STMV20_KIT_URL} has no make_5x2x2stmv.pgn or ${CONF}"
+  fi
+  ln -s "${stmv}/stmv.psf" "${stmv}/stmv.pdb" "${build}/"
+  cp "${stmv}/par_all27_prot_na.inp" "${build}/"
+  echo "==> building 20STMV (5 x 2 x 2 copies of STMV) with ${psfgen} make_5x2x2stmv.pgn, in ${build}"
+  if ! ( cd "${build}" && "${psfgen}" make_5x2x2stmv.pgn > psfgen.log 2>&1 ) \
+      || [ ! -s "${build}/5x2x2stmv.js" ] || [ ! -s "${build}/5x2x2stmv.coor" ]; then
+    tail -n 20 "${build}/psfgen.log" >&2
+    rm -rf "${build}"
+    fail "psfgen did not write 20STMV's 5x2x2stmv.js and 5x2x2stmv.coor (the end of its log is above)"
+  fi
+  rm -f "${build}/stmv.psf" "${build}/stmv.pdb"
+  # Another job may have built it meanwhile: then its system is kept.
+  if ! mv -T "${build}" "${CACHE_DIR}" 2>/dev/null; then
+    rm -rf "${build}"
+    [ -s "${CACHE_DIR}/${CONF}" ] || fail "${CACHE_DIR} holds other files, so the built 20STMV system could not be moved there: remove it and run again"
+  fi
+  echo "==> 20STMV built: ${CACHE_DIR}"
+}
+
+if [ ! -s "${CACHE_DIR}/${CONF}" ]; then
+  if [ "${MODEL}" = 20STMV ]; then
+    build_20stmv
+  else
+    fetch_deck "${MODEL} deck" "${DECK_URL[${MODEL}]}" "${CACHE_DIR}"
   fi
 fi
 [ -s "${CACHE_DIR}/${CONF}" ] || fail "benchmark config ${CONF} missing in ${CACHE_DIR} after fetch"
@@ -282,18 +339,24 @@ LAYOUT="${PPN}ppn"; (( P == 1 )) || LAYOUT="${P}x${PPN}ppn"
 WORK="${BASE_DIR}/Run/${SLURM_JOB_ID:-local}-${MODEL}-${SLURM_CLUSTER_NAME:-cluster}-${NODES}x${INSTANCE_TYPE:-unknown}-${LAYOUT}-${STAMP}"
 [ -e "${WORK}" ] && fail "run directory already exists: ${WORK}"
 mkdir -p "${WORK}"
-cp "${CACHE_DIR}"/* "${WORK}/" 2>/dev/null || true
+if [ "${MODEL}" = 20STMV ]; then
+  # 20STMV's structure and coordinates are large: the run directory links the
+  # cache's files instead of copying them.
+  ln -s "${CACHE_DIR}"/* "${WORK}/"
+else
+  cp "${CACHE_DIR}"/* "${WORK}/" 2>/dev/null || true
+fi
 cd "${WORK}" || fail "cannot cd into ${WORK}"
 
 # --- Build the per-run config (override numsteps, ensure timing output) ---
 RUNCONF="run-${MODEL}.namd"
 cp "${CONF}" "${RUNCONF}"
 # The run's length: numsteps (and a final 'run N') become TIMESTEPS, by default
-# 1000. NAMD prints a timing line every 5 x stepspercycle steps (100 for these
-# decks: stepspercycle 20, which DHFR's config leaves at NAMD's default),
-# "Initial time:" for the first three and "Benchmark time:" from step 400 to
-# step 900: six Benchmark time lines in a 1,000-step run, two in the utilities
-# decks' own 500 steps.
+# 1000. NAMD prints a timing line every 5 x stepspercycle steps (100 for the
+# decks with stepspercycle 20, all but 20STMV, below; DHFR's config leaves it
+# at NAMD's default, 20), "Initial time:" for the first three and "Benchmark
+# time:" from step 400 to step 900: six Benchmark time lines in a 1,000-step
+# run, two in the utilities decks' own 500 steps.
 sed -i -E "s/^[[:space:]]*numsteps[[:space:]]+[0-9]+/numsteps ${TIMESTEPS}/I" "${RUNCONF}"
 sed -i -E "s/^[[:space:]]*run[[:space:]]+[0-9]+/run ${TIMESTEPS}/I" "${RUNCONF}"
 # DHFR's config sets its run length and two switches in Tcl variables
@@ -303,6 +366,23 @@ sed -i -E "s/^[[:space:]]*run[[:space:]]+[0-9]+/run ${TIMESTEPS}/I" "${RUNCONF}"
 # decks run.
 sed -i -E "s/^([[:space:]]*set[[:space:]]+num_steps_run[[:space:]]+)[0-9]+/\1${TIMESTEPS}/" "${RUNCONF}"
 sed -i -E 's/^([[:space:]]*set[[:space:]]+(doBenchmark|skipFFTWconfig)[[:space:]]+)1([[:space:]]|$)/\10\3/' "${RUNCONF}"
+if [ "${MODEL}" = 20STMV ]; then
+  # The scripts' 20stmv2fs.namd reads a compressed structure, which only NAMD's
+  # memory-optimized build reads. This build is a regular one, so the run's
+  # config takes the alternative the file carries, commented out: NAMD's plugin
+  # I/O and the js structure. Its stepspercycle is 24, so NAMD prints a timing
+  # line every 120 steps: five Benchmark time lines in a 1,000-step run, for
+  # steps 480 to 960.
+  sed -i -E -e 's/^([[:space:]]*useCompressedPsf[[:space:]])/#\1/' \
+            -e 's/^([[:space:]]*structure[[:space:]]+5x2x2stmv\.js\.inter)/#\1/' \
+            -e 's/^#([[:space:]]*usePluginIO[[:space:]]+yes)/\1/' \
+            -e 's/^#([[:space:]]*structure[[:space:]]+5x2x2stmv\.js[[:space:]]*)$/\1/' "${RUNCONF}"
+  if ! grep -qE '^[[:space:]]*usePluginIO[[:space:]]+yes' "${RUNCONF}" \
+      || ! grep -qE '^[[:space:]]*structure[[:space:]]+5x2x2stmv\.js[[:space:]]*$' "${RUNCONF}" \
+      || grep -qE '^[[:space:]]*useCompressedPsf[[:space:]]+on' "${RUNCONF}"; then
+    fail "${CONF} does not have the lines this launcher expects (its usePluginIO and js structure lines, commented out): see ${WORK}/${RUNCONF}"
+  fi
+fi
 grep -qiE "^[[:space:]]*outputTiming" "${RUNCONF}" || echo "outputTiming 20" >> "${RUNCONF}"
 # The decks write their output files (.coor, .vel, .xsc) to /usr/tmp/<name>:
 # the run config keeps the name and drops the directory, so NAMD writes them in

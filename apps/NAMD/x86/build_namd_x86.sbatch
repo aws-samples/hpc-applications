@@ -14,7 +14,8 @@
 # via its libfabric provider):
 #   * mpi-linux-x86_64 ... smp   — one process per node + worker threads
 # then configures and compiles NAMD against that Charm++, producing the `namd3`
-# binary. Charm++ and NAMD's own code are compiled with the target's -march and
+# binary, and NAMD's psfgen, which the launcher's 20STMV benchmark is built
+# with. Charm++ and NAMD's own code are compiled with the target's -march and
 # -mtune. NAMD also takes the options of its Linux-AVX512-g++ arch file (AVX-512,
 # and NAMD's mixed-precision AVX-512 tile-list kernels, NAMD_AVXTILES), or, for
 # hpc6a, whose CPU has no AVX-512, those of its Linux-x86_64-g++ arch file.
@@ -223,11 +224,29 @@ log "compiling NAMD"
 make -j"${COMPILE_CORES}" || fail "NAMD compile failed"
 [ -x namd3 ] || fail "NAMD compile finished but namd3 binary is missing"
 
+# --- psfgen, for the 20STMV benchmark ------------------------------------
+# NAMD's source ships psfgen with the molfile plugins it needs (the js and
+# namdbin formats). The benchmark launcher builds the 20STMV system from STMV
+# with it, as NAMD's construction scripts do. If psfgen does not build, namd3
+# is installed all the same, with a NOTE: only MODEL=20STMV needs psfgen.
+STAGE="psfgen"
+PSFGEN_BUILT=""
+log "compiling psfgen"
+if make -j"${COMPILE_CORES}" psfgen && [ -x psfgen ]; then
+    PSFGEN_BUILT=1
+else
+    echo "NOTE: psfgen did not build; namd3 is installed without it, and only the 20STMV benchmark (MODEL=20STMV) needs it" >&2
+fi
+
 # --- Install -------------------------------------------------------------
 STAGE="install"
 mkdir -p "${INSTALL_DIR}/bin"
 cp -a namd3 "${INSTALL_DIR}/bin/namd3"
 log "installed namd3 -> ${INSTALL_DIR}/bin/namd3"
+if [ -n "${PSFGEN_BUILT}" ]; then
+    cp -a psfgen "${INSTALL_DIR}/bin/psfgen"
+    log "installed psfgen -> ${INSTALL_DIR}/bin/psfgen"
+fi
 
 # --- Generate the env script ---------------------------------------------
 STAGE="env-script"
@@ -246,5 +265,6 @@ EOF
 chmod 0644 "${ENV_SCRIPT}"
 
 log "DONE. namd3: ${INSTALL_DIR}/bin/namd3"
+if [ -n "${PSFGEN_BUILT}" ]; then log "      psfgen: ${INSTALL_DIR}/bin/psfgen"; fi
 log "      env:   ${ENV_SCRIPT}"
 "${INSTALL_DIR}/bin/namd3" --version 2>&1 | head -3 || true

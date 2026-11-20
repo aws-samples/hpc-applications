@@ -11,7 +11,8 @@ These tests pin:
   must have the SHA-256 FFTW_SHA256 names (by default FFTW's published one for 3.3.10) before it is extracted; with
   none for another version, the build prints the tarball's SHA-256 and goes on;
 - Charm++'s build and NAMD's ./config command lines;
-- the install: bin/namd3 and the env script, whose lines load the MPI modules and put namd3 on PATH.
+- the install: bin/namd3, bin/psfgen (NAMD's, for the launcher's 20STMV benchmark; a psfgen that does not build
+  leaves namd3 installed, with a NOTE), and the env script, whose lines load the MPI modules and put namd3 on PATH.
 
 They run the script with stubs of sudo, curl, mpicxx and make, on a synthetic NAMD source tarball (a stub config and a
 bundled Charm++ tarball with a stub build) and a synthetic FFTW tarball (a stub configure), from a temporary directory,
@@ -75,14 +76,21 @@ MPICXX_STUB = r"""#!/bin/bash
 [ "$1" = --showme:version ] && echo "mpicxx: Open MPI 4.1.7 (Language: C++)"
 """
 # make: logs its working directory and arguments. In the FFTW tree (where the stub configure left .stub-prefix),
-# "install" creates <prefix>/lib/libfftw3f.a; in NAMD's Linux-* build directory, it creates an executable namd3.
+# "install" creates <prefix>/lib/libfftw3f.a; in NAMD's Linux-* build directory, it creates an executable namd3, or
+# for the psfgen target an executable psfgen (with STUB_PSFGEN_FAIL=1, it exits 2 instead).
 MAKE_STUB = r"""#!/bin/bash
 printf '%s | %s\n' "$(pwd)" "$*" >> "${STATE}/make.log"
 if [ -f .stub-prefix ]; then
     if [ "$1" = install ]; then p="$(cat .stub-prefix)"; mkdir -p "${p}/lib"; echo synthetic > "${p}/lib/libfftw3f.a"; fi
 elif [[ "$(basename "$(pwd)")" == Linux-* ]]; then
-    printf '#!/bin/bash\necho "NAMD stub 3.0.2"\n' > namd3
-    chmod 755 namd3
+    if [ "${!#}" = psfgen ]; then
+        [ "${STUB_PSFGEN_FAIL:-0}" = 1 ] && exit 2
+        printf '#!/bin/bash\necho "psfgen stub"\n' > psfgen
+        chmod 755 psfgen
+    else
+        printf '#!/bin/bash\necho "NAMD stub 3.0.2"\n' > namd3
+        chmod 755 namd3
+    fi
 fi
 """
 # NAMD's config (in the source tarball): logs its arguments, one per line, and makes the directory its first one
@@ -227,6 +235,11 @@ def built(b: Build) -> Build:
     return b
 
 
+def namd_makes(b: Build) -> list[str]:
+    """make's calls in NAMD's Linux-* build directory that build namd3 (not the psfgen target)."""
+    return [line for line in b.log("make.log") if "/Linux-" in line and not line.endswith(" psfgen")]
+
+
 def assert_nothing_built(b: Build) -> None:
     """Exit status 1, and no FFTW, Charm++ or NAMD build step ran."""
     assert b.proc.returncode == 1, b.proc.stdout + b.proc.stderr
@@ -288,7 +301,7 @@ def test_namd_is_compiled_with_its_avx512_arch_and_the_env_script_says_so(tmp_pa
     directory, and the env script's comment line, which is the env script's only line that names the arch."""
     b = built(build(tmp_path, host_tools))
     assert b.args("config.args")[0] == "Linux-AVX512-g++"
-    (namd_make,) = [line for line in b.log("make.log") if "/Linux-" in line]
+    (namd_make,) = namd_makes(b)
     assert namd_make.split(" | ")[0].endswith("/Linux-AVX512-g++"), namd_make
     assert (b.install / "namd-3.0.2-x86-env.sh").read_text() == env_text(b, "Linux-AVX512-g++", "avx512")
 
@@ -319,7 +332,7 @@ def test_each_target_builds_with_its_flags_and_arch_into_its_own_install(target,
     assert config[0] == arch
     assert config[config.index("--cc-opts") + 1] == opts and config[config.index("--cxx-opts") + 1] == opts
     assert config[config.index("--fftw-prefix") + 1] == str(b.install / "fftw")
-    (namd_make,) = [line for line in b.log("make.log") if "/Linux-" in line]
+    (namd_make,) = namd_makes(b)
     assert namd_make.split(" | ")[0].endswith(f"/{arch}"), namd_make
     assert sorted(p.name for p in (b.base / "x86_64").iterdir()) == [f"3.0.2-{target}"]
     assert os.access(b.install / "bin" / "namd3", os.X_OK)
@@ -405,3 +418,22 @@ def test_another_fftw_version_with_no_sha256_prints_the_tarballs_and_goes_on(tmp
 def test_the_job_asks_slurm_for_a_time_limit_of_two_hours():
     header = [line for line in SCRIPT.read_text().splitlines() if line.startswith("#SBATCH")]
     assert [line for line in header if line.startswith("#SBATCH --time")] == ["#SBATCH --time=02:00:00"], header
+
+
+def test_psfgen_is_built_in_namds_build_directory_and_installed_beside_namd3(tmp_path, host_tools):
+    b = built(build(tmp_path, host_tools))
+    psfgen_makes = [line for line in b.log("make.log") if line.endswith(" psfgen")]
+    assert len(psfgen_makes) == 1 and psfgen_makes[0] == f"{namd_makes(b)[0].split(' | ')[0]} | -j4 psfgen", \
+        b.log("make.log")
+    assert os.access(b.install / "bin" / "psfgen", os.X_OK)
+    assert sorted(p.name for p in (b.install / "bin").iterdir()) == ["namd3", "psfgen"]
+    assert f"installed psfgen -> {b.install / 'bin' / 'psfgen'}" in b.proc.stdout
+    assert "NOTE: psfgen" not in b.proc.stderr
+
+
+def test_a_psfgen_that_does_not_build_leaves_namd3_installed_with_a_note(tmp_path, host_tools):
+    b = built(build(tmp_path, host_tools, env={"STUB_PSFGEN_FAIL": "1"}))
+    assert sorted(p.name for p in (b.install / "bin").iterdir()) == ["namd3"]
+    assert "NOTE: psfgen did not build; namd3 is installed without it, and only the 20STMV benchmark " \
+           "(MODEL=20STMV) needs it" in b.proc.stderr.splitlines(), b.proc.stderr
+    assert (b.install / "namd-3.0.2-x86-env.sh").exists()

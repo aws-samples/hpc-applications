@@ -4,6 +4,12 @@ These tests pin:
 - the settings it refuses before mpirun starts (MODEL, TIMESTEPS, PPN, BASE_DIR);
 - the deck: fetched from the NAMD utilities page (DHFR's from NAMD's benchmark page) into BASE_DIR/benchmarks/<MODEL>/
   when the cache lacks it, reused with no download when it holds it, and copied into a run directory of its own;
+- 20STMV: on first use, built from STMV with NAMD's construction scripts (stmv_sc14.tar.gz): the STMV deck (cached as
+  for MODEL=STMV) and the scripts are fetched, psfgen runs their make_5x2x2stmv.pgn in a build directory of its own,
+  and the result moves into BASE_DIR/benchmarks/20STMV/ once both its files exist; a built system is reused with no
+  download; no psfgen, a psfgen that does not write both files, a cache directory that holds other files, or a config
+  without its plugin I/O alternative stops the job before mpirun; the run directory links the cache's files, and the
+  run config reads the js structure through NAMD's plugin I/O;
 - the run's config: numsteps (and a run line) from TIMESTEPS, by default 1000, and for DHFR's GPU-offload config its
   num_steps_run, with doBenchmark and skipFFTWconfig set to 0; an outputTiming line when the deck has none, and the
   deck's output name without its directory, so NAMD writes its output files in the run directory; and the deck's
@@ -105,6 +111,16 @@ DECK_PAGES = {"DHFR": BENCHMARKS}
 def deck_url(model: str) -> str:
     return DECK_PAGES.get(model, UTILITIES) + DECKS[model][0]
 DECK_DATA = ("psf", "pdb")   # the other files of a deck, named <top>.<ext>
+DECK_EXTRA = {"STMV": ("par_all27_prot_na.inp",)}   # more files of a deck, by name
+# NAMD's construction scripts for 20STMV (stmv_sc14.tar.gz on the utilities page): the psfgen script and the config,
+# with the lines the launcher reads or changes (keywords as in NAMD's files, values synthetic).
+KIT = "stmv_sc14.tar.gz"
+KIT_PGN = ["readpsf stmv.psf", "coordpdb stmv.pdb", "writemol js 5x2x2stmv.js 5 {9.5 0 0} 2 {0 9.5 0} 2 {0 0 9.5}",
+           "writemol namdbin 5x2x2stmv.coor 5 {9.5 0 0} 2 {0 9.5 0} 2 {0 0 9.5}"]
+KIT_CONFIG = ["#genCompressedPsf on", "#usePluginIO yes", "#structure          5x2x2stmv.js", "useCompressedPsf on",
+              "structure          5x2x2stmv.js.inter", "bincoordinates     5x2x2stmv.coor",
+              "outputName          20stmv-output", "outputTiming        120", "numsteps            1200",
+              "parameters          par_all27_prot_na.inp", "stepspercycle       24"]
 
 # The stub curl. It logs each call's arguments to STATE/curl.log. The instance metadata answers as STUB_IMDS says:
 # ok (a token, then STUB_INSTANCE_TYPE), none (no answer: exit 28, no output), error (an HTTP error: exit 22 and no
@@ -231,6 +247,18 @@ exit "${STUB_RC:-0}"
 """
 # namd3, from the synthetic build: the stub mpirun never runs it.
 NAMD3_STUB = "#!/bin/bash\necho 'namd3 stub: not to be run' >&2\nexit 99\n"
+# psfgen, from the synthetic build: logs its working directory and arguments to STATE/psfgen.log, and its inputs
+# (ls -l stmv.psf stmv.pdb) to STATE/psfgen-inputs.txt; then, unless STUB_PSFGEN_RC is set (an error message, then
+# that exit status), it writes each file a "writemol <format> <file>" line of its script names, but STUB_PSFGEN_SKIP.
+PSFGEN_STUB = r"""#!/bin/bash
+printf '%s | %s\n' "$(pwd)" "$*" >> "${STATE}/psfgen.log"
+ls -l stmv.psf stmv.pdb > "${STATE}/psfgen-inputs.txt" 2>&1
+if [ "${STUB_PSFGEN_RC:-0}" != 0 ]; then echo "psfgen stub: a synthetic error"; exit "${STUB_PSFGEN_RC}"; fi
+while read -r cmd fmt file _; do
+    [ "${cmd}" = writemol ] && [ "${file}" != "${STUB_PSFGEN_SKIP:-}" ] && echo "synthetic ${fmt}" > "${file}"
+done < "$1"
+exit 0
+"""
 # The variables the launcher may hand the contribution recorder.
 RECORDER_VARS = ("BENCHMARK_CASE", "DAYS_PER_NS", "NS_PER_DAY", "TIME_TO_SOLUTION", "NUM_INSTANCES", "NUM_CORES",
                  "CORES_PER_NODE", "INSTANCE_TYPE", "RUN_DIR", "SOURCE", "ATOMS_MILLION", "NAMD_VERSION")
@@ -306,6 +334,20 @@ def deck_tarball(model: str, lines: list[str] | None = None) -> bytes:
     name, top, conf, default = DECKS[model]
     files = {conf: "\n".join(default if lines is None else lines) + "\n"}
     files.update({f"{top}.{ext}": f"synthetic {ext}\n" for ext in DECK_DATA})
+    files.update({extra: "synthetic\n" for extra in DECK_EXTRA.get(model, ())})
+    return tarball(top, files)
+
+
+def kit_tarball(config: list[str] | None = None) -> bytes:
+    """The 20STMV construction scripts' tarball: its psfgen script, its config (`config`, by default KIT_CONFIG) and a
+    README."""
+    return tarball("stmv_sc14", {"make_5x2x2stmv.pgn": "\n".join(KIT_PGN) + "\n",
+                                 "20stmv2fs.namd": "\n".join(KIT_CONFIG if config is None else config) + "\n",
+                                 "README": "synthetic\n"})
+
+
+def tarball(top: str, files: dict[str, str]) -> bytes:
+    """A .tar.gz of `files` ({name: text}) under the directory `top`."""
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         for fname, text in files.items():
@@ -317,14 +359,18 @@ def deck_tarball(model: str, lines: list[str] | None = None) -> bytes:
     return buf.getvalue()
 
 
-def make_build(base: Path, dirname: str = "3.0.2", exports: dict[str, str] | None = None) -> Path:
-    """A synthetic build under base/x86_64/<dirname> (<version>[-<target>]): a stub namd3 and the env script that puts
-    it on PATH."""
+def make_build(base: Path, dirname: str = "3.0.2", exports: dict[str, str] | None = None,
+               psfgen: bool = True) -> Path:
+    """A synthetic build under base/x86_64/<dirname> (<version>[-<target>]): a stub namd3 and, with `psfgen`, a stub
+    psfgen, and the env script that puts them on PATH."""
     root = base / "x86_64" / dirname
     version = dirname.split("-")[0]
     (root / "bin").mkdir(parents=True)
     (root / "bin" / "namd3").write_text(NAMD3_STUB)
     (root / "bin" / "namd3").chmod(0o755)
+    if psfgen:
+        (root / "bin" / "psfgen").write_text(PSFGEN_STUB)
+        (root / "bin" / "psfgen").chmod(0o755)
     env = {"NAMD_ROOT": str(root), "NAMD_VERSION": version, "CHARM_ARCH": "mpi-linux-x86_64-smp", **(exports or {})}
     script = root / f"namd-{version}-x86-env.sh"
     script.write_text("#!/bin/bash\n" + "".join(f'export {k}="{v}"\n' for k, v in env.items())
@@ -347,14 +393,16 @@ def runnable_copy(work: Path, cpuinfo: str) -> Path:
 
 def run(work: Path, tools: Path, nodes: int = 1, env: dict[str, str | None] | None = None, imds: str = "ok",
         itype: str = "hpc8a.96xlarge", namd_out: str = "complete", rc: int = 0, cached: dict | None = None,
-        decks: dict | None = None, builds: tuple = (HPC8A_BUILD,), cpuinfo: str = CPUINFO_AVX512) -> Job:
+        decks: dict | None = None, builds: tuple = (HPC8A_BUILD,), cpuinfo: str = CPUINFO_AVX512,
+        psfgen: bool = True, kit: list[str] | None = None) -> Job:
     """Run the script as a job on `nodes` nodes, from `work`/submit, with BASE_DIR `work`/base.
 
     `imds` and `itype` set the stub instance metadata, `namd_out` and `rc` the stub mpirun's output and exit status.
     `cached` puts decks in the cache ({MODEL: config lines or None for the default}), `decks` changes the tarballs the
     stub curl serves ({MODEL: config lines}). `builds` are the synthetic builds ((dirname, exports), ...), `cpuinfo`
-    the node's /proc/cpuinfo. DYNAMODB_RECORDER is the stub recorder. `env` adds variables to the job's environment,
-    or unsets them (None)."""
+    the node's /proc/cpuinfo, `psfgen` whether the builds hold psfgen, and `kit` the lines of the 20STMV scripts'
+    config. DYNAMODB_RECORDER is the stub recorder. `env` adds variables to the job's environment, or unsets them
+    (None)."""
     stubs, state, submit, base, served, tmp = (work / d for d in ("stubs", "state", "submit", "base", "decks", "tmp"))
     for d in (stubs, state, submit, base, served, tmp):
         d.mkdir(parents=True, exist_ok=True)
@@ -365,6 +413,7 @@ def run(work: Path, tools: Path, nodes: int = 1, env: dict[str, str | None] | No
     for model in DECKS:
         lines = (decks or {}).get(model)
         (served / DECKS[model][0]).write_bytes(deck_tarball(model, lines))
+    (served / KIT).write_bytes(kit_tarball(kit))
     for model, lines in (cached or {}).items():
         _, top, conf, default = DECKS[model]
         cache = base / "benchmarks" / model
@@ -372,8 +421,10 @@ def run(work: Path, tools: Path, nodes: int = 1, env: dict[str, str | None] | No
         (cache / conf).write_text("\n".join(default if lines is None else lines) + "\n")
         for ext in DECK_DATA:
             (cache / f"{top}.{ext}").write_text(f"synthetic cached {ext}\n")
+        for extra in DECK_EXTRA.get(model, ()):
+            (cache / extra).write_text("synthetic cached\n")
     for dirname, exports in builds:
-        make_build(base, dirname, exports)
+        make_build(base, dirname, exports, psfgen)
     job_env = {"PATH": f"{stubs}{os.pathsep}{tools}", "HOME": str(work), "LC_ALL": "POSIX", "TMPDIR": str(tmp),
                "STATE": str(state), "STUB_IMDS": imds, "STUB_INSTANCE_TYPE": itype, "STUB_NAMD_OUT": namd_out,
                "STUB_RC": str(rc), "STUB_DECKS": str(served), "SLURM_JOB_ID": JOB_ID,
@@ -471,8 +522,10 @@ def test_no_efa_on_two_nodes_stops_the_job_before_mpirun(tmp_path, host_tools):
 
 REFUSED = [
     pytest.param({"MODEL": "apoa1"}, "MODEL='apoa1' invalid", id="MODEL=apoa1"),
-    pytest.param({"MODEL": "JAC"}, "MODEL='JAC' invalid (supported: ApoA1, ATPase, STMV, DHFR)", id="MODEL=JAC"),
+    pytest.param({"MODEL": "JAC"}, "MODEL='JAC' invalid (supported: ApoA1, ATPase, STMV, DHFR, 20STMV)",
+                 id="MODEL=JAC"),
     pytest.param({"MODEL": "dhfr"}, "MODEL='dhfr' invalid", id="MODEL=dhfr"),
+    pytest.param({"MODEL": "20stmv"}, "MODEL='20stmv' invalid", id="MODEL=20stmv"),
     pytest.param({"MODEL": "F1-ATPase"}, "MODEL='F1-ATPase' invalid", id="MODEL=F1-ATPase"),
     *(pytest.param({"TIMESTEPS": v}, f"TIMESTEPS='{v}' invalid", id=f"TIMESTEPS={v}")
       for v in ("0", "10000001", "1e3")),
@@ -1060,7 +1113,7 @@ def test_the_downloaded_archive_stays_out_of_the_cache_and_the_run_directory(mod
     job = run(tmp_path, host_tools, env={"MODEL": model})
     started(job)
     _, top, conf, _ = DECKS[model]
-    files = sorted([conf, *(f"{top}.{ext}" for ext in DECK_DATA)])
+    files = sorted([conf, *(f"{top}.{ext}" for ext in DECK_DATA), *DECK_EXTRA.get(model, ())])
     assert sorted(p.name for p in (job.base / "benchmarks" / model).iterdir()) == files
     (run_dir,) = job.run_dirs()
     names = {p.name for p in run_dir.iterdir()}
@@ -1260,3 +1313,129 @@ def test_the_contribution_recorder_records_the_run_in_a_dry_run(tmp_path, host_t
     assert "WARN" not in job.proc.stderr and "NOTE:" not in job.proc.stderr, job.proc.stderr
     (run_dir,) = job.run_dirs()
     assert not list(run_dir.glob("*.json"))
+
+
+# What 20STMV's run config is: the scripts' config with NAMD's plugin I/O and the js structure in place of the
+# compressed structure, and TIMESTEPS.
+STMV20_RUN_CONFIG = ["#genCompressedPsf on", "usePluginIO yes", "structure          5x2x2stmv.js",
+                     "#useCompressedPsf on", "#structure          5x2x2stmv.js.inter",
+                     "bincoordinates     5x2x2stmv.coor", "outputName          20stmv-output",
+                     "outputTiming        120", "numsteps 1000", "parameters          par_all27_prot_na.inp",
+                     "stepspercycle       24"]
+STMV20_FILES = ["20stmv2fs.namd", "5x2x2stmv.coor", "5x2x2stmv.js", "README", "make_5x2x2stmv.pgn",
+                "par_all27_prot_na.inp", "psfgen.log"]
+
+
+def psfgen_calls(job: Job) -> list[str]:
+    return (job.state / "psfgen.log").read_text().splitlines() if (job.state / "psfgen.log").exists() else []
+
+
+def build_dirs(job: Job) -> list[Path]:
+    benchmarks = job.base / "benchmarks"
+    return sorted(benchmarks.glob(".20STMV-build.*")) if benchmarks.is_dir() else []
+
+
+def test_20stmv_is_built_on_first_use_from_stmv_with_namds_construction_scripts(tmp_path, host_tools):
+    """The STMV deck and the scripts are fetched, the scripts' psfgen script runs once in a build directory of its
+    own with STMV's structure linked there, and the 20STMV cache holds the result, the scripts and STMV's parameter
+    file; the run directory links the cache's files, and the run config reads the js structure."""
+    job = run(tmp_path, host_tools, env={"MODEL": "20STMV"})
+    call = started(job)
+    assert [d.rsplit(" ", 1)[-1] for d in deck_downloads(job)] == [UTILITIES + "stmv.tar.gz", UTILITIES + KIT]
+    (psfgen,) = psfgen_calls(job)
+    cwd, args = psfgen.split(" | ")
+    assert Path(cwd).name.startswith(".20STMV-build.") and Path(cwd).parent == job.base / "benchmarks"
+    assert args == "make_5x2x2stmv.pgn"
+    inputs = (job.state / "psfgen-inputs.txt").read_text()
+    stmv = job.base / "benchmarks" / "STMV"
+    assert f"stmv.psf -> {stmv / 'stmv.psf'}" in inputs and f"stmv.pdb -> {stmv / 'stmv.pdb'}" in inputs, inputs
+    cache = job.base / "benchmarks" / "20STMV"
+    assert sorted(p.name for p in cache.iterdir()) == STMV20_FILES
+    assert (cache / "5x2x2stmv.js").read_text() == "synthetic js\n"
+    assert (cache / "5x2x2stmv.coor").read_text() == "synthetic namdbin\n"
+    assert sorted(p.name for p in stmv.iterdir()) == ["par_all27_prot_na.inp", "stmv.namd", "stmv.pdb", "stmv.psf"]
+    assert build_dirs(job) == []
+    (run_dir,) = job.run_dirs()
+    for name in STMV20_FILES:
+        assert (run_dir / name).is_symlink() and (run_dir / name).resolve() == cache / name, name
+    assert not (run_dir / "run-20STMV.namd").is_symlink()
+    assert call["config"] == STMV20_RUN_CONFIG
+    assert namd_words(call)[-1] == "run-20STMV.namd"
+    assert any(line.startswith("NAMDRESULT model=20STMV ") for line in job.out), job.out
+    assert (cache / "20stmv2fs.namd").read_text().splitlines() == KIT_CONFIG
+
+
+def test_a_built_20stmv_is_reused_with_no_download_and_no_psfgen(tmp_path, host_tools):
+    cache = tmp_path / "base" / "benchmarks" / "20STMV"
+    cache.mkdir(parents=True)
+    (cache / "20stmv2fs.namd").write_text("\n".join(KIT_CONFIG) + "\n")
+    for name in ("5x2x2stmv.js", "5x2x2stmv.coor", "par_all27_prot_na.inp"):
+        (cache / name).write_text("synthetic cached\n")
+    job = run(tmp_path, host_tools, env={"MODEL": "20STMV"})
+    assert started(job)["config"] == STMV20_RUN_CONFIG
+    assert deck_downloads(job) == [] and psfgen_calls(job) == []
+
+
+def test_a_cached_stmv_deck_is_used_to_build_20stmv(tmp_path, host_tools):
+    job = run(tmp_path, host_tools, env={"MODEL": "20STMV"}, cached={"STMV": None})
+    started(job)
+    assert [d.rsplit(" ", 1)[-1] for d in deck_downloads(job)] == [UTILITIES + KIT]
+    assert len(psfgen_calls(job)) == 1
+
+
+@pytest.mark.parametrize("timesteps", ["1200", "2400"])
+def test_timesteps_sets_20stmvs_numsteps(timesteps, tmp_path, host_tools):
+    config = started(run(tmp_path, host_tools, env={"MODEL": "20STMV", "TIMESTEPS": timesteps}))["config"]
+    assert run_length(config) == [f"numsteps {timesteps}"]
+
+
+def assert_not_built(job: Job) -> None:
+    """The job stopped with status 1 before mpirun and before a run directory, leaving no 20STMV cache and no build
+    directory."""
+    assert job.proc.returncode == 1, job.proc.stdout + job.proc.stderr
+    assert job.calls == [] and job.run_dirs() == []
+    assert not (job.base / "benchmarks" / "20STMV").exists()
+    assert build_dirs(job) == []
+
+
+def test_with_no_psfgen_20stmv_stops_the_job_before_anything_is_fetched(tmp_path, host_tools):
+    job = run(tmp_path, host_tools, env={"MODEL": "20STMV"}, psfgen=False)
+    assert_not_built(job)
+    env_script = job.base / "x86_64" / "3.0.2-hpc8a" / "namd-3.0.2-x86-env.sh"
+    assert f"ERROR: MODEL=20STMV builds its system with psfgen, and none is on the PATH after sourcing {env_script}: " \
+           "build NAMD with x86/build_namd_x86.sbatch, which installs psfgen beside namd3, or put a 20STMV deck " \
+           f"built with NAMD's scripts in {job.base / 'benchmarks' / '20STMV'}/" in job.err, job.err
+    assert deck_downloads(job) == []
+
+
+@pytest.mark.parametrize("env", [{"STUB_PSFGEN_RC": "3"}, {"STUB_PSFGEN_SKIP": "5x2x2stmv.coor"},
+                                 {"STUB_PSFGEN_SKIP": "5x2x2stmv.js"}],
+                         ids=["psfgen exits 3", "no coordinates", "no structure"])
+def test_a_psfgen_that_does_not_write_both_files_stops_the_job_and_leaves_no_20stmv_cache(env, tmp_path,
+                                                                                         host_tools):
+    job = run(tmp_path, host_tools, env={"MODEL": "20STMV", **env})
+    assert_not_built(job)
+    assert "ERROR: psfgen did not write 20STMV's 5x2x2stmv.js and 5x2x2stmv.coor (the end of its log is above)" \
+        in job.err, job.err
+    if "STUB_PSFGEN_RC" in env:
+        assert "psfgen stub: a synthetic error" in job.err
+    assert (job.base / "benchmarks" / "STMV" / "stmv.namd").exists()
+
+
+def test_a_20stmv_cache_directory_with_other_files_stops_the_job(tmp_path, host_tools):
+    cache = tmp_path / "base" / "benchmarks" / "20STMV"
+    cache.mkdir(parents=True)
+    (cache / "notes.txt").write_text("synthetic\n")
+    job = run(tmp_path, host_tools, env={"MODEL": "20STMV"})
+    assert job.proc.returncode == 1 and job.calls == [] and job.run_dirs() == []
+    assert f"ERROR: {cache} holds other files, so the built 20STMV system could not be moved there: remove it and " \
+           "run again" in job.err, job.err
+    assert sorted(p.name for p in cache.iterdir()) == ["notes.txt"] and build_dirs(job) == []
+
+
+@pytest.mark.parametrize("dropped", ["#usePluginIO yes", "#structure          5x2x2stmv.js"])
+def test_a_20stmv_config_without_its_plugin_alternative_stops_the_job_before_mpirun(dropped, tmp_path, host_tools):
+    job = run(tmp_path, host_tools, env={"MODEL": "20STMV"}, kit=[line for line in KIT_CONFIG if line != dropped])
+    assert job.proc.returncode == 1 and job.calls == []
+    assert any(line.startswith("ERROR: 20stmv2fs.namd does not have the lines this launcher expects (its usePluginIO "
+                               "and js structure lines, commented out): see ") for line in job.err), job.err
