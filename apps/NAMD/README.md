@@ -106,7 +106,7 @@ The launcher:
 |---|---|---|
 | `NAMD_ENV` | the build of the node's instance family | The build's env script |
 | `MODEL` | `ApoA1` | `ApoA1`, `ATPase` (F1-ATPase) or `STMV` |
-| `TIMESTEPS` | the deck's | The run's `numsteps`, 1 to 10,000,000 |
+| `TIMESTEPS` | `1000` | The run's `numsteps` (and a `run` line's steps), 1 to 10,000,000 |
 | `PPN` | the process's cores − 1 | Worker threads (PEs) per process, 1 to 192. With one process per node on hpc8a.96xlarge and hpc7a.96xlarge: 23, 47, 71, 95, 119, 143, 167, 191 or 192 (see below). With more than one, the process's cores − 1 |
 | `PROCS_PER_NODE` | `1` | NAMD processes per node: a number that divides the node's cores and leaves each process at least two (see "Processes per node") |
 | `NAMD_EXTRA_ARGS` | none | `namd3` options added before the config, each a `+` and a name, for example `+notiles`. The launcher sets `+ppn`, `+setcpuaffinity`, `+pemap` and `+commap` itself |
@@ -171,8 +171,8 @@ values.
 | `STMV` | Satellite tobacco mosaic virus | 1,066,628 | 500 | 216 × 216 × 216 | [`stmv.tar.gz`](https://www.ks.uiuc.edu/Research/namd/utilities/stmv.tar.gz) |
 
 The three decks come from the [NAMD utilities page](https://www.ks.uiuc.edu/Research/namd/utilities/), each with PME
-and a time step of 1 fs. The launcher fetches each one on first use and keeps it at `${BASE_DIR}/benchmarks/<MODEL>/`;
-delete that directory to fetch it again.
+and a time step of 1 fs. The launcher runs 1,000 steps of each by default (`TIMESTEPS`). It fetches each deck on first
+use and keeps it at `${BASE_DIR}/benchmarks/<MODEL>/`; delete that directory to fetch it again.
 
 ## Metrics
 
@@ -182,8 +182,12 @@ NAMD prints its speed while it runs, on lines of this form:
 Info: Benchmark time: <CPUs> CPUs <s> s/step <d> days/ns <MB> MB memory
 ```
 
-The launcher takes the days/ns of the last such line and reports ns/day = 1 / (days/ns), with NAMD's closing
-`WallClock:` time.
+NAMD prints a timing line every 5 × `stepspercycle` steps, 100 for the three decks: `Initial time:` for the first
+three, then `Benchmark time:` up to step 900, each one the wall time per step over the 100 steps before it. A run of
+1,000 steps, the launcher's default, prints six `Benchmark time:` lines, for steps 400 to 900; the decks' own 500 steps
+print two. NAMD's user guide ("Improving Parallel Scaling") points to these lines to measure parallel performance.
+The launcher takes the days/ns of the last one and reports ns/day = 1 / (days/ns), with NAMD's closing `WallClock:`
+time.
 
 When NAMD fails, the job ends with NAMD's exit status, after an `ERROR:` that names the run's `namd.out`. When NAMD
 exits 0, the launcher reports a result only from a complete run: `namd.out` must have NAMD's closing `WallClock:` line,

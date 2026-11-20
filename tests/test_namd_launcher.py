@@ -4,7 +4,8 @@ These tests pin:
 - the settings it refuses before mpirun starts (MODEL, TIMESTEPS, PPN, BASE_DIR);
 - the deck: fetched from the NAMD utilities page into BASE_DIR/benchmarks/<MODEL>/ when the cache lacks it, reused
   with no download when it holds it, and copied into a run directory of its own;
-- the run's config: numsteps from TIMESTEPS, an outputTiming line when the deck has none, and the deck's output name
+- the run's config: numsteps (and a run line) from TIMESTEPS, by default 1000, an outputTiming line when the deck has
+  none, and the deck's output name
   without its directory, so NAMD writes its output files in the run directory; and the deck's downloaded archive kept
   out of the cache and the run directory;
 - mpirun's command line, on one node and on two (where the job first checks EFA with fi_info), and NAMD's PEs;
@@ -1016,3 +1017,24 @@ def test_f1_atpase_comes_from_its_tarball_and_runs_its_config(tmp_path, host_too
     assert namd_words(call)[-1] == "run-ATPase.namd"
     assert [line for line in call["config"] if line.lower().startswith("outputtiming")] == ["outputTiming\t\t20"]
     assert any(line.startswith("NAMDRESULT model=ATPase ") for line in job.out), job.out
+
+
+@pytest.mark.parametrize("model", list(DECKS))
+def test_by_default_the_run_is_1000_steps(model, tmp_path, host_tools):
+    """The run config's numsteps is 1000, the cached deck keeps its own, and NAMD prints six Benchmark time lines."""
+    job = run(tmp_path, host_tools, env={"MODEL": model})
+    config = started(job)["config"]
+    assert [line for line in config if line.lower().startswith("numsteps")] == ["numsteps 1000"]
+    _, _, conf, lines = DECKS[model]
+    cached = (job.base / "benchmarks" / model / conf).read_text().splitlines()
+    assert cached == lines
+    (run_dir,) = job.run_dirs()
+    assert sum("Benchmark time:" in line for line in (run_dir / "namd.out").read_text().splitlines()) == 6
+
+
+@pytest.mark.parametrize("steps", ["500", "20000"])
+def test_timesteps_sets_numsteps_and_a_run_line(steps, tmp_path, host_tools):
+    lines = [*DECKS["ApoA1"][3], "RUN 500"]
+    config = started(run(tmp_path, host_tools, decks={"ApoA1": lines}, env={"TIMESTEPS": steps}))["config"]
+    assert [line for line in config if line.lower().startswith(("numsteps", "run "))] == [f"numsteps {steps}",
+                                                                                         f"run {steps}"]

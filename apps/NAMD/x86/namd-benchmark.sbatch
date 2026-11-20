@@ -27,7 +27,8 @@
 #   NAMD_ENV    env script from the build (default: the build of this node's
 #               instance family under ${BASE_DIR}/x86_64/, see below)
 #   MODEL       ApoA1 | ATPase | STMV              (default ApoA1)
-#   TIMESTEPS   numsteps override, 1..10000000     (default: model default)
+#   TIMESTEPS   the run's numsteps, 1..10000000    (default 1000: six
+#               Benchmark time lines, see below)
 #   PPN         worker threads (PEs) per process   (default: the process's
 #               cores - 1; with one process per node on hpc8a.96xlarge and
 #               hpc7a.96xlarge 23, 47, 71, 95, 119, 143, 167, 191 or 192, see
@@ -41,7 +42,7 @@ set -uo pipefail
 
 NAMD_ENV="${NAMD_ENV:-}"
 MODEL="${MODEL:-ApoA1}"
-TIMESTEPS="${TIMESTEPS:-}"
+TIMESTEPS="${TIMESTEPS:-1000}"
 PPN="${PPN:-}"
 PROCS_PER_NODE="${PROCS_PER_NODE:-1}"
 NAMD_EXTRA_ARGS="${NAMD_EXTRA_ARGS:-}"
@@ -57,10 +58,8 @@ esac
 
 # --- Validate overrides --------------------------------------------------
 case "${BASE_DIR}" in /*) ;; *) fail "BASE_DIR must be an absolute path (got '${BASE_DIR}')" ;; esac
-if [ -n "${TIMESTEPS}" ]; then
-  [[ "${TIMESTEPS}" =~ ^[0-9]+$ ]] && [ "${TIMESTEPS}" -ge 1 ] && [ "${TIMESTEPS}" -le 10000000 ] \
-    || fail "TIMESTEPS='${TIMESTEPS}' invalid (integer 1..10000000)"
-fi
+[[ "${TIMESTEPS}" =~ ^[0-9]+$ ]] && [ "${TIMESTEPS}" -ge 1 ] && [ "${TIMESTEPS}" -le 10000000 ] \
+  || fail "TIMESTEPS='${TIMESTEPS}' invalid (integer 1..10000000)"
 if [ -n "${PPN}" ]; then
   [[ "${PPN}" =~ ^[1-9][0-9]*$ ]] && [ "${PPN}" -le 192 ] \
     || fail "PPN='${PPN}' invalid (integer 1..192)"
@@ -280,11 +279,13 @@ cd "${WORK}" || fail "cannot cd into ${WORK}"
 # --- Build the per-run config (override numsteps, ensure timing output) ---
 RUNCONF="run-${MODEL}.namd"
 cp "${CONF}" "${RUNCONF}"
-if [ -n "${TIMESTEPS}" ]; then
-  # Override numsteps / final 'run N' so the benchmark length is deterministic.
-  sed -i -E "s/^[[:space:]]*numsteps[[:space:]]+[0-9]+/numsteps ${TIMESTEPS}/I" "${RUNCONF}"
-  sed -i -E "s/^[[:space:]]*run[[:space:]]+[0-9]+/run ${TIMESTEPS}/I" "${RUNCONF}"
-fi
+# The run's length: numsteps (and a final 'run N') become TIMESTEPS, by default
+# 1000. NAMD prints a timing line every 5 x stepspercycle steps (100 for the
+# three decks), "Initial time:" for the first three and "Benchmark time:" from
+# step 400 to step 900: six Benchmark time lines in a 1,000-step run, two in the
+# decks' own 500 steps.
+sed -i -E "s/^[[:space:]]*numsteps[[:space:]]+[0-9]+/numsteps ${TIMESTEPS}/I" "${RUNCONF}"
+sed -i -E "s/^[[:space:]]*run[[:space:]]+[0-9]+/run ${TIMESTEPS}/I" "${RUNCONF}"
 grep -qiE "^[[:space:]]*outputTiming" "${RUNCONF}" || echo "outputTiming 20" >> "${RUNCONF}"
 # The decks write their output files (.coor, .vel, .xsc) to /usr/tmp/<name>:
 # the run config keeps the name and drops the directory, so NAMD writes them in
