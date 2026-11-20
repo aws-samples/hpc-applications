@@ -7,7 +7,7 @@ The shell scripts under apps/NAMD/ contain pure-function logic:
   * env-script string generation (the heredoc in build_namd_x86.sbatch)
   * NAMD stdout parsing for `Info: Benchmark time: ... <days/ns> days/ns`
     and `WallClock: <s>`, with days/ns -> ns/day = 1 / days_per_ns
-  * MODEL validation (ApoA1 / STMV) and deck-cache reuse
+  * MODEL validation (ApoA1 / ATPase / STMV) and deck-cache reuse
 
 We re-implement that logic in Python below and exercise it with
 Hypothesis-generated inputs to verify the properties hold. The Python
@@ -109,11 +109,11 @@ def parse_namd_output(text: str) -> tuple[float, float, float | None]:
     return days_per_ns, ns_per_day, wall
 
 
-SUPPORTED_MODELS = ("ApoA1", "STMV")
+SUPPORTED_MODELS = ("ApoA1", "ATPase", "STMV")
 
 
 def model_is_valid(model: str) -> bool:
-    """Mirror of the `case ${MODEL} in ApoA1|STMV)` guard."""
+    """Mirror of the `case ${MODEL} in ApoA1|ATPase|STMV)` guard."""
     return model in SUPPORTED_MODELS
 
 
@@ -146,7 +146,7 @@ charm_archs = st.sampled_from([
     "mpi-linux-arm8-smp",
 ])
 openmpi_modules = st.sampled_from(["openmpi/4.1.7", "openmpi5/5.0.9amzn1"])
-models = st.sampled_from(["ApoA1", "STMV"])
+models = st.sampled_from(["ApoA1", "ATPase", "STMV"])
 bad_models = st.text(min_size=0, max_size=12).filter(
     lambda s: s not in SUPPORTED_MODELS
 )

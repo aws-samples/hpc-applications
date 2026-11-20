@@ -6,7 +6,8 @@
 #SBATCH --exclusive
 #SBATCH --output=namd-x86-%j.out
 #
-# Run a standard NAMD benchmark (ApoA1 / STMV) on x86 HPC instances over EFA.
+# Run a standard NAMD benchmark (ApoA1 / F1-ATPase / STMV) on x86 HPC instances
+# over EFA.
 #
 # NAMD is built on Charm++ (MPI/SMP backend over the system OpenMPI). This
 # launcher uses mpirun to start PROCS_PER_NODE processes per node (default 1),
@@ -25,7 +26,7 @@
 # Override via --export=ALL,...:
 #   NAMD_ENV    env script from the build (default: the build of this node's
 #               instance family under ${BASE_DIR}/x86_64/, see below)
-#   MODEL       ApoA1 | STMV                       (default ApoA1)
+#   MODEL       ApoA1 | ATPase | STMV              (default ApoA1)
 #   TIMESTEPS   numsteps override, 1..10000000     (default: model default)
 #   PPN         worker threads (PEs) per process   (default: the process's
 #               cores - 1; with one process per node on hpc8a.96xlarge and
@@ -50,8 +51,8 @@ fail() { echo "ERROR: $*" >&2; exit 1; }
 
 # --- Validate MODEL ------------------------------------------------------
 case "${MODEL}" in
-  ApoA1|STMV) ;;
-  *) fail "MODEL='${MODEL}' invalid (supported: ApoA1, STMV)" ;;
+  ApoA1|ATPase|STMV) ;;
+  *) fail "MODEL='${MODEL}' invalid (supported: ApoA1, ATPase, STMV)" ;;
 esac
 
 # --- Validate overrides --------------------------------------------------
@@ -242,9 +243,10 @@ fi
 # --- Fetch + cache the benchmark deck ------------------------------------
 declare -A DECK_URL=(
   [ApoA1]="https://www.ks.uiuc.edu/Research/namd/utilities/apoa1.tar.gz"
+  [ATPase]="https://www.ks.uiuc.edu/Research/namd/utilities/f1atpase.tar.gz"
   [STMV]="https://www.ks.uiuc.edu/Research/namd/utilities/stmv.tar.gz"
 )
-declare -A DECK_CONF=( [ApoA1]="apoa1.namd" [STMV]="stmv.namd" )
+declare -A DECK_CONF=( [ApoA1]="apoa1.namd" [ATPase]="f1atpase.namd" [STMV]="stmv.namd" )
 CACHE_DIR="${BASE_DIR}/benchmarks/${MODEL}"
 CONF="${DECK_CONF[${MODEL}]}"
 if [ ! -s "${CACHE_DIR}/${CONF}" ]; then
@@ -254,8 +256,8 @@ if [ ! -s "${CACHE_DIR}/${CONF}" ]; then
   if curl -fsSL --max-time 600 --retry 3 -o "${tmp}/deck.tar.gz" "${DECK_URL[${MODEL}]}"; then
     mkdir "${tmp}/deck"
     tar xzf "${tmp}/deck.tar.gz" -C "${tmp}/deck"
-    # decks extract into a subdir (apoa1/ or stmv/); flatten its files, not the
-    # downloaded archive, into the cache
+    # decks extract into a subdir (apoa1/, f1atpase/ or stmv/); flatten its
+    # files, not the downloaded archive, into the cache
     find "${tmp}/deck" -type f -exec cp -n {} "${CACHE_DIR}/" \;
     rm -rf "${tmp}"
   else

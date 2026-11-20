@@ -105,7 +105,7 @@ The launcher:
 | Variable | Default | Description |
 |---|---|---|
 | `NAMD_ENV` | the build of the node's instance family | The build's env script |
-| `MODEL` | `ApoA1` | `ApoA1` or `STMV` |
+| `MODEL` | `ApoA1` | `ApoA1`, `ATPase` (F1-ATPase) or `STMV` |
 | `TIMESTEPS` | the deck's | The run's `numsteps`, 1 to 10,000,000 |
 | `PPN` | the process's cores − 1 | Worker threads (PEs) per process, 1 to 192. With one process per node on hpc8a.96xlarge and hpc7a.96xlarge: 23, 47, 71, 95, 119, 143, 167, 191 or 192 (see below). With more than one, the process's cores − 1 |
 | `PROCS_PER_NODE` | `1` | NAMD processes per node: a number that divides the node's cores and leaves each process at least two (see "Processes per node") |
@@ -164,14 +164,15 @@ values.
 
 ## Benchmark models
 
-| `MODEL` | System | Atoms | Steps in the deck |
-|---|---|--:|--:|
-| `ApoA1` | Apolipoprotein A1 | 92,224 | 500 |
-| `STMV` | Satellite tobacco mosaic virus | 1,066,628 | 500 |
+| `MODEL` | System | Atoms | Steps in the deck | PME grid | Deck |
+|---|---|--:|--:|---|---|
+| `ApoA1` | Apolipoprotein A1 | 92,224 | 500 | 108 × 108 × 80 | [`apoa1.tar.gz`](https://www.ks.uiuc.edu/Research/namd/utilities/apoa1.tar.gz) |
+| `ATPase` | F1-ATPase | 327,506 | 500 | 192 × 144 × 144 | [`f1atpase.tar.gz`](https://www.ks.uiuc.edu/Research/namd/utilities/f1atpase.tar.gz) |
+| `STMV` | Satellite tobacco mosaic virus | 1,066,628 | 500 | 216 × 216 × 216 | [`stmv.tar.gz`](https://www.ks.uiuc.edu/Research/namd/utilities/stmv.tar.gz) |
 
-Both decks come from the [NAMD utilities page](https://www.ks.uiuc.edu/Research/namd/utilities/), with PME and a
-time step of 1 fs. The launcher fetches each one on first use and keeps it at `${BASE_DIR}/benchmarks/<MODEL>/`; delete
-that directory to fetch it again.
+The three decks come from the [NAMD utilities page](https://www.ks.uiuc.edu/Research/namd/utilities/), each with PME
+and a time step of 1 fs. The launcher fetches each one on first use and keeps it at `${BASE_DIR}/benchmarks/<MODEL>/`;
+delete that directory to fetch it again.
 
 ## Metrics
 
@@ -215,5 +216,5 @@ On more than one node, the job's log shows the `fi_info` listing of provider `ef
 | File | Description |
 |---|---|
 | [`x86/build_namd_x86.sbatch`](x86/build_namd_x86.sbatch) | Builds static FFTW, Charm++ (`mpi-linux-x86_64-smp`, on the system Open MPI) and NAMD; installs `namd3` and its env script |
-| [`x86/namd-benchmark.sbatch`](x86/namd-benchmark.sbatch) | Runs ApoA1 or STMV with `mpirun`; fetches and caches the deck; reports days/ns and ns/day |
+| [`x86/namd-benchmark.sbatch`](x86/namd-benchmark.sbatch) | Runs ApoA1, F1-ATPase or STMV with `mpirun`; fetches and caches the deck; reports days/ns and ns/day |
 | [`tests/test_namd_launcher.py`](../../tests/test_namd_launcher.py), [`tests/test_namd_build.py`](../../tests/test_namd_build.py), [`tests/test_namd_properties.py`](../../tests/test_namd_properties.py) | Tests of the two scripts, with stubs only: no NAMD, MPI or Slurm needed |

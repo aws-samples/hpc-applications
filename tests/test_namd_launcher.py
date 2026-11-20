@@ -75,6 +75,10 @@ DECKS = {
              ["structure           stmv.psf", "coordinates         stmv.pdb", "timestep            1.0",
               "stepspercycle       20", "outputName          /usr/tmp/stmv-output", "outputTiming        20",
               "numsteps 500"]),
+    "ATPase": ("f1atpase.tar.gz", "f1atpase", "f1atpase.namd",
+               ["coordinates             f1atpase.pdb", "structure               f1atpase.psf",
+                "outputname              /usr/tmp/f1atpase", "timestep                1.0",
+                "numsteps                500", "stepspercycle           20", "outputTiming\t\t20"]),
 }
 DECK_DATA = ("psf", "pdb")   # the other files of a deck, named <top>.<ext>
 
@@ -412,7 +416,8 @@ def test_no_efa_on_two_nodes_stops_the_job_before_mpirun(tmp_path, host_tools):
 
 REFUSED = [
     pytest.param({"MODEL": "apoa1"}, "MODEL='apoa1' invalid", id="MODEL=apoa1"),
-    pytest.param({"MODEL": "DHFR"}, "MODEL='DHFR' invalid", id="MODEL=DHFR"),
+    pytest.param({"MODEL": "DHFR"}, "MODEL='DHFR' invalid (supported: ApoA1, ATPase, STMV)", id="MODEL=DHFR"),
+    pytest.param({"MODEL": "F1-ATPase"}, "MODEL='F1-ATPase' invalid", id="MODEL=F1-ATPase"),
     *(pytest.param({"TIMESTEPS": v}, f"TIMESTEPS='{v}' invalid", id=f"TIMESTEPS={v}")
       for v in ("0", "10000001", "1e3")),
     *(pytest.param({"PPN": v}, f"PPN='{v}' invalid", id=f"PPN={v}") for v in ("0", "193", "abc")),
@@ -966,6 +971,7 @@ def output_names(config: list[str]) -> list[str]:
 
 
 @pytest.mark.parametrize("model, name", [("ApoA1", "outputname           apoa1-out"),
+                                         ("ATPase", "outputname              f1atpase"),
                                          ("STMV", "outputName          stmv-output")])
 def test_the_run_config_names_its_output_without_the_decks_directory(model, name, tmp_path, host_tools):
     config = started(run(tmp_path, host_tools, env={"MODEL": model}))["config"]
@@ -999,3 +1005,14 @@ def test_the_downloaded_archive_stays_out_of_the_cache_and_the_run_directory(mod
     (run_dir,) = job.run_dirs()
     names = {p.name for p in run_dir.iterdir()}
     assert set(files) <= names and not any(n.endswith(".tar.gz") for n in names), names
+
+
+def test_f1_atpase_comes_from_its_tarball_and_runs_its_config(tmp_path, host_tools):
+    """MODEL=ATPase: f1atpase.tar.gz from the NAMD utilities page and f1atpase.namd, whose outputTiming line (after a
+    tab) is kept, with no second one added."""
+    job = run(tmp_path, host_tools, env={"MODEL": "ATPase"})
+    call = started(job)
+    assert deck_downloads(job)[0].endswith(UTILITIES + "f1atpase.tar.gz")
+    assert namd_words(call)[-1] == "run-ATPase.namd"
+    assert [line for line in call["config"] if line.lower().startswith("outputtiming")] == ["outputTiming\t\t20"]
+    assert any(line.startswith("NAMDRESULT model=ATPase ") for line in job.out), job.out
