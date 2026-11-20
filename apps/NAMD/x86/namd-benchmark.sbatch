@@ -68,16 +68,21 @@ CORES_PER_NODE="${SLURM_CPUS_ON_NODE:-$(nproc)}"
 # SMP: one process per node, 1 comm thread + PPN worker threads. Reserve a core
 # for the communication thread by default.
 [ -n "${PPN}" ] || PPN=$(( CORES_PER_NODE > 1 ? CORES_PER_NODE - 1 : 1 ))
-# Instance type via IMDSv2 (token-authenticated), falling back to "unknown".
-IMDS_TOKEN="$(curl -s --max-time 2 -X PUT "http://169.254.169.254/latest/api/token" \
-  -H "X-aws-ec2-metadata-token-ttl-seconds: 60" 2>/dev/null || true)"
-INSTANCE_TYPE="$(curl -s --max-time 2 ${IMDS_TOKEN:+-H "X-aws-ec2-metadata-token: ${IMDS_TOKEN}"} \
-  http://169.254.169.254/latest/meta-data/instance-type 2>/dev/null || echo unknown)"
-[ -n "${INSTANCE_TYPE}" ] || INSTANCE_TYPE="unknown"
+# Instance metadata (IMDSv2). Each read gives up after a few seconds and never
+# ends the job: no answer, an HTTP error or an answer that is not an instance
+# type name (an error page, for example; the name is tested in the C locale)
+# leaves INSTANCE_TYPE empty, and the banner, the run directory and the results
+# then name the type "unknown".
+IMDS_CURL=(curl -fs --connect-timeout 2 --max-time 5)
+TOKEN=$("${IMDS_CURL[@]}" -X PUT "http://169.254.169.254/latest/api/token" \
+  -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") || TOKEN=""
+INSTANCE_TYPE=$("${IMDS_CURL[@]}" -H "X-aws-ec2-metadata-token: ${TOKEN}" \
+  http://169.254.169.254/latest/meta-data/instance-type) || INSTANCE_TYPE=""
+( LC_ALL=C; [[ "${INSTANCE_TYPE}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || INSTANCE_TYPE=""
 
 echo "================================================================================"
 echo "NAMD benchmark — $(date)"
-echo "  model=${MODEL}  nodes=${NODES} x ${INSTANCE_TYPE}  ppn=${PPN}  cores/node=${CORES_PER_NODE}"
+echo "  model=${MODEL}  nodes=${NODES} x ${INSTANCE_TYPE:-unknown}  ppn=${PPN}  cores/node=${CORES_PER_NODE}"
 echo "  namd3=${NAMD3}   CHARM_ARCH=${CHARM_ARCH:-unknown}"
 echo "================================================================================"
 
@@ -121,7 +126,7 @@ echo "deck: ${CACHE_DIR}/${CONF}"
 
 # --- Unique run directory ------------------------------------------------
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-WORK="${BASE_DIR}/Run/${SLURM_JOB_ID:-local}-${MODEL}-${SLURM_CLUSTER_NAME:-cluster}-${NODES}x${INSTANCE_TYPE}-${PPN}ppn-${STAMP}"
+WORK="${BASE_DIR}/Run/${SLURM_JOB_ID:-local}-${MODEL}-${SLURM_CLUSTER_NAME:-cluster}-${NODES}x${INSTANCE_TYPE:-unknown}-${PPN}ppn-${STAMP}"
 [ -e "${WORK}" ] && fail "run directory already exists: ${WORK}"
 mkdir -p "${WORK}"
 cp "${CACHE_DIR}"/* "${WORK}/" 2>/dev/null || true
@@ -168,10 +173,10 @@ echo ""
 echo "================================================================================"
 echo "NAMD benchmark results"
 echo "  Model:       ${MODEL}"
-echo "  Nodes:       ${NODES} x ${INSTANCE_TYPE}   (${PPN} PEs/node)"
+echo "  Nodes:       ${NODES} x ${INSTANCE_TYPE:-unknown}   (${PPN} PEs/node)"
 echo "  days/ns:     ${DAYS_PER_NS}"
 echo "  ns/day:      ${NS_PER_DAY}"
 echo "  WallClock:   ${WALLCLOCK:-n/a}s"
 echo "  Workdir:     ${WORK}"
 echo "================================================================================"
-echo "NAMDRESULT model=${MODEL} nodes=${NODES} ppn=${PPN} instance=${INSTANCE_TYPE} days_per_ns=${DAYS_PER_NS} ns_per_day=${NS_PER_DAY} wallclock=${WALLCLOCK:-NA}"
+echo "NAMDRESULT model=${MODEL} nodes=${NODES} ppn=${PPN} instance=${INSTANCE_TYPE:-unknown} days_per_ns=${DAYS_PER_NS} ns_per_day=${NS_PER_DAY} wallclock=${WALLCLOCK:-NA}"

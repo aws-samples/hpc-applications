@@ -6,7 +6,10 @@ These tests pin:
   with no download when it holds it, and copied into a run directory of its own;
 - the run's config: numsteps from TIMESTEPS, and an outputTiming line when the deck has none;
 - mpirun's command line, on one node and on two (where the job first checks EFA with fi_info), and NAMD's PEs;
-- the result: days/ns from the last "Benchmark time:" line, ns/day = 1 / days/ns, and the NAMDRESULT line.
+- the result: days/ns from the last "Benchmark time:" line, ns/day = 1 / days/ns, and the NAMDRESULT line;
+- the instance type from the instance metadata (IMDSv2): each request fails on an HTTP error and gives up after a few
+  seconds, and an answer cut off at that limit, or one that is not an instance type name (tested in the C locale),
+  counts as none. The banner, the run directory and NAMDRESULT then say "unknown", and the run goes on.
 
 They run the script with stubs of curl (the instance metadata and the deck downloads), srun, fi_info, nproc and
 mpirun, from a temporary directory, with a clean environment and a PATH that holds no other MPI, Slurm, ssh, curl, aws
@@ -429,3 +432,53 @@ def test_the_cache_drop_runs_once_on_every_node(tmp_path, host_tools):
     job = run(tmp_path, host_tools, nodes=2)
     started(job)
     assert len(job.srun) == 1 and job.srun[0].startswith("--ntasks=2 --ntasks-per-node=1 bash -c "), job.srun
+
+
+NOT_A_TYPE = {
+    "a proxy's page": "<html><head><title>Proxy</title></head>\n<body>Request denied by proxy.example.com</body></html>",
+    "a type-shaped word at the end": "Request denied by proxy.example.com",
+    "capitals": "HPC8A.96XLARGE",
+    "a type, then other text": "hpc8a.96xlarge: not found",
+    "a type, then a second line": "hpc8a.96xlarge\n<p>Request checked by proxy.example.com",
+}
+NO_TYPE = [pytest.param("none", None, id="no answer"), pytest.param("error", None, id="an HTTP error"),
+           pytest.param("cut-off", None, id="an answer cut off at the time limit"),
+           *(pytest.param("text", text, id=name) for name, text in NOT_A_TYPE.items())]
+
+
+@pytest.mark.parametrize("imds, text", NO_TYPE)
+def test_no_instance_type_from_the_metadata_names_it_unknown_and_the_run_goes_on(imds, text, tmp_path, host_tools):
+    env = {"STUB_IMDS_TEXT": text} if text is not None else {}
+    job = run(tmp_path, host_tools, imds=imds, env=env)
+    started(job)
+    (run_dir,) = job.run_dirs()
+    assert re.fullmatch(rf"{JOB_ID}-ApoA1-test-1xunknown-191ppn-\d{{8}}T\d{{6}}Z", run_dir.name), run_dir.name
+    assert any(re.fullmatch(r"\s*model=ApoA1\s+nodes=1 x unknown\s+ppn=191\s+cores/node=192", line)
+               for line in job.out), job.out
+    (result,) = [line for line in job.out if line.startswith("NAMDRESULT ")]
+    assert " instance=unknown " in result, result
+    for word in ("proxy", "html", "HPC8A", "hpc8a.96x"):
+        assert word not in job.proc.stdout, word
+
+
+def test_every_metadata_request_fails_on_an_http_error_and_has_a_time_limit(tmp_path, host_tools):
+    job = run(tmp_path, host_tools)
+    started(job)
+    requests = [line for line in job.curl if "169.254.169.254" in line]
+    assert len(requests) == 2, requests
+    assert "latest/api/token" in requests[0] and "meta-data/instance-type" in requests[1], requests
+    for request in requests:
+        words = request.split()
+        assert any(w == "--fail" or re.fullmatch(r"-[a-zA-Z]*f[a-zA-Z]*", w) for w in words), request
+        assert re.search(r"(^| )--connect-timeout 2( |$)", request), request
+        assert re.search(r"(^| )--max-time 5( |$)", request), request
+
+
+def test_a_type_name_with_an_i_reads_in_a_turkish_locale(tmp_path, host_tools):
+    """In a Turkish locale [a-z] leaves out i, so the type name is tested in the C locale."""
+    if "tr_TR.utf8" not in subprocess.run(["locale", "-a"], capture_output=True, text=True).stdout.split():
+        pytest.skip("the tr_TR.UTF-8 locale is not installed")
+    job = run(tmp_path, host_tools, itype="c8i.96xlarge", env={"LC_ALL": "tr_TR.UTF-8"})
+    started(job)
+    (result,) = [line for line in job.out if line.startswith("NAMDRESULT ")]
+    assert " instance=c8i.96xlarge " in result, result
