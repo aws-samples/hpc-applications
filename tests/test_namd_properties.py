@@ -36,23 +36,27 @@ from hypothesis import assume, given, settings, strategies as st
 
 def env_script(version: str, install_dir: str, charm_arch: str,
                openmpi_module: str = "openmpi/4.1.7",
-               namd_arch: str = "Linux-AVX512-g++") -> str:
+               namd_arch: str = "Linux-AVX512-g++", target: str = "hpc8a",
+               isa: str = "avx512") -> str:
     """Mirror of the env-script heredoc in build_namd_x86.sbatch.
 
     Returns the full text the build script writes to
     `namd-<version>-x86-env.sh`. The script module-loads OpenMPI (so
     mpirun is on PATH) and libfabric-aws (EFA), exports NAMD_ROOT / PATH /
-    LD_LIBRARY_PATH, and records NAMD_VERSION and the Charm++ arch.
+    LD_LIBRARY_PATH, and records NAMD_VERSION, the Charm++ arch, the build
+    target and its instruction set.
     """
     return dedent(f"""\
         #!/bin/bash
-        # NAMD {version} — x86_64 (Charm++ {charm_arch} over OpenMPI/EFA, NAMD arch {namd_arch})
+        # NAMD {version} — x86_64, target {target} (Charm++ {charm_arch} over OpenMPI/EFA, NAMD arch {namd_arch})
         module load {openmpi_module} libfabric-aws 2>/dev/null || true
         export NAMD_ROOT="{install_dir}"
         export PATH="${{NAMD_ROOT}}/bin:${{PATH}}"
         export LD_LIBRARY_PATH="${{NAMD_ROOT}}/lib:${{LD_LIBRARY_PATH:-}}"
         export NAMD_VERSION="{version}"
         export CHARM_ARCH="{charm_arch}"
+        export NAMD_TARGET_CPU="{target}"
+        export NAMD_ISA="{isa}"
         """)
 
 
@@ -280,7 +284,7 @@ class TestEnvScriptGeneration:
            openmpi_module=openmpi_modules)
     def test_env_script_invariants(self, version, charm_arch,
                                    openmpi_module) -> None:
-        install_dir = f"/fsx/namd/x86_64/{version}"
+        install_dir = f"/fsx/namd/x86_64/{version}-hpc8a"
         text = env_script(version, install_dir, charm_arch, openmpi_module)
 
         # (a) libfabric-aws (EFA) module load present.

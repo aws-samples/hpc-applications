@@ -18,7 +18,8 @@
 # ns/day = 1 / days_per_ns, plus WallClock.
 #
 # Override via --export=ALL,...:
-#   NAMD_ENV    env script from the build (auto-discovered under /fsx/namd if unset)
+#   NAMD_ENV    env script from the build (default: the build of this node's
+#               instance family under ${BASE_DIR}/x86_64/, see below)
 #   MODEL       ApoA1 | STMV                       (default ApoA1)
 #   TIMESTEPS   numsteps override, 1..10000000     (default: model default)
 #   PPN         worker threads (PEs) per node      (default: cores/node - 1)
@@ -51,18 +52,6 @@ if [ -n "${PPN}" ]; then
     || fail "PPN='${PPN}' invalid (integer 1..192)"
 fi
 
-# --- Resolve the env script ----------------------------------------------
-if [ -z "${NAMD_ENV}" ]; then
-  for e in "${BASE_DIR}"/x86_64/*/namd-*-x86-env.sh; do [ -f "$e" ] && NAMD_ENV="$e"; done
-  [ -n "${NAMD_ENV}" ] || fail "no NAMD env script found under ${BASE_DIR}/x86_64/*/ — build NAMD first or set NAMD_ENV"
-fi
-[ -f "${NAMD_ENV}" ] && [ -r "${NAMD_ENV}" ] || fail "NAMD_ENV not a readable file: ${NAMD_ENV}"
-# shellcheck source=/dev/null
-source "${NAMD_ENV}"
-NAMD3="$(command -v namd3 || true)"
-[ -x "${NAMD3}" ] || fail "namd3 not on PATH after sourcing ${NAMD_ENV}"
-command -v mpirun >/dev/null 2>&1 || fail "mpirun not on PATH after sourcing ${NAMD_ENV} (env script should load the OpenMPI module)"
-
 NODES="${SLURM_JOB_NUM_NODES:-1}"
 CORES_PER_NODE="${SLURM_CPUS_ON_NODE:-$(nproc)}"
 # SMP: one process per node, 1 comm thread + PPN worker threads. Reserve a core
@@ -80,10 +69,45 @@ INSTANCE_TYPE=$("${IMDS_CURL[@]}" -H "X-aws-ec2-metadata-token: ${TOKEN}" \
   http://169.254.169.254/latest/meta-data/instance-type) || INSTANCE_TYPE=""
 ( LC_ALL=C; [[ "${INSTANCE_TYPE}" =~ ^[a-z][a-z0-9-]*\.[a-z0-9-]+$ ]] ) || INSTANCE_TYPE=""
 
+# --- Resolve the build -----------------------------------------------------
+# build_namd_x86.sbatch installs each TARGET_CPU under
+# ${BASE_DIR}/x86_64/<version>-<target>/. With NAMD_ENV unset, the launcher takes
+# the build of this node's instance family (the highest version), else the only
+# build there is, with a NOTE; with several builds and none for this family, it
+# stops: set NAMD_ENV.
+FAMILY="${INSTANCE_TYPE%%.*}"
+if [ -z "${NAMD_ENV}" ]; then
+  if [ -n "${FAMILY}" ]; then
+    NAMD_ENV="$(printf '%s\n' "${BASE_DIR}"/x86_64/*-"${FAMILY}"/namd-*-x86-env.sh | sort -V | tail -1)"
+    [ -f "${NAMD_ENV}" ] || NAMD_ENV=""
+  fi
+  if [ -z "${NAMD_ENV}" ]; then
+    BUILDS=()
+    for e in "${BASE_DIR}"/x86_64/*/namd-*-x86-env.sh; do [ -f "$e" ] && BUILDS+=("$e"); done
+    case "${#BUILDS[@]}" in
+      0) fail "no NAMD env script found under ${BASE_DIR}/x86_64/*/ — build NAMD first or set NAMD_ENV" ;;
+      1) NAMD_ENV="${BUILDS[0]}"
+         echo "NOTE: no build for ${FAMILY:-an unknown instance type} under ${BASE_DIR}/x86_64/; using the only build there, ${NAMD_ENV%/*}" >&2 ;;
+      *) fail "no build for ${FAMILY:-an unknown instance type} under ${BASE_DIR}/x86_64/, which holds ${#BUILDS[@]} others ($(printf '%s ' "${BUILDS[@]%/*}"| sed 's/ $//')): set NAMD_ENV to the env script of one of them" ;;
+    esac
+  fi
+fi
+[ -f "${NAMD_ENV}" ] && [ -r "${NAMD_ENV}" ] || fail "NAMD_ENV not a readable file: ${NAMD_ENV}"
+# shellcheck source=/dev/null
+source "${NAMD_ENV}"
+NAMD3="$(command -v namd3 || true)"
+[ -x "${NAMD3}" ] || fail "namd3 not on PATH after sourcing ${NAMD_ENV}"
+command -v mpirun >/dev/null 2>&1 || fail "mpirun not on PATH after sourcing ${NAMD_ENV} (env script should load the OpenMPI module)"
+# An AVX-512 build would stop with an illegal instruction on a CPU without
+# AVX-512 (hpc6a), so it is refused there, before anything runs.
+if [ "${NAMD_ISA:-}" = avx512 ] && ! grep -qw avx512f /proc/cpuinfo; then
+  fail "${NAMD_ENV} is an AVX-512 build (NAMD_ISA=avx512), and this node's CPU has no AVX-512: build TARGET_CPU=hpc6a for it, or set NAMD_ENV to that build's env script"
+fi
+
 echo "================================================================================"
 echo "NAMD benchmark — $(date)"
 echo "  model=${MODEL}  nodes=${NODES} x ${INSTANCE_TYPE:-unknown}  ppn=${PPN}  cores/node=${CORES_PER_NODE}"
-echo "  namd3=${NAMD3}   CHARM_ARCH=${CHARM_ARCH:-unknown}"
+echo "  namd3=${NAMD3}   CHARM_ARCH=${CHARM_ARCH:-unknown}   target=${NAMD_TARGET_CPU:-unknown}   isa=${NAMD_ISA:-unknown}"
 echo "================================================================================"
 
 # --- EFA verification (multi-node) ---------------------------------------

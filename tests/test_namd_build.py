@@ -2,7 +2,10 @@
 
 These tests pin:
 - the checks before anything is built: the licence-gated source must be staged (or NAMD_SRC_URL name a mirror), an
-  existing install is never overwritten, and TARGET_CPU must be a known target;
+  existing install is never overwritten, and TARGET_CPU must be one of the seven targets;
+- each target's flags: its -march and -mtune for Charm++'s build and for NAMD's ./config --cxx-opts and --cc-opts,
+  with the options of its NAMD arch file (Linux-AVX512-g++ for the AVX-512 targets, Linux-x86_64-g++ for hpc6a), and
+  its install directory, BASE_DIR/x86_64/<version>-<target>/;
 - FFTW: a static single-precision build, from the staged tarball or else from fftw.org, its build tree removed
   afterwards, and no FFTW step at all when the install already holds libfftw3f.a. The tarball, downloaded or staged,
   must have the SHA-256 FFTW_SHA256 names (by default FFTW's published one for 3.3.10) before it is extracted; with
@@ -128,11 +131,27 @@ def fftw_source(version: str = "3.3.10") -> bytes:
 FFTW_SYNTHETIC_SHA256 = hashlib.sha256(fftw_source()).hexdigest()
 
 
+# Each target: its -march and -mtune, its NAMD arch file, and its instruction set.
+TARGETS = {
+    "hpc8a": (["-march=x86-64-v4", "-mtune=znver4"], "Linux-AVX512-g++", "avx512"),
+    "hpc7a": (["-march=x86-64-v4", "-mtune=znver4"], "Linux-AVX512-g++", "avx512"),
+    "m8a": (["-march=x86-64-v4", "-mtune=znver4"], "Linux-AVX512-g++", "avx512"),
+    "c8i": (["-march=x86-64-v4", "-mtune=sapphirerapids"], "Linux-AVX512-g++", "avx512"),
+    "r8i": (["-march=x86-64-v4", "-mtune=sapphirerapids"], "Linux-AVX512-g++", "avx512"),
+    "hpc6id": (["-march=x86-64-v4", "-mtune=icelake-server"], "Linux-AVX512-g++", "avx512"),
+    "hpc6a": (["-march=x86-64-v3", "-mtune=znver3"], "Linux-x86_64-g++", "avx2"),
+}
+# The options of NAMD's two arch files, as NAMD 3.0.2 ships them.
+ARCH_OPTS = {"Linux-AVX512-g++": "-O3 -fexpensive-optimizations -ffast-math -mavx512f -mavx512dq -DNAMD_AVXTILES",
+             "Linux-x86_64-g++": "-O3 -fexpensive-optimizations -ffast-math"}
+
+
 @dataclass
 class Build:
     proc: subprocess.CompletedProcess
     base: Path
     state: Path
+    target: str = "hpc8a"
 
     def args(self, name: str) -> list[str] | None:
         path = self.state / name
@@ -144,7 +163,7 @@ class Build:
 
     @property
     def install(self) -> Path:
-        return self.base / "x86_64" / "3.0.2"
+        return self.base / "x86_64" / f"3.0.2-{self.target}"
 
 
 @pytest.fixture(scope="session")
@@ -200,7 +219,7 @@ def build(work: Path, tools: Path, env: dict[str, str | None] | None = None, sta
             job_env[name] = value
     proc = subprocess.run([BASH, str(SCRIPT)], cwd=submit, env=job_env, capture_output=True, text=True,
                           errors="replace", timeout=120)
-    return Build(proc, base, state)
+    return Build(proc, base, state, job_env.get("TARGET_CPU", "hpc8a"))
 
 
 def built(b: Build) -> Build:
@@ -231,7 +250,7 @@ def test_a_missing_source_is_fetched_from_namd_src_url(tmp_path, host_tools):
 
 
 def test_an_existing_install_is_never_overwritten(tmp_path, host_tools):
-    install = tmp_path / "base" / "x86_64" / "3.0.2" / "bin"
+    install = tmp_path / "base" / "x86_64" / "3.0.2-hpc8a" / "bin"
     install.mkdir(parents=True)
     b = build(tmp_path, host_tools)
     assert_nothing_built(b)
@@ -239,10 +258,13 @@ def test_an_existing_install_is_never_overwritten(tmp_path, host_tools):
     assert sorted(p.name for p in install.iterdir()) == []
 
 
-def test_an_unknown_target_stops_the_build(tmp_path, host_tools):
-    b = build(tmp_path, host_tools, env={"TARGET_CPU": "x"})
+@pytest.mark.parametrize("target", ["x", "hpc8a.96xlarge", "HPC8A", "hpc7g"])
+def test_an_unknown_target_stops_the_build_before_anything_is_extracted(target, tmp_path, host_tools):
+    b = build(tmp_path, host_tools, env={"TARGET_CPU": target})
     assert_nothing_built(b)
-    assert "unsupported TARGET_CPU 'x'" in b.proc.stderr
+    assert f"unsupported TARGET_CPU '{target}' (expected hpc8a, hpc7a, m8a, c8i, r8i, hpc6id or hpc6a)" \
+        in b.proc.stderr, b.proc.stderr
+    assert not (b.base / "build").exists() and not (b.base / "x86_64").exists()
 
 
 def test_charm_is_built_with_the_mpi_smp_layer_and_the_hosts_flags(tmp_path, host_tools):
@@ -254,8 +276,10 @@ def test_charm_is_built_with_the_mpi_smp_layer_and_the_hosts_flags(tmp_path, hos
 def test_namd_is_configured_against_that_charm_tcl_and_the_static_fftw(tmp_path, host_tools):
     b = built(build(tmp_path, host_tools))
     config = b.args("config.args")
+    opts = f"{ARCH_OPTS['Linux-AVX512-g++']} -march=x86-64-v4 -mtune=znver4"
     assert config == ["Linux-AVX512-g++", "--charm-arch", "mpi-linux-x86_64-smp", "--with-tcl", "--tcl-prefix",
-                      "/usr", "--with-fftw3", "--fftw-prefix", str(b.install / "fftw"), "--cc", "gcc", "--cxx", "g++"]
+                      "/usr", "--with-fftw3", "--fftw-prefix", str(b.install / "fftw"), "--cc", "gcc", "--cxx", "g++",
+                      "--cc-opts", opts, "--cxx-opts", opts]
     assert any(line.endswith(f"/{config[0]} | -j4") for line in b.log("make.log")), b.log("make.log")
 
 
@@ -266,15 +290,40 @@ def test_namd_is_compiled_with_its_avx512_arch_and_the_env_script_says_so(tmp_pa
     assert b.args("config.args")[0] == "Linux-AVX512-g++"
     (namd_make,) = [line for line in b.log("make.log") if "/Linux-" in line]
     assert namd_make.split(" | ")[0].endswith("/Linux-AVX512-g++"), namd_make
-    assert (b.install / "namd-3.0.2-x86-env.sh").read_text() == (
-        "#!/bin/bash\n"
-        "# NAMD 3.0.2 — x86_64 (Charm++ mpi-linux-x86_64-smp over OpenMPI/EFA, NAMD arch Linux-AVX512-g++)\n"
-        "module load openmpi/4.1.7 libfabric-aws 2>/dev/null || true\n"
-        f'export NAMD_ROOT="{b.install}"\n'
-        'export PATH="${NAMD_ROOT}/bin:${PATH}"\n'
-        'export LD_LIBRARY_PATH="${NAMD_ROOT}/lib:${LD_LIBRARY_PATH:-}"\n'
-        'export NAMD_VERSION="3.0.2"\n'
-        'export CHARM_ARCH="mpi-linux-x86_64-smp"\n')
+    assert (b.install / "namd-3.0.2-x86-env.sh").read_text() == env_text(b, "Linux-AVX512-g++", "avx512")
+
+
+def env_text(b: Build, arch: str, isa: str) -> str:
+    """The env script the build should write for its target."""
+    return ("#!/bin/bash\n"
+            f"# NAMD 3.0.2 — x86_64, target {b.target} (Charm++ mpi-linux-x86_64-smp over OpenMPI/EFA, NAMD arch "
+            f"{arch})\n"
+            "module load openmpi/4.1.7 libfabric-aws 2>/dev/null || true\n"
+            f'export NAMD_ROOT="{b.install}"\n'
+            'export PATH="${NAMD_ROOT}/bin:${PATH}"\n'
+            'export LD_LIBRARY_PATH="${NAMD_ROOT}/lib:${LD_LIBRARY_PATH:-}"\n'
+            'export NAMD_VERSION="3.0.2"\n'
+            'export CHARM_ARCH="mpi-linux-x86_64-smp"\n'
+            f'export NAMD_TARGET_CPU="{b.target}"\n'
+            f'export NAMD_ISA="{isa}"\n')
+
+
+@pytest.mark.parametrize("target", list(TARGETS))
+def test_each_target_builds_with_its_flags_and_arch_into_its_own_install(target, tmp_path, host_tools):
+    flags, arch, isa = TARGETS[target]
+    b = built(build(tmp_path, host_tools, env={"TARGET_CPU": target}))
+    assert b.args("charm-build.args") == ["charm++", "mpi-linux-x86_64", "smp", "--with-production", "-j4", "-O3",
+                                          *flags]
+    config = b.args("config.args")
+    opts = " ".join([ARCH_OPTS[arch], *flags])
+    assert config[0] == arch
+    assert config[config.index("--cc-opts") + 1] == opts and config[config.index("--cxx-opts") + 1] == opts
+    assert config[config.index("--fftw-prefix") + 1] == str(b.install / "fftw")
+    (namd_make,) = [line for line in b.log("make.log") if "/Linux-" in line]
+    assert namd_make.split(" | ")[0].endswith(f"/{arch}"), namd_make
+    assert sorted(p.name for p in (b.base / "x86_64").iterdir()) == [f"3.0.2-{target}"]
+    assert os.access(b.install / "bin" / "namd3", os.X_OK)
+    assert (b.install / "namd-3.0.2-x86-env.sh").read_text() == env_text(b, arch, isa)
 
 
 def test_fftw_is_fetched_built_static_into_the_install_and_its_build_tree_removed(tmp_path, host_tools):
@@ -295,7 +344,7 @@ def test_a_staged_fftw_tarball_is_used_with_no_download(tmp_path, host_tools):
 
 
 def test_an_installed_fftw_is_reused_with_no_fftw_step(tmp_path, host_tools):
-    lib = tmp_path / "base" / "x86_64" / "3.0.2" / "fftw" / "lib"
+    lib = tmp_path / "base" / "x86_64" / "3.0.2-hpc8a" / "fftw" / "lib"
     lib.mkdir(parents=True)
     (lib / "libfftw3f.a").write_text("synthetic\n")
     b = built(build(tmp_path, host_tools))

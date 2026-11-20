@@ -9,12 +9,16 @@ These tests pin:
 - the result: days/ns from the last "Benchmark time:" line, ns/day = 1 / days/ns, and the NAMDRESULT line;
 - the instance type from the instance metadata (IMDSv2): each request fails on an HTTP error and gives up after a few
   seconds, and an answer cut off at that limit, or one that is not an instance type name (tested in the C locale),
-  counts as none. The banner, the run directory and NAMDRESULT then say "unknown", and the run goes on.
+  counts as none. The banner, the run directory and NAMDRESULT then say "unknown", and the run goes on;
+- the build: with NAMD_ENV unset, the build of the node's instance family under BASE_DIR/x86_64/<version>-<family>/
+  (the highest version), else the only build there, with a NOTE, else a stop that asks for NAMD_ENV; and an AVX-512
+  build on a CPU without AVX-512, refused before anything runs.
 
 They run the script with stubs of curl (the instance metadata and the deck downloads), srun, fi_info, nproc and
 mpirun, from a temporary directory, with a clean environment and a PATH that holds no other MPI, Slurm, ssh, curl, aws
 or sudo command: no NAMD, MPI, Slurm or network is needed. The stub mpirun notes its arguments and prints a synthetic
-namd.out. Every value is synthetic.
+namd.out. The script reads /proc/cpuinfo, so these tests run a copy of it that reads a synthetic cpuinfo instead and
+differs from the script in that path alone (checked here). Every value is synthetic.
 
 Run with:
     python -m pip install -r tests/requirements.txt
@@ -159,6 +163,11 @@ exit "${STUB_RC:-0}"
 """
 # namd3, from the synthetic build: the stub mpirun never runs it.
 NAMD3_STUB = "#!/bin/bash\necho 'namd3 stub: not to be run' >&2\nexit 99\n"
+# The flags line of /proc/cpuinfo on a CPU with AVX-512 and on one without.
+CPUINFO_AVX512 = "processor\t: 0\nflags\t\t: fpu sse2 avx avx2 fma avx512f avx512dq avx512bw avx512vl\n"
+CPUINFO_AVX2 = "processor\t: 0\nflags\t\t: fpu sse2 avx avx2 fma\n"
+# The build the launcher picks on an hpc8a node.
+HPC8A_BUILD = ("3.0.2-hpc8a", {"NAMD_TARGET_CPU": "hpc8a", "NAMD_ISA": "avx512"})
 
 
 @dataclass
@@ -222,27 +231,42 @@ def deck_tarball(model: str, lines: list[str] | None = None) -> bytes:
 
 
 def make_build(base: Path, dirname: str = "3.0.2", exports: dict[str, str] | None = None) -> Path:
-    """A synthetic build under base/x86_64/<dirname>: a stub namd3 and the env script that puts it on PATH."""
+    """A synthetic build under base/x86_64/<dirname> (<version>[-<target>]): a stub namd3 and the env script that puts
+    it on PATH."""
     root = base / "x86_64" / dirname
+    version = dirname.split("-")[0]
     (root / "bin").mkdir(parents=True)
     (root / "bin" / "namd3").write_text(NAMD3_STUB)
     (root / "bin" / "namd3").chmod(0o755)
-    env = {"NAMD_ROOT": str(root), "NAMD_VERSION": "3.0.2", "CHARM_ARCH": "mpi-linux-x86_64-smp", **(exports or {})}
-    script = root / "namd-3.0.2-x86-env.sh"
+    env = {"NAMD_ROOT": str(root), "NAMD_VERSION": version, "CHARM_ARCH": "mpi-linux-x86_64-smp", **(exports or {})}
+    script = root / f"namd-{version}-x86-env.sh"
     script.write_text("#!/bin/bash\n" + "".join(f'export {k}="{v}"\n' for k, v in env.items())
                       + 'export PATH="${NAMD_ROOT}/bin:${PATH}"\n')
     return script
 
 
+def runnable_copy(work: Path, cpuinfo: str) -> Path:
+    """The script, reading `cpuinfo` (written in `work`) instead of /proc/cpuinfo: the copy differs from the script in
+    that path alone."""
+    text = SCRIPT.read_text()
+    assert text.count("/proc/cpuinfo") == 1, "the script names /proc/cpuinfo in other places"
+    stub = work / "cpuinfo"
+    stub.write_text(cpuinfo)
+    copy = work / SCRIPT.name
+    copy.write_text(text.replace("/proc/cpuinfo", str(stub)))
+    assert copy.read_text().replace(str(stub), "/proc/cpuinfo") == text
+    return copy
+
+
 def run(work: Path, tools: Path, nodes: int = 1, env: dict[str, str | None] | None = None, imds: str = "ok",
         itype: str = "hpc8a.96xlarge", namd_out: str = "complete", rc: int = 0, cached: dict | None = None,
-        decks: dict | None = None, builds: tuple = (("3.0.2", None),)) -> Job:
+        decks: dict | None = None, builds: tuple = (HPC8A_BUILD,), cpuinfo: str = CPUINFO_AVX512) -> Job:
     """Run the script as a job on `nodes` nodes, from `work`/submit, with BASE_DIR `work`/base.
 
     `imds` and `itype` set the stub instance metadata, `namd_out` and `rc` the stub mpirun's output and exit status.
     `cached` puts decks in the cache ({MODEL: config lines or None for the default}), `decks` changes the tarballs the
-    stub curl serves ({MODEL: config lines}). `builds` are the synthetic builds ((dirname, exports), ...). `env` adds
-    variables to the job's environment, or unsets them (None)."""
+    stub curl serves ({MODEL: config lines}). `builds` are the synthetic builds ((dirname, exports), ...), `cpuinfo`
+    the node's /proc/cpuinfo. `env` adds variables to the job's environment, or unsets them (None)."""
     stubs, state, submit, base, served, tmp = (work / d for d in ("stubs", "state", "submit", "base", "decks", "tmp"))
     for d in (stubs, state, submit, base, served, tmp):
         d.mkdir(parents=True, exist_ok=True)
@@ -272,8 +296,8 @@ def run(work: Path, tools: Path, nodes: int = 1, env: dict[str, str | None] | No
             job_env.pop(name, None)
         else:
             job_env[name] = value
-    proc = subprocess.run([BASH, str(SCRIPT)], cwd=submit, env=job_env, capture_output=True, text=True,
-                          errors="replace", timeout=120)
+    proc = subprocess.run([BASH, str(runnable_copy(work, cpuinfo))], cwd=submit, env=job_env, capture_output=True,
+                          text=True, errors="replace", timeout=120)
     calls = []
     for d in sorted(state.glob("mpirun-call-*"), key=lambda p: int(p.name.rsplit("-", 1)[1])):
         calls.append({"args": (d / "args").read_text().splitlines(), "cwd": (d / "cwd").read_text().strip(),
@@ -321,7 +345,7 @@ def assert_refused(job: Job, message: str) -> None:
 def test_one_node_runs_one_process_with_191_pes_and_reports_the_last_benchmark_line(tmp_path, host_tools):
     job = run(tmp_path, host_tools)
     call = started(job)
-    namd3 = str(tmp_path / "base" / "x86_64" / "3.0.2" / "bin" / "namd3")
+    namd3 = str(tmp_path / "base" / "x86_64" / "3.0.2-hpc8a" / "bin" / "namd3")
     assert mpi_words(call) == ["-np", "1", "--map-by", "ppr:1:node", "--bind-to", "none"]
     assert namd_words(call) == [namd3, "+ppn", "191", "+setcpuaffinity", "run-ApoA1.namd"]
     assert call["fi_provider"] == "unset"
@@ -482,3 +506,87 @@ def test_a_type_name_with_an_i_reads_in_a_turkish_locale(tmp_path, host_tools):
     started(job)
     (result,) = [line for line in job.out if line.startswith("NAMDRESULT ")]
     assert " instance=c8i.96xlarge " in result, result
+
+
+def build_bin(job: Job, dirname: str) -> str:
+    return str(job.base / "x86_64" / dirname / "bin" / "namd3")
+
+
+ALL_TARGETS = tuple((f"3.0.2-{target}", {"NAMD_TARGET_CPU": target, "NAMD_ISA": "avx2" if target == "hpc6a" else
+                                          "avx512"}) for target in ("hpc8a", "hpc7a", "m8a", "c8i", "r8i", "hpc6id",
+                                                                    "hpc6a"))
+
+
+@pytest.mark.parametrize("itype, dirname", [("hpc8a.96xlarge", "3.0.2-hpc8a"), ("hpc7a.96xlarge", "3.0.2-hpc7a"),
+                                            ("hpc7a.48xlarge", "3.0.2-hpc7a"), ("c8i.96xlarge", "3.0.2-c8i"),
+                                            ("r8i.96xlarge", "3.0.2-r8i"), ("m8a.48xlarge", "3.0.2-m8a"),
+                                            ("hpc6id.32xlarge", "3.0.2-hpc6id")])
+def test_the_build_of_the_nodes_instance_family_is_picked(itype, dirname, tmp_path, host_tools):
+    job = run(tmp_path, host_tools, itype=itype, builds=ALL_TARGETS)
+    call = started(job)
+    assert namd_words(call)[0] == build_bin(job, dirname)
+    target = dirname.split("-")[1]
+    assert any(line.endswith(f"target={target}   isa=avx512") for line in job.out), job.out
+    assert "NOTE:" not in job.proc.stderr, job.proc.stderr
+
+
+def test_hpc6a_gets_its_avx2_build(tmp_path, host_tools):
+    job = run(tmp_path, host_tools, itype="hpc6a.48xlarge", builds=ALL_TARGETS, cpuinfo=CPUINFO_AVX2,
+              env={"SLURM_CPUS_ON_NODE": "96"})
+    call = started(job)
+    assert namd_words(call)[0] == build_bin(job, "3.0.2-hpc6a")
+    assert any(line.endswith("target=hpc6a   isa=avx2") for line in job.out), job.out
+
+
+def test_the_highest_version_of_the_familys_builds_is_picked(tmp_path, host_tools):
+    builds = (("3.0.2-hpc8a", None), ("3.0.10-hpc8a", None), ("3.0.9-hpc8a", None), ("3.0.11-hpc7a", None))
+    job = run(tmp_path, host_tools, builds=builds)
+    assert namd_words(started(job))[0] == build_bin(job, "3.0.10-hpc8a")
+
+
+@pytest.mark.parametrize("builds, imds", [((("3.0.2", None),), "ok"), ((HPC8A_BUILD,), "none"),
+                                          ((("3.0.2-c8i", None),), "ok")],
+                         ids=["a build from before the targets", "no instance type", "another family's build"])
+def test_with_no_build_for_the_family_the_only_build_is_used_with_a_note(builds, imds, tmp_path, host_tools):
+    job = run(tmp_path, host_tools, builds=builds, imds=imds)
+    dirname = builds[0][0]
+    assert namd_words(started(job))[0] == build_bin(job, dirname)
+    family = "hpc8a" if imds == "ok" else "an unknown instance type"
+    assert f"NOTE: no build for {family} under {job.base / 'x86_64'}/; using the only build there, " \
+           f"{job.base / 'x86_64' / dirname}" in job.err, job.err
+
+
+@pytest.mark.parametrize("imds", ["ok", "none"])
+def test_several_builds_and_none_for_the_family_stop_the_job_and_ask_for_namd_env(imds, tmp_path, host_tools):
+    builds = (("3.0.2-c8i", None), ("3.0.2-hpc7a", None))
+    job = run(tmp_path, host_tools, builds=builds, imds=imds)
+    family = "hpc8a" if imds == "ok" else "an unknown instance type"
+    root = job.base / "x86_64"
+    assert_refused(job, f"ERROR: no build for {family} under {root}/, which holds 2 others ({root / '3.0.2-c8i'} "
+                        f"{root / '3.0.2-hpc7a'}): set NAMD_ENV to the env script of one of them")
+
+
+def test_no_build_at_all_stops_the_job(tmp_path, host_tools):
+    assert_refused(run(tmp_path, host_tools, builds=()), "ERROR: no NAMD env script found under")
+
+
+def test_namd_env_set_by_hand_is_used_as_given(tmp_path, host_tools):
+    env_script = tmp_path / "base" / "x86_64" / "3.0.2-c8i" / "namd-3.0.2-x86-env.sh"
+    job = run(tmp_path, host_tools, builds=ALL_TARGETS, env={"NAMD_ENV": str(env_script)})
+    assert namd_words(started(job))[0] == build_bin(job, "3.0.2-c8i")
+
+
+@pytest.mark.parametrize("imds", ["ok", "none"])
+def test_an_avx512_build_on_a_cpu_without_avx512_stops_the_job_before_anything_runs(imds, tmp_path, host_tools):
+    env_script = tmp_path / "base" / "x86_64" / "3.0.2-hpc8a" / "namd-3.0.2-x86-env.sh"
+    job = run(tmp_path, host_tools, nodes=2, itype="hpc6a.48xlarge", imds=imds, cpuinfo=CPUINFO_AVX2,
+              env={"NAMD_ENV": str(env_script), "SLURM_CPUS_ON_NODE": "96"})
+    assert_refused(job, f"ERROR: {env_script} is an AVX-512 build (NAMD_ISA=avx512), and this node's CPU has no "
+                        "AVX-512: build TARGET_CPU=hpc6a for it, or set NAMD_ENV to that build's env script")
+    assert job.fi_info == [] and deck_downloads(job) == []
+
+
+def test_an_avx2_build_runs_on_a_cpu_with_avx512_too(tmp_path, host_tools):
+    job = run(tmp_path, host_tools, builds=(("3.0.2-hpc6a", {"NAMD_TARGET_CPU": "hpc6a", "NAMD_ISA": "avx2"}),),
+              env={"NAMD_ENV": str(tmp_path / "base" / "x86_64" / "3.0.2-hpc6a" / "namd-3.0.2-x86-env.sh")})
+    started(job)

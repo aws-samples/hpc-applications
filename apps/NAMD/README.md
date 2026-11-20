@@ -5,7 +5,8 @@ standard benchmarks on AWS HPC instances. NAMD is a parallel molecular dynamics 
 Urbana-Champaign, designed for large biomolecular systems. It runs on the [Charm++](https://charm.cs.illinois.edu/)
 parallel runtime rather than on MPI directly.
 
-The scripts in [`x86/`](x86/) build and run NAMD 3.0 on x86_64 instances: hpc8a.96xlarge and hpc7a.96xlarge.
+The scripts in [`x86/`](x86/) build and run NAMD 3.0 on x86_64 instances. The build has a target for each of these
+instance families: hpc8a, hpc7a, m8a, c8i, r8i, hpc6id and hpc6a.
 
 ## How the scripts run NAMD
 
@@ -23,8 +24,11 @@ one node uses the same binary, as a single process.
 > (default `/fsx/namd/src/`), or set `NAMD_SRC` to its path. This repository does not redistribute NAMD.
 
 ```bash
-# After staging /fsx/namd/src/NAMD_3.0.2_Source.tar.gz
+# After staging /fsx/namd/src/NAMD_3.0.2_Source.tar.gz: the hpc8a build, on an hpc8a node
 sbatch x86/build_namd_x86.sbatch
+
+# The c8i build, on a c8i node
+sbatch -p c8i -C c8i.96xlarge --export=ALL,TARGET_CPU=c8i x86/build_namd_x86.sbatch
 ```
 
 The build script:
@@ -33,21 +37,32 @@ The build script:
 2. builds FFTW as a static, single-precision library inside the install, so `namd3` needs no FFTW library on the
    compute nodes. Before it extracts the FFTW tarball, downloaded or staged, it checks the tarball's SHA-256 against
    `FFTW_SHA256` and stops on a mismatch;
-3. builds the Charm++ that ships with the NAMD source (`mpi-linux-x86_64 smp --with-production`), with
-   `-O3 -march=x86-64-v4 -mtune=znver4`, against the Open MPI module;
-4. configures NAMD for that Charm++, the system TCL and the static FFTW, and compiles it with the options of NAMD's
-   `Linux-AVX512-g++` arch file (`-O3 -fexpensive-optimizations -ffast-math -mavx512f -mavx512dq -DNAMD_AVXTILES`):
-   AVX-512, and NAMD's mixed-precision AVX-512 tile-list kernels;
-5. installs `namd3` under `${BASE_DIR}/x86_64/<version>/`, with an env script, `namd-<version>-x86-env.sh`, that loads
-   the Open MPI and `libfabric-aws` modules and puts `namd3` on the `PATH`.
+3. builds the Charm++ that ships with the NAMD source (`mpi-linux-x86_64 smp --with-production`), with `-O3` and
+   the target's `-march` and `-mtune`, against the Open MPI module;
+4. configures NAMD for that Charm++, the system TCL and the static FFTW, and compiles it with the options of the
+   target's NAMD arch file and the target's `-march` and `-mtune` (through `./config --cxx-opts` and `--cc-opts`);
+5. installs `namd3` under `${BASE_DIR}/x86_64/<version>-<target>/`, with an env script, `namd-<version>-x86-env.sh`,
+   that loads the Open MPI and `libfabric-aws` modules, puts `namd3` on the `PATH`, and names the target
+   (`NAMD_TARGET_CPU`) and its instruction set (`NAMD_ISA`).
 
-One build serves hpc8a.96xlarge and hpc7a.96xlarge. The script never overwrites an install: remove
-`${BASE_DIR}/x86_64/<version>/` to build again.
+| `TARGET_CPU` | For | `-march` / `-mtune` | NAMD arch file | Instruction set |
+|---|---|---|---|---|
+| `hpc8a` (default), `hpc7a`, `m8a` | hpc8a, hpc7a and m8a instances | `x86-64-v4` / `znver4` | `Linux-AVX512-g++` | AVX-512 |
+| `c8i`, `r8i` | c8i and r8i instances | `x86-64-v4` / `sapphirerapids` | `Linux-AVX512-g++` | AVX-512 |
+| `hpc6id` | hpc6id instances | `x86-64-v4` / `icelake-server` | `Linux-AVX512-g++` | AVX-512 |
+| `hpc6a` | hpc6a instances | `x86-64-v3` / `znver3` | `Linux-x86_64-g++` | AVX2 |
+
+The `Linux-AVX512-g++` arch file compiles NAMD with `-O3 -fexpensive-optimizations -ffast-math -mavx512f -mavx512dq
+-DNAMD_AVXTILES`: AVX-512, and NAMD's mixed-precision AVX-512 tile-list kernels. The `Linux-x86_64-g++` arch file has
+the first three options only: hpc6a's CPU has no AVX-512. GCC 11, the default compiler of Amazon Linux 2023, has no
+`znver5` or `graniterapids` tuning, so the hpc8a and m8a targets tune for `znver4`, and the c8i and r8i targets for
+`sapphirerapids`. A build runs on every size of its instance family, and the script can build any target on any
+x86_64 node. It never overwrites an install: remove `${BASE_DIR}/x86_64/<version>-<target>/` to build again.
 
 | Variable | Default | Description |
 |---|---|---|
 | `NAMD_VERSION` | `3.0.2` | NAMD release (with the Charm++ it bundles) |
-| `TARGET_CPU` | `hpc8a` | `hpc8a` or `hpc7a` |
+| `TARGET_CPU` | `hpc8a` | The build target, from the table above |
 | `BASE_DIR` | `/fsx/namd` | Install root |
 | `COMPILE_CORES` | `48` | Parallel build jobs |
 | `NAMD_SRC` | `${BASE_DIR}/src/NAMD_${NAMD_VERSION}_Source.tar.gz` | The staged source tarball |
@@ -71,7 +86,10 @@ sbatch -p hpc7a -C hpc7a.96xlarge x86/namd-benchmark.sbatch
 
 The launcher:
 
-1. sources the build's env script;
+1. picks the build of the node's instance family, `${BASE_DIR}/x86_64/<version>-<family>/` (the highest version),
+   from the instance type in the instance metadata, and sources its env script. With no build for that family, it
+   takes the only build under `${BASE_DIR}/x86_64/`, with a `NOTE:` on stderr that names it; with several, it stops and
+   asks for `NAMD_ENV`. An AVX-512 build on a node whose CPU has no AVX-512 stops the job before anything runs;
 2. on more than one node, checks EFA with `fi_info -p efa`;
 3. fetches the deck into a cache on first use, and copies it into a run directory of its own,
    `${BASE_DIR}/Run/<job>-<MODEL>-<cluster>-<nodes>x<instance type>-<PPN>ppn-<UTC time>/`;
@@ -81,7 +99,7 @@ The launcher:
 
 | Variable | Default | Description |
 |---|---|---|
-| `NAMD_ENV` | the env script under `${BASE_DIR}/x86_64/*/` | The build's env script |
+| `NAMD_ENV` | the build of the node's instance family | The build's env script |
 | `MODEL` | `ApoA1` | `ApoA1` or `STMV` |
 | `TIMESTEPS` | the deck's | The run's `numsteps`, 1 to 10,000,000 |
 | `PPN` | the node's CPUs − 1 | Worker threads (PEs) per node, 1 to 192 |
