@@ -16,7 +16,11 @@
 #
 # Performance metric: NAMD prints `Info: Benchmark time: ... <days/ns> days/ns`.
 # The launcher extracts days/ns from the LAST such line and reports
-# ns/day = 1 / days_per_ns, plus WallClock.
+# ns/day = 1 / days_per_ns, plus WallClock. The job ends with NAMD's exit
+# status when NAMD fails; when NAMD exits 0, a result is reported only from a
+# complete run (namd.out ends with NAMD's WallClock: line, and the last
+# Benchmark time line gives a positive days/ns), and otherwise the job ends
+# with status 1.
 #
 # Override via --export=ALL,...:
 #   NAMD_ENV    env script from the build (default: the build of this node's
@@ -298,14 +302,28 @@ echo "==> mpirun ${MPI_ARGS[*]} ${NAMD3} ${NAMD_ARGS[*]} ${RUNCONF}"
 set -o pipefail
 mpirun "${MPI_ARGS[@]}" "${NAMD3}" "${NAMD_ARGS[@]}" "${RUNCONF}" 2>&1 | tee namd.out
 rc=${PIPESTATUS[0]}
-[ "${rc}" -eq 0 ] || fail "NAMD run exited non-zero (rc=${rc}); see ${WORK}/namd.out"
+if [ "${rc}" -ne 0 ]; then
+  echo "ERROR: NAMD exited with status ${rc}; see ${WORK}/namd.out" >&2
+  exit "${rc}"
+fi
 
-# --- Parse performance ---------------------------------------------------
-# Take the days/ns value from the LAST 'Benchmark time:' line.
+# --- Parse performance, and the success gate --------------------------------
+# Take the days/ns value from the LAST 'Benchmark time:' line. NAMD exited 0; a
+# result is reported only from a complete run: namd.out has NAMD's closing
+# WallClock: line, and the last Benchmark time line gives a positive days/ns
+# (a decimal, in scientific notation or not). Otherwise an ERROR says what is
+# missing, no result is printed, and the job ends with status 1.
 DAYS_PER_NS="$(awk '/Benchmark time:/ { for (i=1;i<=NF;i++) if ($i=="days/ns") print $(i-1) }' namd.out | tail -1)"
 WALLCLOCK="$(awk '/^WallClock:/ {print $2}' namd.out | tail -1)"
 [ -n "${DAYS_PER_NS}" ] || fail "could not parse 'days/ns' from NAMD output (${WORK}/namd.out)"
-NS_PER_DAY="$(awk "BEGIN{ if (${DAYS_PER_NS}+0>0) printf \"%.4f\", 1.0/${DAYS_PER_NS}; else print \"0\" }")"
+NOT_COMPLETE=""
+if ! grep -qE '^WallClock:' namd.out; then
+  NOT_COMPLETE="namd.out has no closing 'WallClock:' line, so NAMD did not end normally"
+elif ! awk -v d="${DAYS_PER_NS}" 'BEGIN { exit !(d ~ /^([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][-+]?[0-9]+)?$/ && d + 0 > 0) }'; then
+  NOT_COMPLETE="the last 'Benchmark time:' line gives no positive days/ns ('${DAYS_PER_NS}')"
+fi
+[ -z "${NOT_COMPLETE}" ] || fail "${NOT_COMPLETE} (${WORK}/namd.out)"
+NS_PER_DAY="$(awk -v d="${DAYS_PER_NS}" 'BEGIN { printf "%.4f", 1.0 / d }')"
 
 echo ""
 echo "================================================================================"

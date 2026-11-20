@@ -75,8 +75,10 @@ def parse_namd_output(text: str) -> tuple[float, float, float | None]:
 
     days_per_ns is taken from the token immediately preceding the literal
     `days/ns` on the LAST `Benchmark time:` line. ns_per_day = 1 /
-    days_per_ns (0 when days_per_ns <= 0). wallclock comes from the last
-    `WallClock:` line ($2), or None if absent.
+    days_per_ns (0 when days_per_ns <= 0; the launcher's success gate
+    reports no result for such a run, nor for one with no `WallClock:`
+    line). wallclock comes from the last `WallClock:` line ($2), or None if
+    absent.
 
     Raises ValueError when no parseable `Benchmark time: ... days/ns` value
     exists — the script's `[ -n "${DAYS_PER_NS}" ] || fail` guard, i.e. it

@@ -181,7 +181,14 @@ Info: Benchmark time: <CPUs> CPUs <s> s/step <d> days/ns <MB> MB memory
 ```
 
 The launcher takes the days/ns of the last such line and reports ns/day = 1 / (days/ns), with NAMD's closing
-`WallClock:` time. Its results block ends with one line that scripts can parse:
+`WallClock:` time.
+
+When NAMD fails, the job ends with NAMD's exit status, after an `ERROR:` that names the run's `namd.out`. When NAMD
+exits 0, the launcher reports a result only from a complete run: `namd.out` must have NAMD's closing `WallClock:` line,
+and its last `Benchmark time:` line must give a positive days/ns. Otherwise it prints an `ERROR:` that says what is
+missing, no results block and no `NAMDRESULT` line, and the job ends with status 1.
+
+The results block ends with one line that scripts can parse:
 
 ```
 NAMDRESULT model=<MODEL> nodes=<nodes> ppn=<PPN> instance=<instance type> days_per_ns=<d> ns_per_day=<r> wallclock=<s> procs_per_node=<P>

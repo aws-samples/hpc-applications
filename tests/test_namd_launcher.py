@@ -7,6 +7,8 @@ These tests pin:
 - the run's config: numsteps from TIMESTEPS, and an outputTiming line when the deck has none;
 - mpirun's command line, on one node and on two (where the job first checks EFA with fi_info), and NAMD's PEs;
 - the result: days/ns from the last "Benchmark time:" line, ns/day = 1 / days/ns, and the NAMDRESULT line;
+- the job's exit status: NAMD's when it fails; when NAMD exits 0, a result only from a complete run (NAMD's closing
+  WallClock: line, and a positive days/ns on the last Benchmark time line), and otherwise status 1 with no result;
 - the instance type from the instance metadata (IMDSv2): each request fails on an HTTP error and gives up after a few
   seconds, and an answer cut off at that limit, or one that is not an instance type name (tested in the C locale),
   counts as none. The banner, the run directory and NAMDRESULT then say "unknown", and the run goes on;
@@ -921,3 +923,37 @@ def test_the_job_log_prints_the_mpirun_command_line(nodes, env, tmp_path, host_t
     job = run(tmp_path, host_tools, nodes=nodes, env=env)
     call = started(job)
     assert f"==> mpirun {' '.join(call['args'])}" in job.out
+
+
+def assert_no_result(job: Job) -> None:
+    assert not any(line.startswith("NAMDRESULT") for line in job.out), job.out
+    assert "NAMD benchmark results" not in job.proc.stdout
+
+
+@pytest.mark.parametrize("rc", [3, 139])
+def test_a_failing_namd_ends_the_job_with_its_exit_status(rc, tmp_path, host_tools):
+    job = run(tmp_path, host_tools, rc=rc)
+    assert job.proc.returncode == rc, job.proc.stdout + job.proc.stderr
+    (run_dir,) = job.run_dirs()
+    assert f"ERROR: NAMD exited with status {rc}; see {run_dir}/namd.out" in job.err
+    assert_no_result(job)
+
+
+@pytest.mark.parametrize("out, message", [
+    ("no-wallclock", "ERROR: namd.out has no closing 'WallClock:' line, so NAMD did not end normally"),
+    ("zero-days", "ERROR: the last 'Benchmark time:' line gives no positive days/ns ('0')"),
+    ("no-bench", "ERROR: could not parse 'days/ns' from NAMD output"),
+])
+def test_namd_exiting_0_without_a_complete_result_ends_the_job_with_status_1(out, message, tmp_path, host_tools):
+    job = run(tmp_path, host_tools, namd_out=out)
+    assert job.proc.returncode == 1, job.proc.stdout + job.proc.stderr
+    (run_dir,) = job.run_dirs()
+    assert any(line.startswith(message) and line.endswith(f"({run_dir}/namd.out)") for line in job.err), job.err
+    assert_no_result(job)
+
+
+def test_a_days_per_ns_in_scientific_notation_is_a_result(tmp_path, host_tools):
+    job = run(tmp_path, host_tools, namd_out="sci-days")
+    started(job)
+    (result,) = [line for line in job.out if line.startswith("NAMDRESULT ")]
+    assert " days_per_ns=1.5e-05 ns_per_day=66666.6667 " in result, result
