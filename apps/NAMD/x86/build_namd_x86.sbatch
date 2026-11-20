@@ -33,6 +33,9 @@
 #   COMPILE_CORES  parallel build threads (default 48)
 #   NAMD_SRC       staged source tarball (default ${BASE_DIR}/src/NAMD_${NAMD_VERSION}_Source.tar.gz)
 #   NAMD_SRC_URL   optional URL to fetch the source tarball from a mirror
+#   FFTW_VERSION   FFTW release (default 3.3.10)
+#   FFTW_SHA256    the FFTW tarball's SHA-256 (default: FFTW's published one for
+#                  3.3.10; none for another version, which then only prints it)
 
 set -euo pipefail
 
@@ -50,6 +53,13 @@ OPENMPI_MODULE="${OPENMPI_MODULE:-openmpi/4.1.7}"
 INSTALL_DIR="${BASE_DIR}/x86_64/${NAMD_VERSION}"
 FFTW_PREFIX="${INSTALL_DIR}/fftw"   # static single-precision FFTW (self-contained on FSx)
 FFTW_VERSION="${FFTW_VERSION:-3.3.10}"
+# The SHA-256 that FFTW publishes for its 3.3.10 tarball. The tarball, downloaded
+# or staged, must match it before it is extracted; set FFTW_SHA256 for another
+# version.
+if [ -z "${FFTW_SHA256:-}" ] && [ "${FFTW_VERSION}" = "3.3.10" ]; then
+    FFTW_SHA256="56c932549852cddcfafdab3820b0200c7742675be92179e59e6215b340e26467"
+fi
+FFTW_SHA256="${FFTW_SHA256:-}"
 BUILD_DIR="${BASE_DIR}/build/x86_64-${NAMD_VERSION}-$$"
 ENV_SCRIPT="${INSTALL_DIR}/namd-${NAMD_VERSION}-x86-env.sh"
 
@@ -130,6 +140,14 @@ if [ ! -f "${FFTW_PREFIX}/lib/libfftw3f.a" ]; then
         curl -fsSL --max-time 600 --retry 3 -o "${FFTW_SRC}" \
             "https://www.fftw.org/fftw-${FFTW_VERSION}.tar.gz" \
             || fail "failed to download FFTW ${FFTW_VERSION}"
+    fi
+    FFTW_GOT="$(sha256sum "${FFTW_SRC}" | awk '{print $1}')"
+    if [ -n "${FFTW_SHA256}" ]; then
+        [ "${FFTW_GOT}" = "${FFTW_SHA256}" ] \
+            || fail "${FFTW_SRC} has SHA-256 ${FFTW_GOT}, not the expected ${FFTW_SHA256} (FFTW_SHA256); remove it to download it again"
+        log "FFTW ${FFTW_VERSION} tarball: SHA-256 ${FFTW_GOT}, as expected"
+    else
+        echo "NOTE: no SHA-256 to check for FFTW ${FFTW_VERSION} (set FFTW_SHA256); ${FFTW_SRC} has SHA-256 ${FFTW_GOT}" >&2
     fi
     FFTW_BUILD="${BUILD_DIR}-fftw"
     mkdir -p "${FFTW_BUILD}"

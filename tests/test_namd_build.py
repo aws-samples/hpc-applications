@@ -4,7 +4,9 @@ These tests pin:
 - the checks before anything is built: the licence-gated source must be staged (or NAMD_SRC_URL name a mirror), an
   existing install is never overwritten, and TARGET_CPU must be a known target;
 - FFTW: a static single-precision build, from the staged tarball or else from fftw.org, its build tree removed
-  afterwards, and no FFTW step at all when the install already holds libfftw3f.a;
+  afterwards, and no FFTW step at all when the install already holds libfftw3f.a. The tarball, downloaded or staged,
+  must have the SHA-256 FFTW_SHA256 names (by default FFTW's published one for 3.3.10) before it is extracted; with
+  none for another version, the build prints the tarball's SHA-256 and goes on;
 - Charm++'s build and NAMD's ./config command lines;
 - the install: bin/namd3 and the env script, whose lines load the MPI modules and put namd3 on PATH.
 
@@ -19,6 +21,8 @@ Run with:
 """
 from __future__ import annotations
 
+import gzip
+import hashlib
 import io
 import os
 import shutil
@@ -36,6 +40,8 @@ pytestmark = pytest.mark.skipif(BASH is None, reason="needs bash")
 
 JOB_ID = "4242"
 FFTW_URL = "https://www.fftw.org/fftw-3.3.10.tar.gz"
+# The SHA-256 FFTW publishes for its 3.3.10 tarball, which the synthetic tarball does not have.
+FFTW_3_3_10_SHA256 = "56c932549852cddcfafdab3820b0200c7742675be92179e59e6215b340e26467"
 MIRROR_URL = "https://mirror.example.com/NAMD_3.0.2_Source.tar.gz"
 # Host commands the script must not find: the stubs stand in for some of them, and it runs none of the others.
 HIDDEN = frozenset({"curl", "sudo", "dnf", "make", "mpicxx", "mpicc", "mpirun", "mpiexec", "module", "srun", "sbatch",
@@ -94,14 +100,15 @@ for a in "$@"; do case "${a}" in --prefix=*) printf '%s' "${a#--prefix=}" > .stu
 
 
 def tar_bytes(files: dict[str, tuple[bytes, int]], gz: bool = True) -> bytes:
+    """A tarball of `files` ({name: (data, mode)}), the same bytes on every call."""
     buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz" if gz else "w") as tar:
+    with tarfile.open(fileobj=buf, mode="w") as tar:
         for name, (data, mode) in files.items():
             info = tarfile.TarInfo(name)
             info.size = len(data)
             info.mode = mode
             tar.addfile(info, io.BytesIO(data))
-    return buf.getvalue()
+    return gzip.compress(buf.getvalue(), mtime=0) if gz else buf.getvalue()
 
 
 def namd_source() -> bytes:
@@ -112,10 +119,13 @@ def namd_source() -> bytes:
                       "NAMD_3.0.2_Source/notes.txt": (b"synthetic notes\n", 0o644)})
 
 
-def fftw_source() -> bytes:
-    """A synthetic fftw-3.3.10.tar.gz: a stub configure."""
-    return tar_bytes({"fftw-3.3.10/configure": (FFTW_CONFIGURE_STUB.encode(), 0o755),
-                      "fftw-3.3.10/README": (b"synthetic\n", 0o644)})
+def fftw_source(version: str = "3.3.10") -> bytes:
+    """A synthetic fftw-<version>.tar.gz: a stub configure."""
+    return tar_bytes({f"fftw-{version}/configure": (FFTW_CONFIGURE_STUB.encode(), 0o755),
+                      f"fftw-{version}/README": (b"synthetic\n", 0o644)})
+
+
+FFTW_SYNTHETIC_SHA256 = hashlib.sha256(fftw_source()).hexdigest()
 
 
 @dataclass
@@ -171,7 +181,8 @@ def build(work: Path, tools: Path, env: dict[str, str | None] | None = None, sta
     for name, text in {"sudo": SUDO_STUB, "curl": CURL_STUB, "mpicxx": MPICXX_STUB, "make": MAKE_STUB}.items():
         (stubs / name).write_text(text)
         (stubs / name).chmod(0o755)
-    (served / "fftw-3.3.10.tar.gz").write_bytes(fftw_source())
+    for version in ("3.3.10", "3.3.9"):
+        (served / f"fftw-{version}.tar.gz").write_bytes(fftw_source(version))
     (served / "mirror" / "NAMD_3.0.2_Source.tar.gz").write_bytes(namd_source())
     if staged_source:
         (src / "NAMD_3.0.2_Source.tar.gz").write_bytes(namd_source())
@@ -180,7 +191,8 @@ def build(work: Path, tools: Path, env: dict[str, str | None] | None = None, sta
         (base / "src" / "fftw-3.3.10.tar.gz").write_bytes(fftw_source())
     job_env = {"PATH": f"{stubs}{os.pathsep}{tools}", "HOME": str(work), "LC_ALL": "POSIX", "TMPDIR": str(tmp),
                "STATE": str(state), "STUB_SRC": str(served), "STUB_MIRROR_URL": MIRROR_URL, "SLURM_JOB_ID": JOB_ID,
-               "BASE_DIR": str(base), "NAMD_SRC": str(src / "NAMD_3.0.2_Source.tar.gz"), "COMPILE_CORES": "4"}
+               "BASE_DIR": str(base), "NAMD_SRC": str(src / "NAMD_3.0.2_Source.tar.gz"), "COMPILE_CORES": "4",
+               "FFTW_SHA256": FFTW_SYNTHETIC_SHA256}
     for name, value in (env or {}).items():
         if value is None:
             job_env.pop(name, None)
@@ -301,3 +313,41 @@ def test_the_build_installs_namd3_and_an_env_script_that_loads_the_mpi_modules(t
                  'export CHARM_ARCH="mpi-linux-x86_64-smp"'):
         assert line in lines, line
     assert b.log("sudo.log") == ["dnf install -y gcc gcc-c++ gcc-gfortran make tar gzip tcl-devel"]
+
+
+def assert_fftw_refused(b: Build, expected: str) -> None:
+    """The build stopped on the FFTW tarball's SHA-256 before it extracted it: exit 1, both values named."""
+    assert b.proc.returncode == 1, b.proc.stdout + b.proc.stderr
+    assert f"has SHA-256 {FFTW_SYNTHETIC_SHA256}, not the expected {expected}" in b.proc.stderr, b.proc.stderr
+    assert b.args("fftw-configure.args") is None
+    assert not list((b.base / "build").glob("*-fftw"))
+    assert b.args("charm-build.args") is None and b.args("config.args") is None
+
+
+def test_by_default_the_fftw_tarball_must_have_fftws_published_sha256(tmp_path, host_tools):
+    """FFTW_SHA256 unset and FFTW 3.3.10: the synthetic tarball is not FFTW's, so the build stops before it is
+    extracted."""
+    assert_fftw_refused(build(tmp_path, host_tools, env={"FFTW_SHA256": None}), FFTW_3_3_10_SHA256)
+
+
+def test_a_wrong_fftw_sha256_stops_the_build(tmp_path, host_tools):
+    assert_fftw_refused(build(tmp_path, host_tools, env={"FFTW_SHA256": "0" * 64}), "0" * 64)
+
+
+def test_the_tarballs_own_sha256_lets_the_build_go_on(tmp_path, host_tools):
+    b = built(build(tmp_path, host_tools))
+    assert f"FFTW 3.3.10 tarball: SHA-256 {FFTW_SYNTHETIC_SHA256}, as expected" in b.proc.stdout
+    assert b.args("fftw-configure.args") is not None
+
+
+def test_a_staged_fftw_tarball_is_checked_as_a_downloaded_one(tmp_path, host_tools):
+    assert_fftw_refused(build(tmp_path, host_tools, staged_fftw=True, env={"FFTW_SHA256": None}),
+                        FFTW_3_3_10_SHA256)
+
+
+def test_another_fftw_version_with_no_sha256_prints_the_tarballs_and_goes_on(tmp_path, host_tools):
+    b = built(build(tmp_path, host_tools, env={"FFTW_VERSION": "3.3.9", "FFTW_SHA256": None}))
+    got = hashlib.sha256(fftw_source("3.3.9")).hexdigest()
+    assert f"NOTE: no SHA-256 to check for FFTW 3.3.9 (set FFTW_SHA256); {b.base / 'src' / 'fftw-3.3.9.tar.gz'} " \
+           f"has SHA-256 {got}" in b.proc.stderr.splitlines(), b.proc.stderr
+    assert b.args("fftw-configure.args") is not None

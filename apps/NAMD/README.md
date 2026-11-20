@@ -31,7 +31,8 @@ The build script:
 
 1. installs the compilers, `make` and TCL's headers with `dnf` (through `sudo`);
 2. builds FFTW as a static, single-precision library inside the install, so `namd3` needs no FFTW library on the
-   compute nodes;
+   compute nodes. Before it extracts the FFTW tarball, downloaded or staged, it checks the tarball's SHA-256 against
+   `FFTW_SHA256` and stops on a mismatch;
 3. builds the Charm++ that ships with the NAMD source (`mpi-linux-x86_64 smp --with-production`), with
    `-O3 -march=x86-64-v4 -mtune=znver4`, against the Open MPI module;
 4. configures NAMD for that Charm++, the system TCL and the static FFTW, and compiles it with the options of NAMD's
@@ -53,6 +54,7 @@ One build serves hpc8a.96xlarge and hpc7a.96xlarge. The script never overwrites 
 | `NAMD_SRC_URL` | none | A private mirror to fetch the source from when it is not staged |
 | `OPENMPI_MODULE` | `openmpi/4.1.7` | The Open MPI module Charm++ is built against and the env script loads |
 | `FFTW_VERSION` | `3.3.10` | FFTW release, fetched from fftw.org unless `${BASE_DIR}/src/fftw-<version>.tar.gz` exists |
+| `FFTW_SHA256` | FFTW's published SHA-256 for 3.3.10 | The FFTW tarball's expected SHA-256. For another version with none set, the build prints the tarball's SHA-256 and goes on |
 
 ## Run
 
