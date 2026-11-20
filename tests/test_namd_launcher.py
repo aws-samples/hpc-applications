@@ -13,12 +13,17 @@ These tests pin:
 - the build: with NAMD_ENV unset, the build of the node's instance family under BASE_DIR/x86_64/<version>-<family>/
   (the highest version), else the only build there, with a NOTE, else a stop that asks for NAMD_ENV; and an AVX-512
   build on a CPU without AVX-512, refused before anything runs;
-- cores per node on hpc8a.96xlarge and hpc7a.96xlarge: PPN 23, 47, 71, 95, 119, 143 and 167 pin the communication
-  thread to the first core of the flexible-cores list of PPN + 1 cores in
+- cores per node on hpc8a.96xlarge and hpc7a.96xlarge, with one process per node: PPN 23, 47, 71, 95, 119, 143 and
+  167 pin the communication thread to the first core of the flexible-cores list of PPN + 1 cores in
   Utils/flexible-cores/hello-cpu.openmpi.explicit.sbatch and the PEs to the rest, which puts (PPN + 1) / 24 threads on
-  every CCD, on every node; PPN 191 and 192 fill the node with no list; any other PPN stops the job before anything
-  runs. With no instance type, lscpu decides (in the C locale), and only below a full node: a 192-core AMD node gets
-  the same check and lists, any other node none, each with a NOTE. Other types get no list and no check.
+  every CCD, on every node; PPN 191 and 192 fill the node; any other PPN stops the job before anything runs. With no
+  instance type, lscpu decides (in the C locale), and only where the type changes what the job does: a 192-core AMD
+  node gets the same check and lists, any other node none, each with a NOTE. Other types get no list and no check;
+- processes per node (PROCS_PER_NODE, P): mpirun's -np and --map-by, and on a full node each process on G = cores / P
+  consecutive cores, its communication thread on the first (+commap 0-<C-1>:G) and its G - 1 PEs on the others
+  (+pemap 1-<C-1>:G.<G-1>), which these tests expand as Charm++ does and check core by core; the P values refused
+  (on hpc8a.96xlarge and hpc7a.96xlarge, groups that are not whole CCDs); NAMD_EXTRA_ARGS; and the mpirun command line
+  the job log prints.
 
 They run the script with stubs of curl (the instance metadata and the deck downloads), srun, fi_info, nproc, lscpu
 and mpirun, from a temporary directory, with a clean environment and a PATH that holds no other MPI, Slurm, ssh, curl, aws
@@ -373,12 +378,13 @@ def test_one_node_runs_one_process_with_191_pes_and_reports_the_last_benchmark_l
     call = started(job)
     namd3 = str(tmp_path / "base" / "x86_64" / "3.0.2-hpc8a" / "bin" / "namd3")
     assert mpi_words(call) == ["-np", "1", "--map-by", "ppr:1:node", "--bind-to", "none"]
-    assert namd_words(call) == [namd3, "+ppn", "191", "+setcpuaffinity", "run-ApoA1.namd"]
+    assert namd_words(call) == [namd3, "+ppn", "191", "+setcpuaffinity", "+commap", "0-191:192", "+pemap",
+                                "1-191:192.191", "run-ApoA1.namd"]
     assert call["fi_provider"] == "unset"
     assert "NAMDRESULT model=ApoA1 nodes=1 ppn=191 instance=hpc8a.96xlarge days_per_ns=0.25 ns_per_day=4.0000 " \
-           "wallclock=12.500000" in job.out
-    assert any(re.fullmatch(r"\s*model=ApoA1\s+nodes=1 x hpc8a\.96xlarge\s+ppn=191\s+cores/node=192", line)
-               for line in job.out), job.out
+           "wallclock=12.500000 procs_per_node=1" in job.out
+    assert any(re.fullmatch(r"\s*model=ApoA1\s+nodes=1 x hpc8a\.96xlarge\s+procs/node=1\s+ppn=191\s+"
+                            r"cores/node=192", line) for line in job.out), job.out
 
 
 def test_two_nodes_check_efa_and_send_mpis_traffic_over_it(tmp_path, host_tools):
@@ -390,7 +396,7 @@ def test_two_nodes_check_efa_and_send_mpis_traffic_over_it(tmp_path, host_tools)
     assert call["fi_provider"] == "efa"
     assert job.fi_info == ["-p efa -t FI_EP_RDM"]
     assert "NAMDRESULT model=STMV nodes=2 ppn=191 instance=hpc8a.96xlarge days_per_ns=0.25 ns_per_day=4.0000 " \
-           "wallclock=12.500000" in job.out
+           "wallclock=12.500000 procs_per_node=1" in job.out
 
 
 def test_no_efa_on_two_nodes_stops_the_job_before_mpirun(tmp_path, host_tools):
@@ -503,7 +509,7 @@ def test_no_instance_type_from_the_metadata_names_it_unknown_and_the_run_goes_on
     started(job)
     (run_dir,) = job.run_dirs()
     assert re.fullmatch(rf"{JOB_ID}-ApoA1-test-1xunknown-191ppn-\d{{8}}T\d{{6}}Z", run_dir.name), run_dir.name
-    assert any(re.fullmatch(r"\s*model=ApoA1\s+nodes=1 x unknown\s+ppn=191\s+cores/node=192", line)
+    assert any(re.fullmatch(r"\s*model=ApoA1\s+nodes=1 x unknown\s+procs/node=1\s+ppn=191\s+cores/node=192", line)
                for line in job.out), job.out
     (result,) = [line for line in job.out if line.startswith("NAMDRESULT ")]
     assert " instance=unknown " in result, result
@@ -677,12 +683,20 @@ def test_two_nodes_use_the_same_node_local_list(tmp_path, host_tools):
     assert commap == str(listed[0]) and pemap == ",".join(map(str, listed[1:]))
 
 
-@pytest.mark.parametrize("ppn", [191, 192])
 @pytest.mark.parametrize("itype", FLEX_TYPES)
-def test_a_full_node_gets_no_list(itype, ppn, tmp_path, host_tools):
+def test_a_full_node_gets_no_flexible_cores_list(itype, tmp_path, host_tools):
     builds = (("3.0.2-hpc8a", None), ("3.0.2-hpc7a", None))
-    job = run(tmp_path, host_tools, itype=itype, builds=builds, env={"PPN": str(ppn)})
+    job = run(tmp_path, host_tools, itype=itype, builds=builds, env={"PPN": "191"})
+    assert maps(started(job)) == ("0-191:192", "1-191:192.191")
+    assert not any(line.startswith("Flexible cores:") for line in job.out)
+
+
+@pytest.mark.parametrize("itype", [*FLEX_TYPES, "c8i.96xlarge"])
+def test_ppn_equal_to_the_nodes_cores_gets_no_maps_and_a_note(itype, tmp_path, host_tools):
+    job = run(tmp_path, host_tools, itype=itype, builds=ALL_TARGETS, env={"PPN": "192"})
     assert_no_maps(started(job))
+    assert "NOTE: PPN=192 on a node of 192 cores leaves no core for the communication thread; Charm++ places the " \
+           "threads" in job.err
 
 
 def flex_error(ppn: int, node: str, on: str) -> str:
@@ -743,7 +757,7 @@ def test_with_no_type_any_other_node_runs_with_no_list_and_a_note(node, ppn, tmp
 @pytest.mark.parametrize("ppn", [191, 192])
 def test_with_no_type_a_full_node_asks_lscpu_nothing(ppn, tmp_path, host_tools):
     job = run(tmp_path, host_tools, imds="none", env={"PPN": str(ppn)})
-    assert_no_maps(started(job))
+    started(job)
     assert job.lscpu == []
     assert "lscpu" not in job.proc.stderr
 
@@ -752,3 +766,158 @@ def test_lscpu_is_read_in_the_c_locale(tmp_path, host_tools):
     job = run(tmp_path, host_tools, imds="none", env={"PPN": "95", "LC_ALL": "de_DE.UTF-8"})
     started(job)
     assert job.lscpu == ["C"]
+
+
+def expand_map(spec: str) -> list[int]:
+    """A Charm++ +pemap or +commap value as Charm++'s search_pemap expands it: comma-separated entries, each a core,
+    a range a-b, or a-b:stride or a-b:stride.block (block cores from every stride-th core from a up to b)."""
+    cores: list[int] = []
+    for token in spec.split(","):
+        m = re.fullmatch(r"(\d+)(?:-(\d+)(?::(\d+)(?:\.(\d+))?)?)?", token)
+        assert m, token
+        start = int(m.group(1))
+        end = int(m.group(2)) if m.group(2) else start
+        stride, block = int(m.group(3) or 1), int(m.group(4) or 1)
+        assert block <= stride, token
+        for i in range(start, end + 1, stride):
+            cores.extend(i + j for j in range(block) if i + j <= end)
+    return cores
+
+
+def process_cores(call: dict, procs: int, ppn: int) -> list[tuple[int, list[int]]]:
+    """Each of a node's processes, in rank order: its communication thread's core and its PEs' cores. Charm++ binds
+    PE p to the pemap entry p mod (the entries), and the communication thread of process k to commap entry k mod (the
+    entries)."""
+    commap, pemap = (expand_map(v) for v in maps(call))
+    return [(commap[k % len(commap)], [pemap[(k * ppn + i) % len(pemap)] for i in range(ppn)]) for k in range(procs)]
+
+
+def assert_whole_groups(call: dict, cores: int, procs: int) -> None:
+    """Every core once, and process k on group k of cores / procs consecutive cores, its communication thread on the
+    group's first core."""
+    g = cores // procs
+    placed = process_cores(call, procs, g - 1)
+    used = [c for comm, pes in placed for c in (comm, *pes)]
+    assert sorted(used) == list(range(cores)), placed
+    for k, (comm, pes) in enumerate(placed):
+        assert comm == k * g, (k, comm)
+        assert sorted(pes) == list(range(k * g + 1, (k + 1) * g)), (k, pes)
+
+
+@pytest.mark.parametrize("procs", [1, 2, 3, 4, 6, 8, 12, 24])
+def test_on_hpc8a_each_process_takes_whole_ccds_with_its_communication_thread_on_the_first_core(procs, tmp_path,
+                                                                                               host_tools):
+    job = run(tmp_path, host_tools, env={"PROCS_PER_NODE": str(procs), "MODEL": "STMV"})
+    call = started(job)
+    g = 192 // procs
+    assert mpi_words(call)[:6] == ["-np", str(procs), "--map-by", f"ppr:{procs}:node", "--bind-to", "none"]
+    assert namd_words(call)[1:3] == ["+ppn", str(g - 1)]
+    assert maps(call) == (f"0-191:{g}", f"1-191:{g}.{g - 1}")
+    assert_whole_groups(call, 192, procs)
+    placed = process_cores(call, procs, g - 1)
+    ccds = [sum(c // 8 == ccd for comm, pes in placed for c in (comm, *pes)) for ccd in range(24)]
+    assert ccds == [8] * 24
+    assert all(len({c // 8 for c in (comm, *pes)}) == g // 8 for comm, pes in placed)
+    (run_dir,) = job.run_dirs()
+    layout = "191ppn" if procs == 1 else f"{procs}x{g - 1}ppn"
+    assert f"-1xhpc8a.96xlarge-{layout}-" in run_dir.name
+    (result,) = [line for line in job.out if line.startswith("NAMDRESULT ")]
+    assert f" ppn={g - 1} " in result and result.endswith(f" procs_per_node={procs}")
+
+
+@pytest.mark.parametrize("itype, cores, procs", [("c8i.96xlarge", 192, 6), ("hpc6id.32xlarge", 64, 2),
+                                                 ("hpc6id.32xlarge", 64, 8), ("hpc6a.48xlarge", 96, 12),
+                                                 ("c8i.96xlarge", 192, 16)])
+def test_on_other_types_each_process_takes_its_group(itype, cores, procs, tmp_path, host_tools):
+    cpuinfo = CPUINFO_AVX2 if itype.startswith("hpc6a") else CPUINFO_AVX512
+    job = run(tmp_path, host_tools, itype=itype, builds=ALL_TARGETS, cpuinfo=cpuinfo,
+              env={"PROCS_PER_NODE": str(procs), "SLURM_CPUS_ON_NODE": str(cores)})
+    call = started(job)
+    assert mpi_words(call)[:4] == ["-np", str(procs), "--map-by", f"ppr:{procs}:node"]
+    assert_whole_groups(call, cores, procs)
+    assert job.lscpu == []
+
+
+def test_two_nodes_run_p_processes_on_each_with_the_same_node_local_maps(tmp_path, host_tools):
+    job = run(tmp_path, host_tools, nodes=2, env={"PROCS_PER_NODE": "24", "MODEL": "STMV"})
+    call = started(job)
+    assert mpi_words(call)[:4] == ["-np", "48", "--map-by", "ppr:24:node"]
+    assert "--mca" in mpi_words(call)
+    assert_whole_groups(call, 192, 24)
+    # Node 1's processes are ranks 24-47: PEs 24*7 ... and node indices 24-47 map to the same entries.
+    commap, pemap = (expand_map(v) for v in maps(call))
+    assert [commap[k % len(commap)] for k in range(24, 48)] == [commap[k] for k in range(24)]
+    assert [pemap[p % len(pemap)] for p in range(24 * 7, 48 * 7)] == pemap
+
+
+PROCS_REFUSED = ["0", "abc", "5", "97", "192", "-2", "+2", "02"]
+
+
+@pytest.mark.parametrize("value", PROCS_REFUSED)
+def test_a_procs_per_node_that_does_not_divide_the_node_stops_the_job(value, tmp_path, host_tools):
+    job = run(tmp_path, host_tools, itype="c8i.96xlarge", builds=ALL_TARGETS, env={"PROCS_PER_NODE": value})
+    assert_refused(job, f"ERROR: PROCS_PER_NODE='{value}' invalid (an integer that divides the node's 192 cores and "
+                        "leaves each process at least 2)")
+
+
+def test_more_than_one_process_takes_ppn_g_minus_1_only(tmp_path, host_tools):
+    assert_refused(run(tmp_path / "63", host_tools, env={"PROCS_PER_NODE": "2", "PPN": "63"}),
+                   "ERROR: PPN=63 with PROCS_PER_NODE=2: each process has 96 cores, so PPN is 95 (a core for its "
+                   "communication thread); leave PPN unset")
+    started(run(tmp_path / "95", host_tools, env={"PROCS_PER_NODE": "2", "PPN": "95"}))
+
+
+def procs_error(procs: int, node: str, on: str) -> str:
+    return (f"ERROR: PROCS_PER_NODE={procs} gives each process {192 // procs} cores, which would load the 24 CCDs of "
+            f"{node} unevenly; on {on} use PROCS_PER_NODE=1, 2, 3, 4, 6, 8, 12 or 24 (see Utils/flexible-cores/)")
+
+
+@pytest.mark.parametrize("procs", [16, 32, 48, 64, 96])
+@pytest.mark.parametrize("itype", FLEX_TYPES)
+def test_on_hpc8a_and_hpc7a_groups_that_are_not_whole_ccds_stop_the_job(itype, procs, tmp_path, host_tools):
+    job = run(tmp_path, host_tools, itype=itype, builds=ALL_TARGETS, env={"PROCS_PER_NODE": str(procs)})
+    assert_refused(job, procs_error(procs, itype, "this type"))
+
+
+def test_with_no_type_lscpu_decides_for_groups_that_are_not_whole_ccds(tmp_path, host_tools):
+    job = run(tmp_path / "amd", host_tools, imds="none", env={"PROCS_PER_NODE": "16", "STUB_LSCPU": "amd-192"})
+    assert_refused(job, procs_error(16, "this 192-core AMD node", "this node"))
+    assert NOTE_APPLY in job.err
+    job = run(tmp_path / "intel", host_tools, imds="none", env={"PROCS_PER_NODE": "16", "STUB_LSCPU": "intel-192"})
+    assert_whole_groups(started(job), 192, 16)
+    assert NOTE_SKIP in job.err
+    job = run(tmp_path / "whole", host_tools, imds="none", env={"PROCS_PER_NODE": "4"})
+    assert_whole_groups(started(job), 192, 4)
+    assert job.lscpu == []
+
+
+@pytest.mark.parametrize("extra", ["+notiles", "+notiles +stdout_flush_1"])
+def test_namd_extra_args_go_before_the_config(extra, tmp_path, host_tools):
+    call = started(run(tmp_path, host_tools, env={"NAMD_EXTRA_ARGS": extra}))
+    words = namd_words(call)
+    assert words[-1 - len(extra.split()):-1] == extra.split()
+
+
+@pytest.mark.parametrize("word", ["notiles", "+1x", "+notiles;rm", "-notiles", "+no-tiles", "+no/tiles"])
+def test_a_namd_extra_args_word_that_is_not_a_plus_option_stops_the_job(word, tmp_path, host_tools):
+    assert_refused(run(tmp_path, host_tools, env={"NAMD_EXTRA_ARGS": f"+notiles {word}"}),
+                   f"ERROR: NAMD_EXTRA_ARGS: '{word}' is not a namd3 option word (a + and a name of letters, digits "
+                   "and _)")
+
+
+@pytest.mark.parametrize("word", ["+ppn", "+setcpuaffinity", "+pemap", "+commap"])
+def test_namd_extra_args_cannot_set_what_the_launcher_sets(word, tmp_path, host_tools):
+    assert_refused(run(tmp_path, host_tools, env={"NAMD_EXTRA_ARGS": word}),
+                   f"ERROR: NAMD_EXTRA_ARGS: {word} is set by the launcher")
+
+
+@pytest.mark.parametrize("value", ["095", "+95", " 95"])
+def test_a_ppn_with_a_sign_a_space_or_a_leading_zero_stops_the_job(value, tmp_path, host_tools):
+    assert_refused(run(tmp_path, host_tools, env={"PPN": value}), f"PPN='{value}' invalid")
+
+
+@pytest.mark.parametrize("nodes, env", [(1, {}), (2, {"PROCS_PER_NODE": "8", "NAMD_EXTRA_ARGS": "+notiles"})])
+def test_the_job_log_prints_the_mpirun_command_line(nodes, env, tmp_path, host_tools):
+    job = run(tmp_path, host_tools, nodes=nodes, env=env)
+    call = started(job)
+    assert f"==> mpirun {' '.join(call['args'])}" in job.out

@@ -9,9 +9,10 @@
 # Run a standard NAMD benchmark (ApoA1 / STMV) on x86 HPC instances over EFA.
 #
 # NAMD is built on Charm++ (MPI/SMP backend over the system OpenMPI). This
-# launcher uses mpirun to start one process per node + worker threads, so
-# inter-node traffic rides EFA through OpenMPI's libfabric provider. Single-node
-# runs use the same binary with a single process.
+# launcher uses mpirun to start PROCS_PER_NODE processes per node (default 1),
+# each with PPN worker threads and a communication thread, so inter-node traffic
+# rides EFA through OpenMPI's libfabric provider. Single-node runs use the same
+# binary.
 #
 # Performance metric: NAMD prints `Info: Benchmark time: ... <days/ns> days/ns`.
 # The launcher extracts days/ns from the LAST such line and reports
@@ -22,9 +23,13 @@
 #               instance family under ${BASE_DIR}/x86_64/, see below)
 #   MODEL       ApoA1 | STMV                       (default ApoA1)
 #   TIMESTEPS   numsteps override, 1..10000000     (default: model default)
-#   PPN         worker threads (PEs) per node      (default: cores/node - 1;
-#               on hpc8a.96xlarge and hpc7a.96xlarge 23, 47, 71, 95, 119,
-#               143, 167, 191 or 192, see below)
+#   PPN         worker threads (PEs) per process   (default: the process's
+#               cores - 1; with one process per node on hpc8a.96xlarge and
+#               hpc7a.96xlarge 23, 47, 71, 95, 119, 143, 167, 191 or 192, see
+#               below)
+#   PROCS_PER_NODE  NAMD processes per node, P     (default 1; see below)
+#   NAMD_EXTRA_ARGS namd3 options added before the config, each a +word
+#               (for example +notiles)
 #   BASE_DIR    run-output root (absolute path)    (default /fsx/namd)
 
 set -uo pipefail
@@ -33,6 +38,8 @@ NAMD_ENV="${NAMD_ENV:-}"
 MODEL="${MODEL:-ApoA1}"
 TIMESTEPS="${TIMESTEPS:-}"
 PPN="${PPN:-}"
+PROCS_PER_NODE="${PROCS_PER_NODE:-1}"
+NAMD_EXTRA_ARGS="${NAMD_EXTRA_ARGS:-}"
 BASE_DIR="${BASE_DIR:-/fsx/namd}"
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
@@ -50,15 +57,33 @@ if [ -n "${TIMESTEPS}" ]; then
     || fail "TIMESTEPS='${TIMESTEPS}' invalid (integer 1..10000000)"
 fi
 if [ -n "${PPN}" ]; then
-  [[ "${PPN}" =~ ^[0-9]+$ ]] && [ "${PPN}" -ge 1 ] && [ "${PPN}" -le 192 ] \
+  [[ "${PPN}" =~ ^[1-9][0-9]*$ ]] && [ "${PPN}" -le 192 ] \
     || fail "PPN='${PPN}' invalid (integer 1..192)"
 fi
+# NAMD_EXTRA_ARGS: namd3 options, each a + and a name (+notiles, for example);
+# the launcher sets +ppn, +setcpuaffinity, +pemap and +commap itself.
+read -r -a EXTRA_ARGS <<< "${NAMD_EXTRA_ARGS}"
+for w in ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}; do
+  [[ "${w}" =~ ^\+[A-Za-z][A-Za-z0-9_]*$ ]] \
+    || fail "NAMD_EXTRA_ARGS: '${w}' is not a namd3 option word (a + and a name of letters, digits and _)"
+  case "${w}" in
+    +ppn|+setcpuaffinity|+pemap|+commap) fail "NAMD_EXTRA_ARGS: ${w} is set by the launcher" ;;
+  esac
+done
 
 NODES="${SLURM_JOB_NUM_NODES:-1}"
 CORES_PER_NODE="${SLURM_CPUS_ON_NODE:-$(nproc)}"
-# SMP: one process per node, 1 comm thread + PPN worker threads. Reserve a core
-# for the communication thread by default.
-[ -n "${PPN}" ] || PPN=$(( CORES_PER_NODE > 1 ? CORES_PER_NODE - 1 : 1 ))
+# SMP: PROCS_PER_NODE (P) processes per node, each with G = cores / P cores of
+# its own: a communication thread and PPN = G - 1 worker threads by default.
+# More than one process per node needs a full node: PPN is then G - 1.
+P="${PROCS_PER_NODE}"
+[[ "${P}" =~ ^[1-9][0-9]*$ ]] && (( P <= CORES_PER_NODE / 2 && CORES_PER_NODE % P == 0 )) \
+  || fail "PROCS_PER_NODE='${P}' invalid (an integer that divides the node's ${CORES_PER_NODE} cores and leaves each process at least 2)"
+G=$(( CORES_PER_NODE / P ))
+[ -n "${PPN}" ] || PPN=$(( G > 1 ? G - 1 : 1 ))
+if (( P > 1 && PPN != G - 1 )); then
+  fail "PPN=${PPN} with PROCS_PER_NODE=${P}: each process has ${G} cores, so PPN is $(( G - 1 )) (a core for its communication thread); leave PPN unset"
+fi
 # Instance metadata (IMDSv2). Each read gives up after a few seconds and never
 # ends the job: no answer, an HTTP error or an answer that is not an instance
 # type name (an error page, for example; the name is tested in the C locale)
@@ -107,21 +132,23 @@ if [ "${NAMD_ISA:-}" = avx512 ] && ! grep -qw avx512f /proc/cpuinfo; then
 fi
 
 # --- Cores per node on hpc8a.96xlarge and hpc7a.96xlarge --------------------
-# 192 cores in 24 CCDs of 8, one L3 cache per CCD. NAMD's process on each node
-# uses PPN + 1 cores: its PPN worker threads and its communication thread. Only
-# 24, 48, 72, 96, 120, 144, 168 or 192 cores per node give every CCD the same
-# number of threads (Utils/flexible-cores/), so on these types PPN is 23, 47,
-# 71, 95, 119, 143, 167, 191 or 192, and any other value stops the job here,
-# before anything runs. Below a full node, the threads are pinned to the
-# flexible-cores list of PPN + 1 cores: the communication thread to its first
-# core (+commap), the worker threads to the others (+pemap). PPN 191 or 192
-# fills the node, and Charm++ places the threads.
+# 192 cores in 24 CCDs of 8, one L3 cache per CCD. With one NAMD process per
+# node, it uses PPN + 1 cores: its PPN worker threads and its communication
+# thread. Only 24, 48, 72, 96, 120, 144, 168 or 192 cores per node give every
+# CCD the same number of threads (Utils/flexible-cores/), so on these types PPN
+# is 23, 47, 71, 95, 119, 143, 167, 191 or 192, and any other value stops the
+# job here, before anything runs. Below a full node, the threads are pinned to
+# the flexible-cores list of PPN + 1 cores: the communication thread to its
+# first core (+commap), the worker threads to the others (+pemap). With more
+# than one process per node, each process's G cores must be whole CCDs: P = 1,
+# 2, 3, 4, 6, 8, 12 or 24.
 # With no instance type from the instance metadata, a node that lscpu shows as
 # AMD with 192 cores (sockets x cores per socket) could be either type and gets
 # the same check and lists; any other node runs with no list, with a NOTE on
 # stderr. lscpu is asked, and a NOTE printed, only where the type changes what
-# the job does: below a full node. Other instance types and sizes get no list
-# and no check.
+# the job does: one process below a full node, or processes of a size that is
+# not a whole number of CCDs. Other instance types and sizes get no list and no
+# check.
 amd_192_cores() {
   local info vendor sockets per_socket
   info="$(LC_ALL=C lscpu 2>/dev/null)" || return 1
@@ -150,7 +177,7 @@ case "${INSTANCE_TYPE}" in
   hpc8a.96xlarge|hpc7a.96xlarge)
     FLEX_NODE="${INSTANCE_TYPE}"; FLEX_ON="this type" ;;
   "")
-    if (( PPN + 1 < CORES_PER_NODE )); then
+    if { (( P == 1 && PPN + 1 < CORES_PER_NODE )) || (( P > 1 && G % 8 != 0 )); }; then
       if amd_192_cores; then
         FLEX_NODE="this 192-core AMD node"; FLEX_ON="this node"
         echo "NOTE: no instance type from the instance metadata; lscpu shows a 192-core AMD node, which could be an hpc8a.96xlarge or hpc7a.96xlarge, so their cores-per-node check and flexible-cores lists apply" >&2
@@ -159,22 +186,39 @@ case "${INSTANCE_TYPE}" in
       fi
     fi ;;
 esac
-FLEX_ARGS=()
-if [ -n "${FLEX_NODE}" ]; then
+MAP_ARGS=()
+if [ -n "${FLEX_NODE}" ] && (( P > 1 )); then
+  (( G % 8 == 0 )) \
+    || fail "PROCS_PER_NODE=${P} gives each process ${G} cores, which would load the 24 CCDs of ${FLEX_NODE} unevenly; on ${FLEX_ON} use PROCS_PER_NODE=1, 2, 3, 4, 6, 8, 12 or 24 (see Utils/flexible-cores/)"
+elif [ -n "${FLEX_NODE}" ]; then
   case "${PPN}" in
     191|192) ;;   # the whole node
     23|47|71|95|119|143|167)
       FLEX_LIST="$(flex_cores_list $(( PPN + 1 )))"
-      FLEX_ARGS=( +commap "${FLEX_LIST%%,*}" +pemap "${FLEX_LIST#*,}" )
+      MAP_ARGS=( +commap "${FLEX_LIST%%,*}" +pemap "${FLEX_LIST#*,}" )
       echo "Flexible cores: the communication thread on core ${FLEX_LIST%%,*} and the ${PPN} PEs on the rest of the $(( PPN + 1 ))-core list (Utils/flexible-cores/)" ;;
     *)
       fail "PPN=${PPN} worker threads and the communication thread use $(( PPN + 1 )) cores per node, which would load the 24 CCDs of ${FLEX_NODE} unevenly; on ${FLEX_ON} use PPN=23, 47, 71, 95, 119, 143, 167, 191 or 192 (see Utils/flexible-cores/)" ;;
   esac
 fi
+# --- A full node: each process on G consecutive cores ------------------------
+# P processes fill the node's C cores in groups of G: process k's
+# communication thread on core k*G (+commap 0-<C-1>:G), its PPN = G - 1 worker
+# threads on the other cores of its group (+pemap 1-<C-1>:G.<G-1>), in NAMD's
+# list syntax. Charm++ hands each node's processes the entries in order, so
+# every node uses the same cores. With one process and PPN equal to the node's
+# cores, no core is left for the communication thread: Charm++ places the
+# threads.
+C_LAST=$(( CORES_PER_NODE - 1 ))
+if (( P > 1 || PPN + 1 == CORES_PER_NODE )); then
+  MAP_ARGS=( +commap "0-${C_LAST}:${G}" +pemap "1-${C_LAST}:${G}.$(( G - 1 ))" )
+elif (( PPN >= CORES_PER_NODE )); then
+  echo "NOTE: PPN=${PPN} on a node of ${CORES_PER_NODE} cores leaves no core for the communication thread; Charm++ places the threads" >&2
+fi
 
 echo "================================================================================"
 echo "NAMD benchmark — $(date)"
-echo "  model=${MODEL}  nodes=${NODES} x ${INSTANCE_TYPE:-unknown}  ppn=${PPN}  cores/node=${CORES_PER_NODE}"
+echo "  model=${MODEL}  nodes=${NODES} x ${INSTANCE_TYPE:-unknown}  procs/node=${P}  ppn=${PPN}  cores/node=${CORES_PER_NODE}"
 echo "  namd3=${NAMD3}   CHARM_ARCH=${CHARM_ARCH:-unknown}   target=${NAMD_TARGET_CPU:-unknown}   isa=${NAMD_ISA:-unknown}"
 echo "================================================================================"
 
@@ -218,7 +262,8 @@ echo "deck: ${CACHE_DIR}/${CONF}"
 
 # --- Unique run directory ------------------------------------------------
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-WORK="${BASE_DIR}/Run/${SLURM_JOB_ID:-local}-${MODEL}-${SLURM_CLUSTER_NAME:-cluster}-${NODES}x${INSTANCE_TYPE:-unknown}-${PPN}ppn-${STAMP}"
+LAYOUT="${PPN}ppn"; (( P == 1 )) || LAYOUT="${P}x${PPN}ppn"
+WORK="${BASE_DIR}/Run/${SLURM_JOB_ID:-local}-${MODEL}-${SLURM_CLUSTER_NAME:-cluster}-${NODES}x${INSTANCE_TYPE:-unknown}-${LAYOUT}-${STAMP}"
 [ -e "${WORK}" ] && fail "run directory already exists: ${WORK}"
 mkdir -p "${WORK}"
 cp "${CACHE_DIR}"/* "${WORK}/" 2>/dev/null || true
@@ -240,17 +285,18 @@ srun --ntasks="${NODES}" --ntasks-per-node=1 bash -c \
   'sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true; echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled >/dev/null 2>&1 || true'
 
 # --- Launch NAMD ---------------------------------------------------------
-# Charm++ MPI/SMP build: launch with mpirun, one process per node
-# (--map-by ppr:1:node), each spawning PPN worker threads (+ppn) plus a comm
+# Charm++ MPI/SMP build: launch with mpirun, P processes per node
+# (--map-by ppr:P:node), each spawning PPN worker threads (+ppn) plus a comm
 # thread. OpenMPI carries the traffic over EFA via its libfabric provider.
-echo "==> launching NAMD: ${NODES} node(s) x 1 process x ${PPN} PEs"
-MPI_ARGS=( -np "${NODES}" --map-by ppr:1:node --bind-to none )
+echo "==> launching NAMD: ${NODES} node(s) x ${P} process(es) x ${PPN} PEs"
+MPI_ARGS=( -np "$(( NODES * P ))" --map-by "ppr:${P}:node" --bind-to none )
 if [ "${NODES}" -gt 1 ]; then
   MPI_ARGS+=( --mca pml cm --mca mtl ofi -x FI_PROVIDER -x FI_EFA_USE_DEVICE_RDMA -x RDMAV_FORK_SAFE )
 fi
+NAMD_ARGS=( +ppn "${PPN}" +setcpuaffinity ${MAP_ARGS[@]+"${MAP_ARGS[@]}"} ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} )
+echo "==> mpirun ${MPI_ARGS[*]} ${NAMD3} ${NAMD_ARGS[*]} ${RUNCONF}"
 set -o pipefail
-mpirun "${MPI_ARGS[@]}" \
-     "${NAMD3}" +ppn "${PPN}" +setcpuaffinity ${FLEX_ARGS[@]+"${FLEX_ARGS[@]}"} "${RUNCONF}" 2>&1 | tee namd.out
+mpirun "${MPI_ARGS[@]}" "${NAMD3}" "${NAMD_ARGS[@]}" "${RUNCONF}" 2>&1 | tee namd.out
 rc=${PIPESTATUS[0]}
 [ "${rc}" -eq 0 ] || fail "NAMD run exited non-zero (rc=${rc}); see ${WORK}/namd.out"
 
@@ -265,10 +311,10 @@ echo ""
 echo "================================================================================"
 echo "NAMD benchmark results"
 echo "  Model:       ${MODEL}"
-echo "  Nodes:       ${NODES} x ${INSTANCE_TYPE:-unknown}   (${PPN} PEs/node)"
+echo "  Nodes:       ${NODES} x ${INSTANCE_TYPE:-unknown}   (${P} process(es) x ${PPN} PEs per node)"
 echo "  days/ns:     ${DAYS_PER_NS}"
 echo "  ns/day:      ${NS_PER_DAY}"
 echo "  WallClock:   ${WALLCLOCK:-n/a}s"
 echo "  Workdir:     ${WORK}"
 echo "================================================================================"
-echo "NAMDRESULT model=${MODEL} nodes=${NODES} ppn=${PPN} instance=${INSTANCE_TYPE:-unknown} days_per_ns=${DAYS_PER_NS} ns_per_day=${NS_PER_DAY} wallclock=${WALLCLOCK:-NA}"
+echo "NAMDRESULT model=${MODEL} nodes=${NODES} ppn=${PPN} instance=${INSTANCE_TYPE:-unknown} days_per_ns=${DAYS_PER_NS} ns_per_day=${NS_PER_DAY} wallclock=${WALLCLOCK:-NA} procs_per_node=${P}"
