@@ -1038,3 +1038,8 @@ def test_timesteps_sets_numsteps_and_a_run_line(steps, tmp_path, host_tools):
     config = started(run(tmp_path, host_tools, decks={"ApoA1": lines}, env={"TIMESTEPS": steps}))["config"]
     assert [line for line in config if line.lower().startswith(("numsteps", "run "))] == [f"numsteps {steps}",
                                                                                          f"run {steps}"]
+
+
+def test_the_job_asks_slurm_for_a_time_limit_of_two_hours():
+    header = [line for line in SCRIPT.read_text().splitlines() if line.startswith("#SBATCH")]
+    assert [line for line in header if line.startswith("#SBATCH --time")] == ["#SBATCH --time=02:00:00"], header

@@ -400,3 +400,8 @@ def test_another_fftw_version_with_no_sha256_prints_the_tarballs_and_goes_on(tmp
     assert f"NOTE: no SHA-256 to check for FFTW 3.3.9 (set FFTW_SHA256); {b.base / 'src' / 'fftw-3.3.9.tar.gz'} " \
            f"has SHA-256 {got}" in b.proc.stderr.splitlines(), b.proc.stderr
     assert b.args("fftw-configure.args") is not None
+
+
+def test_the_job_asks_slurm_for_a_time_limit_of_two_hours():
+    header = [line for line in SCRIPT.read_text().splitlines() if line.startswith("#SBATCH")]
+    assert [line for line in header if line.startswith("#SBATCH --time")] == ["#SBATCH --time=02:00:00"], header

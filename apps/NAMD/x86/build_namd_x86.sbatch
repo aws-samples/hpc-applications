@@ -4,6 +4,7 @@
 #SBATCH --partition=hpc8a
 #SBATCH --nodes=1
 #SBATCH --exclusive
+#SBATCH --time=02:00:00
 #SBATCH --output=build-namd-x86-%j.out
 #
 # Build NAMD 3.0.2 from source for one x86 instance family (TARGET_CPU).

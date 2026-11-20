@@ -57,7 +57,8 @@ The `Linux-AVX512-g++` arch file compiles NAMD with `-O3 -fexpensive-optimizatio
 the first three options only: hpc6a's CPU has no AVX-512. GCC 11, the default compiler of Amazon Linux 2023, has no
 `znver5` or `graniterapids` tuning, so the hpc8a and m8a targets tune for `znver4`, and the c8i and r8i targets for
 `sapphirerapids`. A build runs on every size of its instance family, and the script can build any target on any
-x86_64 node. It never overwrites an install: remove `${BASE_DIR}/x86_64/<version>-<target>/` to build again.
+x86_64 node. It never overwrites an install: remove `${BASE_DIR}/x86_64/<version>-<target>/` to build again. The job asks Slurm for
+two hours (`#SBATCH --time=02:00:00`); pass `sbatch --time` to change it.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -84,7 +85,8 @@ sbatch --nodes=4 --export=ALL,MODEL=STMV x86/namd-benchmark.sbatch
 sbatch -p hpc7a -C hpc7a.96xlarge x86/namd-benchmark.sbatch
 ```
 
-The launcher:
+The job asks Slurm for two hours (`#SBATCH --time=02:00:00`), so a run that stops progressing gives its nodes back;
+pass `sbatch --time` for a longer run. The launcher:
 
 1. picks the build of the node's instance family, `${BASE_DIR}/x86_64/<version>-<family>/` (the highest version),
    from the instance type in the instance metadata, and sources its env script. With no build for that family, it

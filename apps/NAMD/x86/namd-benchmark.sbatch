@@ -4,6 +4,7 @@
 #SBATCH --partition=hpc8a
 #SBATCH --nodes=1
 #SBATCH --exclusive
+#SBATCH --time=02:00:00
 #SBATCH --output=namd-x86-%j.out
 #
 # Run a standard NAMD benchmark (ApoA1 / F1-ATPase / STMV) on x86 HPC instances
