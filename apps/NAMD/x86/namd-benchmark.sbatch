@@ -22,7 +22,8 @@
 # status when NAMD fails; when NAMD exits 0, a result is reported only from a
 # complete run (namd.out ends with NAMD's WallClock: line, and the last
 # Benchmark time line gives a positive days/ns), and otherwise the job ends
-# with status 1.
+# with status 1. A complete run is then recorded with the contribution
+# recorder, apps/NAMD/dynamodb/record-benchmark.sh (see the end of this script).
 #
 # Override via --export=ALL,...:
 #   NAMD_ENV    env script from the build (default: the build of this node's
@@ -38,6 +39,8 @@
 #   NAMD_EXTRA_ARGS namd3 options added before the config, each a +word
 #               (for example +notiles)
 #   BASE_DIR    run-output root (absolute path)    (default /fsx/namd)
+#   SOURCE, DYNAMODB_RECORDER   the contribution recorder's tag and path (see
+#               the end of this script)
 
 set -uo pipefail
 
@@ -319,20 +322,25 @@ fi
 
 # --- Parse performance, and the success gate --------------------------------
 # Take the days/ns value from the LAST 'Benchmark time:' line. NAMD exited 0; a
-# result is reported only from a complete run: namd.out has NAMD's closing
-# WallClock: line, and the last Benchmark time line gives a positive days/ns
-# (a decimal, in scientific notation or not). Otherwise an ERROR says what is
-# missing, no result is printed, and the job ends with status 1.
+# result is reported, and recorded, only from a complete run: namd.out has
+# NAMD's closing WallClock: line, and the last Benchmark time line gives a
+# positive days/ns (a decimal, in scientific notation or not). Otherwise a NOTE
+# says the run is not recorded, an ERROR says what is missing, no result is
+# printed, and the job ends with status 1.
 DAYS_PER_NS="$(awk '/Benchmark time:/ { for (i=1;i<=NF;i++) if ($i=="days/ns") print $(i-1) }' namd.out | tail -1)"
 WALLCLOCK="$(awk '/^WallClock:/ {print $2}' namd.out | tail -1)"
-[ -n "${DAYS_PER_NS}" ] || fail "could not parse 'days/ns' from NAMD output (${WORK}/namd.out)"
 NOT_COMPLETE=""
-if ! grep -qE '^WallClock:' namd.out; then
+if [ -z "${DAYS_PER_NS}" ]; then
+  NOT_COMPLETE="could not parse 'days/ns' from NAMD output"
+elif ! grep -qE '^WallClock:' namd.out; then
   NOT_COMPLETE="namd.out has no closing 'WallClock:' line, so NAMD did not end normally"
 elif ! awk -v d="${DAYS_PER_NS}" 'BEGIN { exit !(d ~ /^([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][-+]?[0-9]+)?$/ && d + 0 > 0) }'; then
   NOT_COMPLETE="the last 'Benchmark time:' line gives no positive days/ns ('${DAYS_PER_NS}')"
 fi
-[ -z "${NOT_COMPLETE}" ] || fail "${NOT_COMPLETE} (${WORK}/namd.out)"
+if [ -n "${NOT_COMPLETE}" ]; then
+  echo "NOTE: not recorded: ${NOT_COMPLETE}" >&2
+  fail "${NOT_COMPLETE} (${WORK}/namd.out)"
+fi
 NS_PER_DAY="$(awk -v d="${DAYS_PER_NS}" 'BEGIN { printf "%.4f", 1.0 / d }')"
 
 echo ""
@@ -346,3 +354,40 @@ echo "  WallClock:   ${WALLCLOCK:-n/a}s"
 echo "  Workdir:     ${WORK}"
 echo "================================================================================"
 echo "NAMDRESULT model=${MODEL} nodes=${NODES} ppn=${PPN} instance=${INSTANCE_TYPE:-unknown} days_per_ns=${DAYS_PER_NS} ns_per_day=${NS_PER_DAY} wallclock=${WALLCLOCK:-NA} procs_per_node=${P}"
+
+# --- Contribute the result (best-effort, non-fatal) ------------------------
+# The complete run is recorded in the shared AI-Powered HPC benchmark dataset by
+# the contribution recorder, apps/NAMD/dynamodb/record-benchmark.sh. It reads
+# the host's details itself, and from namd.out in the run directory the atom
+# count, NAMD's version and platform, the number of steps and the time step.
+# The launcher hands it the case, the days/ns (from which the recorder computes
+# ns/day), NAMD's WallClock time, the nodes and the cores the run used
+# (PROCS_PER_NODE x (PPN + 1) per node, at most the node's cores), and what
+# makes runs comparable, under the names the dataset gives them: the processes
+# per node (procs_per_node), the worker threads per process (pes_per_proc), and
+# whether NAMD's AVX-512 tile-list kernels ran (avx512_tiles: on when namd.out
+# says they are ENABLED). A recorder problem never changes the job's exit
+# status: a NOTE says so. Point DYNAMODB_RECORDER at the recorder if it is not
+# found from the submit directory, and set SOURCE=<YourOrg> to tag your
+# contributions. See apps/NAMD/dynamodb/README.md and apps/BENCHMARK-RECORDERS.md.
+REC_CORES=$(( P * (PPN + 1) ))
+if (( REC_CORES > CORES_PER_NODE )); then REC_CORES="${CORES_PER_NODE}"; fi
+TILES=off
+if grep -q 'AVX-512 TILES OPTIMIZATIONS: ENABLED' namd.out; then TILES=on; fi
+RECORDER="${DYNAMODB_RECORDER:-}"
+for cand in "${RECORDER}" \
+            "${SLURM_SUBMIT_DIR:-.}/../dynamodb/record-benchmark.sh" \
+            "${SLURM_SUBMIT_DIR:-.}/dynamodb/record-benchmark.sh" \
+            "${SLURM_SUBMIT_DIR:-.}/apps/NAMD/dynamodb/record-benchmark.sh"; do
+  if [ -n "${cand}" ] && [ -x "${cand}" ]; then RECORDER="${cand}"; break; fi
+done
+if [ -n "${RECORDER}" ] && [ -x "${RECORDER}" ]; then
+  BENCHMARK_CASE="${MODEL}" DAYS_PER_NS="${DAYS_PER_NS}" TIME_TO_SOLUTION="${WALLCLOCK}" \
+  NUM_INSTANCES="${NODES}" NUM_CORES="$(( NODES * REC_CORES ))" CORES_PER_NODE="${REC_CORES}" \
+  INSTANCE_TYPE="${INSTANCE_TYPE}" RUN_DIR="${WORK}" "${RECORDER}" \
+      --metric "procs_per_node=${P}" --metric "pes_per_proc=${PPN}" --char "avx512_tiles=${TILES}" \
+    || echo "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected." >&2
+else
+  echo "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record." >&2
+fi
+exit 0

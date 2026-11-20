@@ -9,7 +9,7 @@ rename a confidential case first, since the issue, the JSON and its file's
 name are public. Either way it exits 0. With --put, a refused write still
 ends the run with exit 1; with --no-put, the run prints its own line instead.
 
-These tests run all eleven recorders on those paths with stubs only: a curl
+These tests run all twelve recorders on those paths with stubs only: a curl
 that answers nothing (no instance metadata), an aws whose put-item is refused,
 and a PATH that holds no other aws, curl, mpirun, fi_info or Slurm command.
 Nothing reaches AWS, and every value passed is synthetic. The last checks keep
@@ -33,7 +33,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-APPS = ("AnsysMechanical", "CFX", "Fluent", "Gromacs", "LAMMPS", "LS-Dyna", "OpenFoam", "OpenRadioss",
+APPS = ("AnsysMechanical", "CFX", "Fluent", "Gromacs", "LAMMPS", "LS-Dyna", "NAMD", "OpenFoam", "OpenRadioss",
         "Optistruct", "StarCCM", "WRF")
 # The recorders whose header comment, which --help prints, says how to share a run.
 HEADER_APPS = ("CFX", "Fluent", "LAMMPS", "LS-Dyna", "OpenFoam", "Optistruct", "StarCCM")

@@ -8,7 +8,7 @@ has no instance type, which every row needs, so the recorder stops with the erro
 it does with no answer at all: it prints no record and writes no file. A type given with --instance-type is used as
 given, and the instance metadata is not asked.
 
-These tests run all eleven recorders in --dry-run, which prints the record and touches no file and no AWS, with a stub
+These tests run all twelve recorders in --dry-run, which prints the record and touches no file and no AWS, with a stub
 curl that answers as each case asks and logs every request, and a PATH that holds no other curl, aws, mpirun, fi_info
 or Slurm command. Every value passed is synthetic.
 
@@ -27,7 +27,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-APPS = ("AnsysMechanical", "CFX", "Fluent", "Gromacs", "LAMMPS", "LS-Dyna", "OpenFoam", "OpenRadioss",
+APPS = ("AnsysMechanical", "CFX", "Fluent", "Gromacs", "LAMMPS", "LS-Dyna", "NAMD", "OpenFoam", "OpenRadioss",
         "Optistruct", "StarCCM", "WRF")
 # A run described in full but for its instance type, so that no recorder needs Slurm or an MPI.
 RUN_ARGS = ("--os", "Amazon Linux 2023", "--num-cores", "192", "--num-nodes", "1", "--mpi", "openmpi",

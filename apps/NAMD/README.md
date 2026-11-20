@@ -6,7 +6,8 @@ Urbana-Champaign, designed for large biomolecular systems. It runs on the [Charm
 parallel runtime rather than on MPI directly.
 
 The scripts in [`x86/`](x86/) build and run NAMD 3.0 on x86_64 instances. The build has a target for each of these
-instance families: hpc8a, hpc7a, m8a, c8i, r8i, hpc6id and hpc6a.
+instance families: hpc8a, hpc7a, m8a, c8i, r8i, hpc6id and hpc6a. [`dynamodb/`](dynamodb/) holds the recorder that
+adds a run to the shared benchmark dataset (see "Contribute your results").
 
 ## How the scripts run NAMD
 
@@ -102,7 +103,9 @@ pass `sbatch --time` for a longer run. The launcher:
    each with `+ppn PPN` worker threads, and `+setcpuaffinity` with the cores of each thread (see "Processes per node"
    and, below a full node of hpc8a.96xlarge or hpc7a.96xlarge, the flexible-cores list). It prints the whole command
    line first, on a line that starts with `==> mpirun`. On more than one node, Open MPI sends its traffic over EFA
-   (`--mca pml cm --mca mtl ofi`, `FI_PROVIDER=efa`).
+   (`--mca pml cm --mca mtl ofi`, `FI_PROVIDER=efa`);
+6. reports the result of a complete run (see "Metrics") and records it with the contribution recorder (see
+   "Contribute your results").
 
 | Variable | Default | Description |
 |---|---|---|
@@ -113,6 +116,8 @@ pass `sbatch --time` for a longer run. The launcher:
 | `PROCS_PER_NODE` | `1` | NAMD processes per node: a number that divides the node's cores and leaves each process at least two (see "Processes per node") |
 | `NAMD_EXTRA_ARGS` | none | `namd3` options added before the config, each a `+` and a name, for example `+notiles`. The launcher sets `+ppn`, `+setcpuaffinity`, `+pemap` and `+commap` itself |
 | `BASE_DIR` | `/fsx/namd` | Root of the deck cache and the run directories (an absolute path) |
+| `SOURCE` | `Community` | Your organization's label on the recorded runs (see "Contribute your results") |
+| `DYNAMODB_RECORDER` | found from the submit directory | The contribution recorder to call (see "Contribute your results") |
 
 ## Processes per node
 
@@ -193,8 +198,8 @@ time.
 
 When NAMD fails, the job ends with NAMD's exit status, after an `ERROR:` that names the run's `namd.out`. When NAMD
 exits 0, the launcher reports a result only from a complete run: `namd.out` must have NAMD's closing `WallClock:` line,
-and its last `Benchmark time:` line must give a positive days/ns. Otherwise it prints an `ERROR:` that says what is
-missing, no results block and no `NAMDRESULT` line, and the job ends with status 1.
+and its last `Benchmark time:` line must give a positive days/ns. Otherwise it prints `NOTE: not recorded: <why>` and
+an `ERROR:` that say what is missing, no results block and no `NAMDRESULT` line, and the job ends with status 1.
 
 The results block ends with one line that scripts can parse:
 
@@ -217,10 +222,31 @@ In the run directory's `namd.out`:
 
 On more than one node, the job's log shows the `fi_info` listing of provider `efa`.
 
+## Contribute your results
+
+The benchmark script calls [`dynamodb/record-benchmark.sh`](dynamodb/record-benchmark.sh) after every complete run:
+one whose `namd.out` ends with NAMD's `WallClock:` line and whose last `Benchmark time:` line gives a positive days/ns.
+For any other run the job log says `NOTE: not recorded: <why>`, and the recorder is not called. The recorder saves the
+run as a small JSON record (`<record_id>.json`, in the run directory) and adds it to the shared AI-Powered HPC
+benchmark dataset when you have write access to it. That dataset trains a model that predicts HPC performance on AWS,
+so every result you share helps. Set `SOURCE=<YourOrg>` to tag your runs, and see
+[BENCHMARK-RECORDERS.md](../BENCHMARK-RECORDERS.md) for the options and how to send the record in. To point the
+launcher at another copy of the recorder, set `DYNAMODB_RECORDER`. A recorder problem never changes the job's exit
+status: a `NOTE:` says so.
+
+Each record carries the case, the days/ns and ns/day, NAMD's `WallClock:` time, the atom count, the number of steps
+and the time step, NAMD's version and platform, the nodes, and the cores the run used: `PROCS_PER_NODE` × (`PPN` + 1)
+per node, at most the node's cores. The launcher also hands the recorder what makes runs comparable, under the names
+the dataset uses for them (`--metric procs_per_node=<PROCS_PER_NODE> --metric pes_per_proc=<PPN> --char
+avx512_tiles=on|off`; `on` when `namd.out` says the AVX-512 tile-list kernels are `ENABLED`), so that records of runs
+made with other layouts or kernels stay apart.
+
 ## Files
 
 | File | Description |
 |---|---|
 | [`x86/build_namd_x86.sbatch`](x86/build_namd_x86.sbatch) | Builds static FFTW, Charm++ (`mpi-linux-x86_64-smp`, on the system Open MPI) and NAMD; installs `namd3` and its env script |
-| [`x86/namd-benchmark.sbatch`](x86/namd-benchmark.sbatch) | Runs ApoA1, F1-ATPase or STMV with `mpirun`; fetches and caches the deck; reports days/ns and ns/day |
-| [`tests/test_namd_launcher.py`](../../tests/test_namd_launcher.py), [`tests/test_namd_build.py`](../../tests/test_namd_build.py), [`tests/test_namd_properties.py`](../../tests/test_namd_properties.py) | Tests of the two scripts, with stubs only: no NAMD, MPI or Slurm needed |
+| [`x86/namd-benchmark.sbatch`](x86/namd-benchmark.sbatch) | Runs ApoA1, F1-ATPase or STMV with `mpirun`; fetches and caches the deck; reports days/ns and ns/day, and records a complete run |
+| [`dynamodb/record-benchmark.sh`](dynamodb/record-benchmark.sh) | Records one run in the shared AI-Powered HPC benchmark dataset (see "Contribute your results") |
+| [`dynamodb/README.md`](dynamodb/README.md) | How to run the recorder by hand |
+| [`tests/test_namd_launcher.py`](../../tests/test_namd_launcher.py), [`tests/test_namd_build.py`](../../tests/test_namd_build.py), [`tests/test_namd_properties.py`](../../tests/test_namd_properties.py), [`tests/test_namd_recorder.py`](../../tests/test_namd_recorder.py) | Tests of the two scripts and the recorder, with stubs only: no NAMD, MPI, Slurm or AWS needed |

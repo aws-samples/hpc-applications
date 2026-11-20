@@ -11,7 +11,14 @@ These tests pin:
 - mpirun's command line, on one node and on two (where the job first checks EFA with fi_info), and NAMD's PEs;
 - the result: days/ns from the last "Benchmark time:" line, ns/day = 1 / days/ns, and the NAMDRESULT line;
 - the job's exit status: NAMD's when it fails; when NAMD exits 0, a result only from a complete run (NAMD's closing
-  WallClock: line, and a positive days/ns on the last Benchmark time line), and otherwise status 1 with no result;
+  WallClock: line, and a positive days/ns on the last Benchmark time line), and otherwise status 1 with no result,
+  and a NOTE that the run is not recorded;
+- the contribution recorder: called once after a complete run, from its run directory, with the case, days/ns,
+  NAMD's WallClock time, the nodes, the cores the run used (PROCS_PER_NODE x (PPN + 1) per node, at most the node's)
+  and the instance type, and --metric procs_per_node, --metric pes_per_proc and --char avx512_tiles; found from the
+  submit directory when DYNAMODB_RECORDER is unset; never called after a failed or incomplete run; a failing or
+  missing recorder leaves the job's exit status 0, with a NOTE; and the repository's recorder, in --dry-run, records
+  the run with each attribute once;
 - the instance type from the instance metadata (IMDSv2): each request fails on an HTTP error and gives up after a few
   seconds, and an answer cut off at that limit, or one that is not an instance type name (tested in the C locale),
   counts as none. The banner, the run directory and NAMDRESULT then say "unknown", and the run goes on;
@@ -30,11 +37,12 @@ These tests pin:
   (on hpc8a.96xlarge and hpc7a.96xlarge, groups that are not whole CCDs); NAMD_EXTRA_ARGS; and the mpirun command line
   the job log prints.
 
-They run the script with stubs of curl (the instance metadata and the deck downloads), srun, fi_info, nproc, lscpu
-and mpirun, from a temporary directory, with a clean environment and a PATH that holds no other MPI, Slurm, ssh, curl, aws
-or sudo command: no NAMD, MPI, Slurm or network is needed. The stub mpirun notes its arguments and prints a synthetic
-namd.out. The script reads /proc/cpuinfo, so these tests run a copy of it that reads a synthetic cpuinfo instead and
-differs from the script in that path alone (checked here). Every value is synthetic.
+They run the script with stubs of curl (the instance metadata and the deck downloads), srun, fi_info, nproc, lscpu,
+mpirun and the contribution recorder (DYNAMODB_RECORDER), from a temporary directory, with a clean environment and a
+PATH that holds no other MPI, Slurm, ssh, curl, aws or sudo command: no NAMD, MPI, Slurm, AWS or network is needed.
+The stub mpirun notes its arguments and prints a synthetic namd.out, and the stub recorder notes its arguments and
+environment. The script reads /proc/cpuinfo, so these tests run a copy of it that reads a synthetic cpuinfo instead
+and differs from the script in that path alone (checked here). Every value is synthetic.
 
 Run with:
     python -m pip install -r tests/requirements.txt
@@ -43,6 +51,7 @@ Run with:
 from __future__ import annotations
 
 import io
+import json
 import os
 import re
 import shutil
@@ -160,12 +169,14 @@ echo "  Thread(s) per core:            1"
 echo "  Core(s) per socket:            ${per}"
 echo "  Socket(s):                     2"
 """
-# mpirun: for each call it notes, in its own directory, its arguments (one per line), its working directory,
-# FI_PROVIDER ("unset" when none) and a copy of the run config (its last argument); then it prints a synthetic
-# namd.out (STUB_NAMD_OUT: complete, no-wallclock, zero-days, no-bench or sci-days) and ends with STUB_RC. Like NAMD,
-# it prints three "Initial time:" lines and then one "Benchmark time:" line per 100 steps from step 400 to 900; the
-# last one gives STUB_DAYS days/ns, the others 0.5.
+# mpirun: `mpirun --version` prints an Open MPI version line. For any other call it notes, in its own directory, its
+# arguments (one per line), its working directory, FI_PROVIDER ("unset" when none) and a copy of the run config (its
+# last argument); then it prints a synthetic namd.out (STUB_NAMD_OUT: complete, no-wallclock, zero-days, no-bench or
+# sci-days) and ends with STUB_RC. Like NAMD, it prints three "Initial time:" lines and then one "Benchmark time:" line
+# per 100 steps from step 400 to 900; the last one gives STUB_DAYS days/ns, the others 0.5. With STUB_TILES set, it
+# prints NAMD's line on the AVX-512 tile kernels with that word (ENABLED or DISABLED).
 MPIRUN_STUB = r"""#!/bin/bash
+if [ "${1:-}" = --version ]; then echo "mpirun (Open MPI) 4.1.7"; exit 0; fi
 n=1
 while [ -e "${STATE}/mpirun-call-${n}" ]; do n=$((n + 1)); done
 d="${STATE}/mpirun-call-${n}"
@@ -189,6 +200,7 @@ echo "Info: NAMD 3.0.2 for Linux-x86_64-MPI-smp"
 echo "Info: TIMESTEP               1"
 echo "Info: NUMBER OF STEPS        ${steps}"
 echo "Info: 123456 ATOMS"
+[ -n "${STUB_TILES:-}" ] && echo "Info: MIXED PRECISION AVX-512 TILES OPTIMIZATIONS: ${STUB_TILES}"
 for i in 1 2 3; do echo "Info: Initial time: 191 CPUs 0.05 s/step 0.6 days/ns 1000 MB memory"; done
 for (( i = 1; i <= bench; i++ )); do
     if [ "${i}" -eq "${bench}" ]; then v="${days}"; else v=0.5; fi
@@ -202,6 +214,23 @@ exit "${STUB_RC:-0}"
 """
 # namd3, from the synthetic build: the stub mpirun never runs it.
 NAMD3_STUB = "#!/bin/bash\necho 'namd3 stub: not to be run' >&2\nexit 99\n"
+# The variables the launcher may hand the contribution recorder.
+RECORDER_VARS = ("BENCHMARK_CASE", "DAYS_PER_NS", "NS_PER_DAY", "TIME_TO_SOLUTION", "NUM_INSTANCES", "NUM_CORES",
+                 "CORES_PER_NODE", "INSTANCE_TYPE", "RUN_DIR", "SOURCE", "ATOMS_MILLION", "NAMD_VERSION")
+# The contribution recorder: for each call it notes, in its own directory, its arguments (one per line), its working
+# directory and each of RECORDER_VARS that is set (name=value), then ends with STUB_RECORDER_RC.
+RECORDER_STUB = r"""#!/bin/bash
+n=1
+while [ -e "${STATE}/recorder-call-${n}" ]; do n=$((n + 1)); done
+d="${STATE}/recorder-call-${n}"
+mkdir "${d}"
+printf '%s\n' "$@" > "${d}/args"
+pwd > "${d}/cwd"
+for v in """ + " ".join(RECORDER_VARS) + r"""; do
+    if [ -n "${!v+set}" ]; then printf '%s=%s\n' "${v}" "${!v}"; fi
+done > "${d}/env"
+exit "${STUB_RECORDER_RC:-0}"
+"""
 # The flags line of /proc/cpuinfo on a CPU with AVX-512 and on one without.
 CPUINFO_AVX512 = "processor\t: 0\nflags\t\t: fpu sse2 avx avx2 fma avx512f avx512dq avx512bw avx512vl\n"
 CPUINFO_AVX2 = "processor\t: 0\nflags\t\t: fpu sse2 avx avx2 fma\n"
@@ -219,6 +248,7 @@ class Job:
     lscpu: list[str]      # each lscpu call's LC_ALL
     base: Path            # BASE_DIR
     state: Path
+    recorder: list[dict]  # the stub recorder's calls: args, cwd and env ({name: value})
 
     @property
     def out(self) -> list[str]:
@@ -306,12 +336,13 @@ def run(work: Path, tools: Path, nodes: int = 1, env: dict[str, str | None] | No
     `imds` and `itype` set the stub instance metadata, `namd_out` and `rc` the stub mpirun's output and exit status.
     `cached` puts decks in the cache ({MODEL: config lines or None for the default}), `decks` changes the tarballs the
     stub curl serves ({MODEL: config lines}). `builds` are the synthetic builds ((dirname, exports), ...), `cpuinfo`
-    the node's /proc/cpuinfo. `env` adds variables to the job's environment, or unsets them (None)."""
+    the node's /proc/cpuinfo. DYNAMODB_RECORDER is the stub recorder. `env` adds variables to the job's environment,
+    or unsets them (None)."""
     stubs, state, submit, base, served, tmp = (work / d for d in ("stubs", "state", "submit", "base", "decks", "tmp"))
     for d in (stubs, state, submit, base, served, tmp):
         d.mkdir(parents=True, exist_ok=True)
     for name, text in {"curl": CURL_STUB, "srun": SRUN_STUB, "fi_info": FI_INFO_STUB, "nproc": NPROC_STUB,
-                       "lscpu": LSCPU_STUB, "mpirun": MPIRUN_STUB}.items():
+                       "lscpu": LSCPU_STUB, "mpirun": MPIRUN_STUB, "recorder-stub": RECORDER_STUB}.items():
         (stubs / name).write_text(text)
         (stubs / name).chmod(0o755)
     for model in DECKS:
@@ -330,7 +361,8 @@ def run(work: Path, tools: Path, nodes: int = 1, env: dict[str, str | None] | No
                "STATE": str(state), "STUB_IMDS": imds, "STUB_INSTANCE_TYPE": itype, "STUB_NAMD_OUT": namd_out,
                "STUB_RC": str(rc), "STUB_DECKS": str(served), "SLURM_JOB_ID": JOB_ID,
                "SLURM_JOB_NUM_NODES": str(nodes), "SLURM_CPUS_ON_NODE": "192", "SLURM_CLUSTER_NAME": "test",
-               "SLURM_SUBMIT_DIR": str(submit), "BASE_DIR": str(base)}
+               "SLURM_SUBMIT_DIR": str(submit), "BASE_DIR": str(base),
+               "DYNAMODB_RECORDER": str(stubs / "recorder-stub")}
     for name, value in (env or {}).items():
         if value is None:
             job_env.pop(name, None)
@@ -347,7 +379,12 @@ def run(work: Path, tools: Path, nodes: int = 1, env: dict[str, str | None] | No
     def log(name: str) -> list[str]:
         return (state / name).read_text().splitlines() if (state / name).exists() else []
 
-    return Job(proc, calls, log("curl.log"), log("srun.log"), log("fi_info.log"), log("lscpu.log"), base, state)
+    recorder = []
+    for d in sorted(state.glob("recorder-call-*"), key=lambda p: int(p.name.rsplit("-", 1)[1])):
+        recorder.append({"args": (d / "args").read_text().splitlines(), "cwd": (d / "cwd").read_text().strip(),
+                         "env": dict(line.split("=", 1) for line in (d / "env").read_text().splitlines())})
+    return Job(proc, calls, log("curl.log"), log("srun.log"), log("fi_info.log"), log("lscpu.log"), base, state,
+               recorder)
 
 
 def started(job: Job) -> dict:
@@ -934,8 +971,10 @@ def test_the_job_log_prints_the_mpirun_command_line(nodes, env, tmp_path, host_t
 
 
 def assert_no_result(job: Job) -> None:
+    """No results block, no NAMDRESULT line, and no call of the recorder."""
     assert not any(line.startswith("NAMDRESULT") for line in job.out), job.out
     assert "NAMD benchmark results" not in job.proc.stdout
+    assert job.recorder == []
 
 
 @pytest.mark.parametrize("rc", [3, 139])
@@ -953,10 +992,12 @@ def test_a_failing_namd_ends_the_job_with_its_exit_status(rc, tmp_path, host_too
     ("no-bench", "ERROR: could not parse 'days/ns' from NAMD output"),
 ])
 def test_namd_exiting_0_without_a_complete_result_ends_the_job_with_status_1(out, message, tmp_path, host_tools):
+    """An ERROR that says what is missing, and a NOTE that the run is not recorded: the recorder is not called."""
     job = run(tmp_path, host_tools, namd_out=out)
     assert job.proc.returncode == 1, job.proc.stdout + job.proc.stderr
     (run_dir,) = job.run_dirs()
     assert any(line.startswith(message) and line.endswith(f"({run_dir}/namd.out)") for line in job.err), job.err
+    assert f"NOTE: not recorded: {message.removeprefix('ERROR: ')}" in job.err, job.err
     assert_no_result(job)
 
 
@@ -1043,3 +1084,131 @@ def test_timesteps_sets_numsteps_and_a_run_line(steps, tmp_path, host_tools):
 def test_the_job_asks_slurm_for_a_time_limit_of_two_hours():
     header = [line for line in SCRIPT.read_text().splitlines() if line.startswith("#SBATCH")]
     assert [line for line in header if line.startswith("#SBATCH --time")] == ["#SBATCH --time=02:00:00"], header
+
+
+NOTE_NOT_FOUND = "NOTE: benchmark recorder not found; set DYNAMODB_RECORDER=/path/to/record-benchmark.sh to record."
+NOTE_FAILED = "NOTE: benchmark recorder failed (non-fatal); the solve was unaffected."
+
+
+def recorded(job: Job) -> dict:
+    """The job called mpirun once, the recorder once, and ended with exit status 0: the recorder's call."""
+    started(job)
+    assert len(job.recorder) == 1, job.recorder
+    return job.recorder[0]
+
+
+def test_a_complete_run_is_recorded_from_its_run_directory(tmp_path, host_tools):
+    """The recorder runs in the run directory, with the case, days/ns (it computes ns/day itself), NAMD's WallClock
+    time, the nodes, the cores the run used and the instance type, and the layout and kernels as a metric and a char."""
+    job = run(tmp_path, host_tools)
+    call = recorded(job)
+    (run_dir,) = job.run_dirs()
+    assert call["cwd"] == str(run_dir)
+    assert call["args"] == ["--metric", "procs_per_node=1", "--metric", "pes_per_proc=191", "--char",
+                            "avx512_tiles=off"]
+    env = call["env"]
+    assert {k: env.get(k) for k in ("BENCHMARK_CASE", "DAYS_PER_NS", "TIME_TO_SOLUTION", "NUM_INSTANCES",
+                                    "NUM_CORES", "CORES_PER_NODE", "INSTANCE_TYPE", "RUN_DIR")} == {
+        "BENCHMARK_CASE": "ApoA1", "DAYS_PER_NS": "0.25", "TIME_TO_SOLUTION": "12.500000", "NUM_INSTANCES": "1",
+        "NUM_CORES": "192", "CORES_PER_NODE": "192", "INSTANCE_TYPE": "hpc8a.96xlarge", "RUN_DIR": str(run_dir)}
+    assert "NS_PER_DAY" not in env, env
+    assert env["NAMD_VERSION"] == "3.0.2"   # from the build's env script
+    assert "NOTE:" not in job.proc.stderr, job.proc.stderr
+
+
+@pytest.mark.parametrize("nodes, itype, cores, env, procs, pes, per_node", [
+    pytest.param(2, "hpc8a.96xlarge", 192, {"MODEL": "STMV", "PROCS_PER_NODE": "4"}, 4, 47, 192, id="2 nodes x 4"),
+    pytest.param(1, "hpc8a.96xlarge", 192, {"PPN": "95"}, 1, 95, 96, id="the 96-core list"),
+    pytest.param(1, "hpc8a.96xlarge", 192, {"PPN": "192"}, 1, 192, 192, id="PPN 192: the node's cores"),
+    pytest.param(1, "c8i.96xlarge", 192, {"PPN": "63"}, 1, 63, 64, id="c8i at 64 cores"),
+    pytest.param(4, "hpc6a.48xlarge", 96, {"PROCS_PER_NODE": "12"}, 12, 7, 96, id="4 hpc6a nodes x 12"),
+])
+def test_the_record_counts_the_cores_the_run_used(nodes, itype, cores, env, procs, pes, per_node, tmp_path,
+                                                  host_tools):
+    """PROCS_PER_NODE x (PPN + 1) cores per node, at most the node's, and the nodes' cores in all."""
+    cpuinfo = CPUINFO_AVX2 if itype.startswith("hpc6a") else CPUINFO_AVX512
+    job = run(tmp_path, host_tools, nodes=nodes, itype=itype, builds=ALL_TARGETS, cpuinfo=cpuinfo,
+              env={**env, "SLURM_CPUS_ON_NODE": str(cores)})
+    call = recorded(job)
+    assert call["env"]["NUM_INSTANCES"] == str(nodes)
+    assert call["env"]["CORES_PER_NODE"] == str(per_node)
+    assert call["env"]["NUM_CORES"] == str(nodes * per_node)
+    assert call["args"][:4] == ["--metric", f"procs_per_node={procs}", "--metric", f"pes_per_proc={pes}"]
+
+
+@pytest.mark.parametrize("tiles, value", [("ENABLED", "on"), ("DISABLED", "off"), (None, "off")],
+                         ids=["enabled", "disabled (+notiles)", "no line (an AVX2 build)"])
+def test_the_record_says_whether_the_avx512_tile_kernels_ran(tiles, value, tmp_path, host_tools):
+    job = run(tmp_path, host_tools, env={"STUB_TILES": tiles})
+    assert recorded(job)["args"][-2:] == ["--char", f"avx512_tiles={value}"]
+
+
+@pytest.mark.parametrize("rc", [1, 3])
+def test_a_failing_recorder_leaves_the_jobs_exit_status_0_with_a_note(rc, tmp_path, host_tools):
+    job = run(tmp_path, host_tools, env={"STUB_RECORDER_RC": str(rc)})
+    recorded(job)
+    assert NOTE_FAILED in job.err, job.err
+    assert any(line.startswith("NAMDRESULT ") for line in job.out), job.out
+
+
+@pytest.mark.parametrize("value", [None, "", "missing", "not-executable"])
+def test_with_no_recorder_found_the_job_says_so_and_ends_with_status_0(value, tmp_path, host_tools):
+    path = {"missing": str(tmp_path / "no-such-recorder.sh"), "not-executable": str(tmp_path / "recorder.sh")}
+    (tmp_path / "recorder.sh").write_text(RECORDER_STUB)
+    job = run(tmp_path, host_tools, env={"DYNAMODB_RECORDER": path.get(value, value)})
+    started(job)
+    assert job.recorder == []
+    assert NOTE_NOT_FOUND in job.err, job.err
+
+
+@pytest.mark.parametrize("where", ["../dynamodb", "dynamodb", "apps/NAMD/dynamodb"])
+def test_the_recorder_is_found_from_the_submit_directory(where, tmp_path, host_tools):
+    """With DYNAMODB_RECORDER unset, the recorder next to x86/ when the job is submitted from x86/, inside the
+    submit directory, or under apps/NAMD/ when it is submitted from a clone's root."""
+    found = tmp_path / "submit" / where / "record-benchmark.sh"
+    found.parent.mkdir(parents=True, exist_ok=True)
+    found.write_text(RECORDER_STUB)
+    found.chmod(0o755)
+    job = run(tmp_path, host_tools, env={"DYNAMODB_RECORDER": None})
+    recorded(job)
+    assert NOTE_NOT_FOUND not in job.err
+
+
+def dynamo_item(text: str) -> dict:
+    """The record a dry run printed, each value as its string (a list of strings for libraries); a key twice fails."""
+    def unique(pairs):
+        keys = [k for k, _ in pairs]
+        assert len(keys) == len(set(keys)), keys
+        return dict(pairs)
+    lines = text.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("# DRY RUN"))
+    data = json.loads("\n".join(lines[start + 1:]), object_pairs_hook=unique)
+    return {k: [x["S"] for x in v["L"]] if "L" in v else v.get("S", v.get("N")) for k, v in data.items()}
+
+
+def test_the_contribution_recorder_records_the_run_in_a_dry_run(tmp_path, host_tools):
+    """The repository's recorder, in --dry-run as the real-node checks run it: the launcher's values and namd.out's,
+    each attribute once, no WARN, no file and no AWS."""
+    wrapper = tmp_path / "record-dryrun.sh"
+    recorder_script = REPO / "apps" / "NAMD" / "dynamodb" / "record-benchmark.sh"
+    wrapper.write_text(f'#!/bin/bash\nexec bash "{recorder_script}" --dry-run "$@"\n')
+    wrapper.chmod(0o755)
+    job = run(tmp_path, host_tools, env={"DYNAMODB_RECORDER": str(wrapper), "STUB_TILES": "ENABLED",
+                                         "SOURCE": "TestOrg", "OPERATING_SYSTEM": "Synthetic OS 1"})
+    started(job)
+    table = " would write to table 'External_TestOrg_Namd' (region us-east-1); no file, no AWS."
+    assert any(line.startswith("# DRY RUN") and line.endswith(table) for line in job.out), job.out
+    item = dynamo_item(job.proc.stdout)
+    assert re.fullmatch(rf"namd-TestOrg-hpc8a\.96xlarge-192c-ApoA1-\d{{8}}T\d{{6}}Z-{JOB_ID}", item.pop("record_id"))
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", item.pop("recorded_at"))
+    assert item == {
+        "application": "namd", "benchmark_case": "ApoA1", "instance_type": "hpc8a.96xlarge",
+        "operating_system": "Synthetic OS 1", "num_cores": "192", "num_instances": "1", "cores_per_node": "192",
+        "mpi_implementation": "openmpi", "libraries": ["mpi:openmpi", "mpi-version:4.1.7", "efa:122.0", "namd:3.0.2"],
+        "time_to_solution_seconds": "12.500000", "ns_per_day": "4", "days_per_ns": "0.25", "nsteps": "1000",
+        "timestep_fs": "1", "discipline": "MD", "atoms_million": "0.123456", "namd_version": "3.0.2",
+        "namd_platform": "Linux-x86_64-MPI-smp", "provenance_origin": "external", "provenance_source_id": "TestOrg",
+        "procs_per_node": "1", "pes_per_proc": "191", "avx512_tiles": "on"}
+    assert "WARN" not in job.proc.stderr and "NOTE:" not in job.proc.stderr, job.proc.stderr
+    (run_dir,) = job.run_dirs()
+    assert not list(run_dir.glob("*.json"))
