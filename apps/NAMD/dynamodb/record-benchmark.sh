@@ -135,8 +135,9 @@ OPTIONS
   From namd.out in the run directory it reads, when not given: the last
   "Benchmark time:" line's days/ns, WallClock (time_to_solution_seconds), the
   "Info: <N> ATOMS" line (atoms_million), "Info: NAMD <version> for <platform>"
-  (namd_version, namd_platform), "Info: NUMBER OF STEPS" (nsteps) and
-  "Info: TIMESTEP" (timestep_fs).
+  (namd_version, namd_platform), the steps run (nsteps: the sum of the "TCL:
+  Running for <N> steps" lines when the config runs NAMD with run or minimize
+  commands, else "Info: NUMBER OF STEPS") and "Info: TIMESTEP" (timestep_fs).
 EOF
 }
 
@@ -247,8 +248,14 @@ EFA_VERSION="$(fi_info -p efa -t FI_EP_RDM 2>/dev/null | awk '/version:/ {print 
 #     Info: TIMESTEP               <fs>
 #     Info: NUMBER OF STEPS        <N>
 #     Info: <N> ATOMS
+#     TCL: Running for <N> steps        (for each run command of the config)
 #     Info: Benchmark time: <CPUs> CPUs <s> s/step <d> days/ns <MB> MB memory
 #     WallClock: <s>  CPUTime: <s>  Memory: <MB> MB
+# A config with run or minimize commands (DHFR's: "run $num_steps_run") runs
+# only their steps, and NUMBER OF STEPS is then its numsteps parameter, 0 when
+# it sets none. So nsteps is the sum of the "TCL: Running for <N> steps" lines
+# when NAMD printed one of those or a "TCL: Minimizing for <N> steps" line (a
+# minimization's steps are not counted), and NUMBER OF STEPS otherwise.
 # This lets the recorder run with no arguments at the end of a benchmark job.
 _namdout=""
 for _c in "$RUN_DIR"/namd.out "$RUN_DIR"/*.out "$RUN_DIR"/*.log; do
@@ -261,7 +268,9 @@ if [ -n "$_namdout" ]; then
     [ -n "$ATOMS_MILLION" ]    || ATOMS_MILLION="$(awk '/^Info: [0-9]+ ATOMS[[:space:]]*$/ { a = $2 } END { if (a != "") printf "%.6g", a / 1000000 }' "$_namdout")"
     [ -n "$ENGINE_VERSION" ]   || ENGINE_VERSION="$(awk '/^Info: NAMD [^ ]+ for / { print $3; exit }' "$_namdout")"
     NAMD_PLATFORM="$(awk '/^Info: NAMD [^ ]+ for / { print $5; exit }' "$_namdout")"
-    NSTEPS="$(awk '/^Info: NUMBER OF STEPS[[:space:]]/ { print $NF; exit }' "$_namdout")"
+    NSTEPS="$(awk '/^TCL: (Running|Minimizing) for [0-9]+ steps/ { t = 1; if ($2 == "Running") r += $4 }
+                  /^Info: NUMBER OF STEPS[[:space:]]/ && s == "" { s = $NF }
+                  END { if (t) printf "%.0f\n", r; else if (s != "") print s }' "$_namdout")"
     TIMESTEP_FS="$(awk '/^Info: TIMESTEP[[:space:]]/ { print $NF; exit }' "$_namdout")"
 fi
 # ns/day = 1 / (days/ns), when no ns/day was given.

@@ -24,7 +24,7 @@ These tests pin:
   and the instance type, and --metric procs_per_node, --metric pes_per_proc and --char avx512_tiles; found from the
   submit directory when DYNAMODB_RECORDER is unset; never called after a failed or incomplete run; a failing or
   missing recorder leaves the job's exit status 0, with a NOTE; and the repository's recorder, in --dry-run, records
-  the run with each attribute once;
+  the run with each attribute once, DHFR's with the steps its run command ran;
 - the instance type from the instance metadata (IMDSv2): each request fails on an HTTP error and gives up after a few
   seconds, and an answer cut off at that limit, or one that is not an instance type name (tested in the C locale),
   counts as none. The banner, the run directory and NAMDRESULT then say "unknown", and the run goes on;
@@ -204,8 +204,10 @@ echo "  Socket(s):                     2"
 # arguments (one per line), its working directory, FI_PROVIDER ("unset" when none) and a copy of the run config (its
 # last argument); then it prints a synthetic namd.out (STUB_NAMD_OUT: complete, no-wallclock, zero-days, no-bench or
 # sci-days) and ends with STUB_RC. Like NAMD, it prints three "Initial time:" lines and then one "Benchmark time:" line
-# per 100 steps from step 400 to 900 of the config's run length (its numsteps, or DHFR's "set num_steps_run"); the
-# last one gives STUB_DAYS days/ns, the others 0.5. With STUB_TILES set, it
+# per 100 steps from step 400 to 900 of the config's run length (its numsteps, or the steps of its run commands:
+# DHFR's "run $num_steps_run"); the last one gives STUB_DAYS days/ns, the others 0.5. As NAMD does, it prints the
+# numsteps parameter as NUMBER OF STEPS (0 when the config sets none) and, for a config with run commands, a
+# "TCL: Running for <N> steps" line. With STUB_TILES set, it
 # prints NAMD's line on the AVX-512 tile kernels with that word (ENABLED or DISABLED).
 MPIRUN_STUB = r"""#!/bin/bash
 if [ "${1:-}" = --version ]; then echo "mpirun (Open MPI) 4.1.7"; exit 0; fi
@@ -218,8 +220,9 @@ pwd > "${d}/cwd"
 printf '%s' "${FI_PROVIDER-unset}" > "${d}/fi_provider"
 conf="${!#}"
 [ -f "${conf}" ] && cp "${conf}" "${d}/config"
-steps="$(awk 'tolower($1) == "numsteps" { s = $2 } $1 == "set" && $2 == "num_steps_run" { s = $3 }
-              END { print s + 0 }' "${conf}" 2>/dev/null)"
+read -r steps nparam tclrun <<< "$(awk 'tolower($1) == "numsteps" { n = $2 } $1 == "set" && $2 == "num_steps_run" { v = $3 }
+              tolower($1) == "run" { t += ($2 == "$num_steps_run") ? v : $2; c = 1 }
+              END { printf "%d %d %d\n", c ? t : n, n, c }' "${conf}" 2>/dev/null)"
 phases=$(( steps / 100 )); [ "${phases}" -gt 9 ] && phases=9
 bench=$(( phases > 3 ? phases - 3 : 0 ))
 days="${STUB_DAYS:-0.25}"
@@ -231,8 +234,9 @@ esac
 echo "Charm++> cpu affinity enabled. "
 echo "Info: NAMD 3.0.2 for Linux-x86_64-MPI-smp"
 echo "Info: TIMESTEP               1"
-echo "Info: NUMBER OF STEPS        ${steps}"
+echo "Info: NUMBER OF STEPS        ${nparam}"
 echo "Info: 123456 ATOMS"
+[ "${tclrun}" = 1 ] && echo "TCL: Running for ${steps} steps"
 [ -n "${STUB_TILES:-}" ] && echo "Info: MIXED PRECISION AVX-512 TILES OPTIMIZATIONS: ${STUB_TILES}"
 for i in 1 2 3; do echo "Info: Initial time: 191 CPUs 0.05 s/step 0.6 days/ns 1000 MB memory"; done
 for (( i = 1; i <= bench; i++ )); do
@@ -1314,6 +1318,24 @@ def test_the_contribution_recorder_records_the_run_in_a_dry_run(tmp_path, host_t
     (run_dir,) = job.run_dirs()
     assert not list(run_dir.glob("*.json"))
 
+
+
+def test_the_contribution_recorder_records_the_steps_dhfrs_run_command_ran(tmp_path, host_tools):
+    """DHFR's config sets no numsteps and runs NAMD through "run $num_steps_run", so NAMD prints NUMBER OF STEPS 0
+    and "TCL: Running for 1000 steps": the repository's recorder, in --dry-run, records 1000 steps."""
+    wrapper = tmp_path / "record-dryrun.sh"
+    recorder_script = REPO / "apps" / "NAMD" / "dynamodb" / "record-benchmark.sh"
+    wrapper.write_text(f'#!/bin/bash\nexec bash "{recorder_script}" --dry-run "$@"\n')
+    wrapper.chmod(0o755)
+    job = run(tmp_path, host_tools, env={"MODEL": "DHFR", "DYNAMODB_RECORDER": str(wrapper),
+                                         "OPERATING_SYSTEM": "Synthetic OS 1"})
+    started(job)
+    (run_dir,) = job.run_dirs()
+    out = (run_dir / "namd.out").read_text().splitlines()
+    assert "Info: NUMBER OF STEPS        0" in out and "TCL: Running for 1000 steps" in out, out
+    item = dynamo_item(job.proc.stdout)
+    assert (item["benchmark_case"], item["nsteps"]) == ("DHFR", "1000")
+    assert "WARN" not in job.proc.stderr and "NOTE:" not in job.proc.stderr, job.proc.stderr
 
 # What 20STMV's run config is: the scripts' config with NAMD's plugin I/O and the js structure in place of the
 # compressed structure, and TIMESTEPS.

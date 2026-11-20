@@ -4,7 +4,9 @@ These tests pin:
 - what it reads from namd.out in --run-dir (or else from another *.out or *.log file with a "Benchmark time:" line):
   the last Benchmark time line's days/ns, and ns/day = 1 / (days/ns) to six significant digits; NAMD's WallClock:
   time as time_to_solution_seconds; the "Info: <N> ATOMS" line as atoms_million, and not the lines that count the
-  atoms of a patch or a group; NAMD's version and platform; the number of steps and the time step;
+  atoms of a patch or a group; NAMD's version and platform; the number of steps (the sum of the "TCL: Running for
+  <N> steps" lines when the config runs NAMD through run or minimize commands, else "Info: NUMBER OF STEPS") and the
+  time step;
 - that a value given by flag or in the environment wins over namd.out's, and that --days-per-ns gives ns/day;
 - the cores, nodes and cores per node, given or from Slurm, and the libraries list, with the MPI, libfabric and EFA
   versions from mpirun and fi_info;
@@ -150,6 +152,27 @@ def test_namd_out_gives_the_result_the_size_and_the_run_length(tmp_path, host_to
     assert sorted(p.name for p in tmp_path.iterdir()) == ["bin", "run"]   # no file written
     assert sorted(p.name for p in (tmp_path / "run").iterdir()) == ["namd.out"]
 
+
+
+# A config that runs NAMD through Tcl run commands (DHFR's GPU benchmark configs: "run $num_steps_run") runs only
+# their steps. NAMD prints its numsteps parameter as NUMBER OF STEPS, 0 when the config sets none, and a line per
+# command; a minimization's steps are not counted.
+@pytest.mark.parametrize("number_of_steps, tcl, nsteps", [
+    ("0", ["TCL: Running for 1000 steps"], "1000"),
+    ("0", ["TCL: Running for 400 steps", "TCL: Running for 600 steps without repeating first step"], "1000"),
+    ("0", ["TCL: Minimizing for 100 steps", "TCL: Running for 1000 steps"], "1000"),
+    ("0", ["TCL: Minimizing for 100 steps"], "0"),
+    ("3000", ["TCL: Original numsteps 3000 will be ignored.", "TCL: Running for 2000 steps"], "2000"),
+])
+def test_a_config_with_run_commands_records_the_steps_they_ran(number_of_steps, tcl, nsteps, tmp_path, host_tools):
+    lines = [line.replace("NUMBER OF STEPS        3000", f"NUMBER OF STEPS        {number_of_steps}")
+             for line in NAMD_OUT]
+    at = lines.index("Info: LARGEST PATCH (12) HAS 345 ATOMS") + 1
+    lines[at:at] = tcl
+    rec = item(record(tmp_path, host_tools, files={"namd.out": lines}))
+    assert rec["nsteps"] == nsteps
+    assert {k: rec[k] for k in FROM_NAMD_OUT if k != "nsteps"} == {k: v for k, v in FROM_NAMD_OUT.items()
+                                                                   if k != "nsteps"}
 
 @pytest.mark.parametrize("days, rate", [("0.625", "1.6"), ("0.0312", "32.0513"), ("1.5e-05", "66666.7"),
                                         ("3", "0.333333"), ("2.5E-3", "400")])
