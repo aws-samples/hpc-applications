@@ -13,12 +13,11 @@
 # via its libfabric provider):
 #   * mpi-linux-x86_64 ... smp   — one process per node + worker threads
 # then configures and compiles NAMD against that Charm++, producing the `namd3`
-# binary. AVX-512 vectorisation comes from the host arch flags (-march=x86-64-v4).
+# binary. Charm++ is compiled with -march=x86-64-v4 -mtune=znver4, and NAMD's
+# own code with the options of its Linux-x86_64-g++ arch file.
 #
-# We deliberately use the Charm++ MPI backend (not the native OFI backend):
-# Charm++ 8.0.0's OFI machine layer does not compile against the recent
-# libfabric (2.4.x) shipped on AWS HPC AMIs, whereas the MPI backend layered
-# on OpenMPI is the robust, AWS-proven path and still rides EFA.
+# The MPI layer needs nothing beyond the system OpenMPI, which already carries
+# the traffic between nodes over EFA.
 #
 # NOTE: the NAMD source tarball is distributed behind a license click-through
 # (https://www.ks.uiuc.edu/Research/namd/) and CANNOT be fetched
@@ -163,7 +162,7 @@ log "building Charm++ ${CHARM_NET} smp (MPI backend over $(mpicxx --showme:versi
 # --- Configure + compile NAMD --------------------------------------------
 STAGE="namd-config"
 cd "${BUILD_DIR}"
-log "configuring NAMD (${NAMD_ARCH}, MPI/SMP Charm++, static FFTW, AVX-512 via -march)"
+log "configuring NAMD (${NAMD_ARCH}, MPI/SMP Charm++, static FFTW)"
 ./config "${NAMD_ARCH}" \
     --charm-arch "${CHARM_ARCH}" \
     --with-tcl --tcl-prefix /usr \
@@ -173,7 +172,7 @@ log "configuring NAMD (${NAMD_ARCH}, MPI/SMP Charm++, static FFTW, AVX-512 via -
 
 STAGE="namd-compile"
 cd "${BUILD_DIR}/${NAMD_ARCH}"
-log "compiling NAMD (this can take ~20-40 min)"
+log "compiling NAMD"
 make -j"${COMPILE_CORES}" || fail "NAMD compile failed"
 [ -x namd3 ] || fail "NAMD compile finished but namd3 binary is missing"
 
@@ -187,7 +186,7 @@ log "installed namd3 -> ${INSTALL_DIR}/bin/namd3"
 STAGE="env-script"
 cat > "${ENV_SCRIPT}" <<EOF
 #!/bin/bash
-# NAMD ${NAMD_VERSION} — x86_64 (Charm++ ${CHARM_ARCH} over OpenMPI/EFA, AVX-512 via -march)
+# NAMD ${NAMD_VERSION} — x86_64 (Charm++ ${CHARM_ARCH} over OpenMPI/EFA, NAMD arch ${NAMD_ARCH})
 module load ${OPENMPI_MODULE} libfabric-aws 2>/dev/null || true
 export NAMD_ROOT="${INSTALL_DIR}"
 export PATH="\${NAMD_ROOT}/bin:\${PATH}"

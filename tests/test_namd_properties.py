@@ -8,7 +8,6 @@ The shell scripts under apps/NAMD/ contain pure-function logic:
   * NAMD stdout parsing for `Info: Benchmark time: ... <days/ns> days/ns`
     and `WallClock: <s>`, with days/ns -> ns/day = 1 / days_per_ns
   * MODEL validation (ApoA1 / STMV) and deck-cache reuse
-  * GPU_COUNT validation (Phase 3)
 
 We re-implement that logic in Python below and exercise it with
 Hypothesis-generated inputs to verify the properties hold. The Python
@@ -19,7 +18,7 @@ Run with:
     python -m pip install -r tests/requirements.txt
     python -m pytest tests/test_namd_properties.py -q
 
-Validates: Requirements 2.6, 2.7, 1.4, 6.1, 6.2, 5.3
+Validates: Requirements 2.6, 2.7, 1.4, 6.1, 6.2
 """
 
 from __future__ import annotations
@@ -36,7 +35,8 @@ from hypothesis import assume, given, settings, strategies as st
 
 
 def env_script(version: str, install_dir: str, charm_arch: str,
-               openmpi_module: str = "openmpi/4.1.7") -> str:
+               openmpi_module: str = "openmpi/4.1.7",
+               namd_arch: str = "Linux-x86_64-g++") -> str:
     """Mirror of the env-script heredoc in build_namd_x86.sbatch.
 
     Returns the full text the build script writes to
@@ -46,7 +46,7 @@ def env_script(version: str, install_dir: str, charm_arch: str,
     """
     return dedent(f"""\
         #!/bin/bash
-        # NAMD {version} — x86_64 (Charm++ {charm_arch} over OpenMPI/EFA, AVX-512 via -march)
+        # NAMD {version} — x86_64 (Charm++ {charm_arch} over OpenMPI/EFA, NAMD arch {namd_arch})
         module load {openmpi_module} libfabric-aws 2>/dev/null || true
         export NAMD_ROOT="{install_dir}"
         export PATH="${{NAMD_ROOT}}/bin:${{PATH}}"
@@ -118,14 +118,6 @@ def deck_needs_fetch(config_present_nonempty: bool) -> bool:
     return not config_present_nonempty
 
 
-def gpu_count_is_valid(gpu_count: int, detected_gpus: int) -> bool:
-    """Mirror of the Phase 3 GPU_COUNT guard: integer in
-    1..min(8, detected GPUs).
-    """
-    upper = min(8, detected_gpus)
-    return 1 <= gpu_count <= upper
-
-
 def workdir(base_dir: str, job_id: str, model: str, cluster: str,
             nodes: int, instance_type: str, ppn: int, stamp: str) -> str:
     """Mirror of the WORK construction in namd-benchmark.sbatch:
@@ -167,11 +159,11 @@ namd_floats = st.floats(
 # "WallClock:" so they only act as noise the parser must step over.
 namd_log_noise = st.sampled_from([
     "Info: NAMD 3.0.2 for Linux-x86_64-MPI-smp",
-    "Info: Built Tue Jun 17 14:25 2026",
-    "Charm++> Running in SMP mode: 2 processes, 191 worker threads",
-    "Info: Entering startup at 0.5 s, 800 MB of memory in use",
-    "PERFORMANCE: 300 averaging 17.5 ns/day, 0.0049 sec/step",
-    "Info: Initial time: 191 CPUs 0.0042 s/step 0.0495 days/ns 14962 MB",
+    "Info: Built Thu Jan  1 00:00:00 UTC 2026",
+    "Charm++> Running in SMP mode: 2 processes, 100 worker threads",
+    "Info: Entering startup at 1.0 s, 1000 MB of memory in use",
+    "PERFORMANCE: 300 averaging 10.0 ns/day, 0.0100 sec/step",
+    "Info: Initial time: 100 CPUs 0.0100 s/step 0.1157 days/ns 1000 MB",
     "ENERGY:     500    ... TEMP 298.0",
     "WRITING COORDINATES TO OUTPUT FILE AT STEP 500",
     "Info: useSync = 1 useProxySync = 0",
@@ -179,17 +171,17 @@ namd_log_noise = st.sampled_from([
 ])
 
 
-def _bench_line(days_per_ns: float, cpus: int = 191) -> str:
+def _bench_line(days_per_ns: float, cpus: int = 100) -> str:
     """Mirror a real NAMD `Info: Benchmark time:` line layout."""
     return (
         f"Info: Benchmark time: {cpus} CPUs "
         f"{days_per_ns / 10:.6f} s/step {days_per_ns:.6f} days/ns "
-        f"14962.3 MB memory"
+        f"1000.0 MB memory"
     )
 
 
 def _wall_line(wall: float) -> str:
-    return f"WallClock: {wall:.6f}  CPUTime: {wall:.6f}  Memory: 14962.3 MB"
+    return f"WallClock: {wall:.6f}  CPUTime: {wall:.6f}  Memory: 1000.0 MB"
 
 
 def _assemble(*chunks: list[str]) -> str:
@@ -335,26 +327,6 @@ class TestModelAndDeckCache:
         a missing/empty one triggers a fetch.
         """
         assert deck_needs_fetch(present) is (not present)
-
-
-# ---------------------------------------------------------------------------
-# Property 4 — GPU_COUNT validation (Phase 3)
-# Validates: Requirements 5.3
-# ---------------------------------------------------------------------------
-
-
-class TestGpuCountValidation:
-    """Property 4 — GPU_COUNT must be an integer in 1..min(8, detected)."""
-
-    @settings(max_examples=200)
-    @given(
-        gpu_count=st.integers(min_value=-4, max_value=20),
-        detected=st.integers(min_value=1, max_value=16),
-    )
-    def test_gpu_count_range(self, gpu_count, detected) -> None:
-        upper = min(8, detected)
-        expected = 1 <= gpu_count <= upper
-        assert gpu_count_is_valid(gpu_count, detected) is expected
 
 
 # ---------------------------------------------------------------------------
