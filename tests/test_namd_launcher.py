@@ -4,7 +4,9 @@ These tests pin:
 - the settings it refuses before mpirun starts (MODEL, TIMESTEPS, PPN, BASE_DIR);
 - the deck: fetched from the NAMD utilities page into BASE_DIR/benchmarks/<MODEL>/ when the cache lacks it, reused
   with no download when it holds it, and copied into a run directory of its own;
-- the run's config: numsteps from TIMESTEPS, and an outputTiming line when the deck has none;
+- the run's config: numsteps from TIMESTEPS, an outputTiming line when the deck has none, and the deck's output name
+  without its directory, so NAMD writes its output files in the run directory; and the deck's downloaded archive kept
+  out of the cache and the run directory;
 - mpirun's command line, on one node and on two (where the job first checks EFA with fi_info), and NAMD's PEs;
 - the result: days/ns from the last "Benchmark time:" line, ns/day = 1 / days/ns, and the NAMDRESULT line;
 - the job's exit status: NAMD's when it fails; when NAMD exits 0, a result only from a complete run (NAMD's closing
@@ -957,3 +959,43 @@ def test_a_days_per_ns_in_scientific_notation_is_a_result(tmp_path, host_tools):
     started(job)
     (result,) = [line for line in job.out if line.startswith("NAMDRESULT ")]
     assert " days_per_ns=1.5e-05 ns_per_day=66666.6667 " in result, result
+
+
+def output_names(config: list[str]) -> list[str]:
+    return [line for line in config if line.split()[:1] and line.split()[0].lower() == "outputname"]
+
+
+@pytest.mark.parametrize("model, name", [("ApoA1", "outputname           apoa1-out"),
+                                         ("STMV", "outputName          stmv-output")])
+def test_the_run_config_names_its_output_without_the_decks_directory(model, name, tmp_path, host_tools):
+    config = started(run(tmp_path, host_tools, env={"MODEL": model}))["config"]
+    assert output_names(config) == [name]
+
+
+@pytest.mark.parametrize("line, expected", [("OUTPUTNAME /usr/tmp/x", "OUTPUTNAME x"),
+                                            ("outputname   x-out", "outputname   x-out"),
+                                            ("  outputName /a/b/c-1 ;# a comment", "  outputName c-1 ;# a comment")])
+def test_any_case_and_spacing_of_outputname_keeps_the_name_only(line, expected, tmp_path, host_tools):
+    lines = [x for x in DECKS["ApoA1"][3] if not x.lower().startswith("outputname")] + [line]
+    config = started(run(tmp_path, host_tools, decks={"ApoA1": lines}))["config"]
+    assert output_names(config) == [expected]
+
+
+def test_a_deck_without_an_output_name_is_left_as_it_is(tmp_path, host_tools):
+    lines = [x for x in DECKS["ApoA1"][3] if not x.lower().startswith("outputname")]
+    config = started(run(tmp_path, host_tools, decks={"ApoA1": lines}))["config"]
+    assert output_names(config) == []
+    keep = lambda ls: [x for x in ls if not x.startswith("numsteps")]  # noqa: E731
+    assert keep(config[:len(lines)]) == keep(lines)
+
+
+@pytest.mark.parametrize("model", list(DECKS))
+def test_the_downloaded_archive_stays_out_of_the_cache_and_the_run_directory(model, tmp_path, host_tools):
+    job = run(tmp_path, host_tools, env={"MODEL": model})
+    started(job)
+    _, top, conf, _ = DECKS[model]
+    files = sorted([conf, *(f"{top}.{ext}" for ext in DECK_DATA)])
+    assert sorted(p.name for p in (job.base / "benchmarks" / model).iterdir()) == files
+    (run_dir,) = job.run_dirs()
+    names = {p.name for p in run_dir.iterdir()}
+    assert set(files) <= names and not any(n.endswith(".tar.gz") for n in names), names

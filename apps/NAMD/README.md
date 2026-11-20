@@ -91,9 +91,10 @@ The launcher:
    takes the only build under `${BASE_DIR}/x86_64/`, with a `NOTE:` on stderr that names it; with several, it stops and
    asks for `NAMD_ENV`. An AVX-512 build on a node whose CPU has no AVX-512 stops the job before anything runs;
 2. on more than one node, checks EFA with `fi_info -p efa`;
-3. fetches the deck into a cache on first use, and copies it into a run directory of its own,
-   `${BASE_DIR}/Run/<job>-<MODEL>-<cluster>-<nodes>x<instance type>-<PPN>ppn-<UTC time>/` (with
-   `<PROCS_PER_NODE>x<PPN>ppn` for more than one process per node);
+3. fetches the deck into a cache on first use (its files, not the downloaded archive), and copies it into a run
+   directory of its own, `${BASE_DIR}/Run/<job>-<MODEL>-<cluster>-<nodes>x<instance type>-<PPN>ppn-<UTC time>/` (with
+   `<PROCS_PER_NODE>x<PPN>ppn` for more than one process per node). The run's config names its output files without
+   the deck's `/usr/tmp/` directory, so NAMD writes them (`.coor`, `.vel`, `.xsc`) in the run directory;
 4. drops the page cache and enables transparent huge pages on every node, where `sudo` allows it;
 5. starts `namd3` with `mpirun`: `PROCS_PER_NODE` processes per node (`-np`, `--map-by ppr:<PROCS_PER_NODE>:node`),
    each with `+ppn PPN` worker threads, and `+setcpuaffinity` with the cores of each thread (see "Processes per node"

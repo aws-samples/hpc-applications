@@ -252,9 +252,11 @@ if [ ! -s "${CACHE_DIR}/${CONF}" ]; then
   mkdir -p "${CACHE_DIR}"
   tmp="$(mktemp -d)"
   if curl -fsSL --max-time 600 --retry 3 -o "${tmp}/deck.tar.gz" "${DECK_URL[${MODEL}]}"; then
-    tar xzf "${tmp}/deck.tar.gz" -C "${tmp}"
-    # decks extract into a subdir (apoa1/ or stmv/); flatten into the cache
-    find "${tmp}" -type f -exec cp -n {} "${CACHE_DIR}/" \;
+    mkdir "${tmp}/deck"
+    tar xzf "${tmp}/deck.tar.gz" -C "${tmp}/deck"
+    # decks extract into a subdir (apoa1/ or stmv/); flatten its files, not the
+    # downloaded archive, into the cache
+    find "${tmp}/deck" -type f -exec cp -n {} "${CACHE_DIR}/" \;
     rm -rf "${tmp}"
   else
     rm -rf "${tmp}" "${CACHE_DIR}"
@@ -282,6 +284,10 @@ if [ -n "${TIMESTEPS}" ]; then
   sed -i -E "s/^[[:space:]]*run[[:space:]]+[0-9]+/run ${TIMESTEPS}/I" "${RUNCONF}"
 fi
 grep -qiE "^[[:space:]]*outputTiming" "${RUNCONF}" || echo "outputTiming 20" >> "${RUNCONF}"
+# The decks write their output files (.coor, .vel, .xsc) to /usr/tmp/<name>:
+# the run config keeps the name and drops the directory, so NAMD writes them in
+# the run directory.
+sed -i -E 's|^([[:space:]]*outputname[[:space:]]+)[^[:space:]#;]*/([^/[:space:]#;]+)|\1\2|I' "${RUNCONF}"
 
 # --- Drop page caches + enable THP on all nodes --------------------------
 echo "==> dropping page caches + enabling THP on all nodes (best-effort)"
