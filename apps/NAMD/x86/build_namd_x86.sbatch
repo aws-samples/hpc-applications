@@ -14,7 +14,8 @@
 #   * mpi-linux-x86_64 ... smp   — one process per node + worker threads
 # then configures and compiles NAMD against that Charm++, producing the `namd3`
 # binary. Charm++ is compiled with -march=x86-64-v4 -mtune=znver4, and NAMD's
-# own code with the options of its Linux-x86_64-g++ arch file.
+# own code with the options of its Linux-AVX512-g++ arch file: AVX-512, and
+# NAMD's mixed-precision AVX-512 tile-list kernels (NAMD_AVXTILES).
 #
 # The MPI layer needs nothing beyond the system OpenMPI, which already carries
 # the traffic between nodes over EFA.
@@ -44,7 +45,7 @@ NAMD_SRC_URL="${NAMD_SRC_URL:-}"
 
 CHARM_NET="mpi-linux-x86_64"          # Charm++ MPI backend (rides EFA via OpenMPI)
 CHARM_ARCH="${CHARM_NET}-smp"         # SMP: one process/node + worker threads
-NAMD_ARCH="Linux-x86_64-g++"
+NAMD_ARCH="Linux-AVX512-g++"          # AVX-512 and the tile-list kernels
 OPENMPI_MODULE="${OPENMPI_MODULE:-openmpi/4.1.7}"
 INSTALL_DIR="${BASE_DIR}/x86_64/${NAMD_VERSION}"
 FFTW_PREFIX="${INSTALL_DIR}/fftw"   # static single-precision FFTW (self-contained on FSx)

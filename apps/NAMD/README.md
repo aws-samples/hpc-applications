@@ -35,7 +35,8 @@ The build script:
 3. builds the Charm++ that ships with the NAMD source (`mpi-linux-x86_64 smp --with-production`), with
    `-O3 -march=x86-64-v4 -mtune=znver4`, against the Open MPI module;
 4. configures NAMD for that Charm++, the system TCL and the static FFTW, and compiles it with the options of NAMD's
-   `Linux-x86_64-g++` arch file (`-O3 -fexpensive-optimizations -ffast-math`);
+   `Linux-AVX512-g++` arch file (`-O3 -fexpensive-optimizations -ffast-math -mavx512f -mavx512dq -DNAMD_AVXTILES`):
+   AVX-512, and NAMD's mixed-precision AVX-512 tile-list kernels;
 5. installs `namd3` under `${BASE_DIR}/x86_64/<version>/`, with an env script, `namd-<version>-x86-env.sh`, that loads
    the Open MPI and `libfabric-aws` modules and puts `namd3` on the `PATH`.
 
@@ -116,7 +117,9 @@ In the run directory's `namd.out`:
 
 - `Charm++> Running in SMP mode: <n> processes, <PPN> worker threads (PEs) + 1 comm threads per process`: one process
   per node, with the `PPN` asked for;
-- `Charm++> cpu affinity enabled.`: Charm++ binds the threads to cores.
+- `Charm++> cpu affinity enabled.`: Charm++ binds the threads to cores;
+- `Info: MIXED PRECISION AVX-512 TILES OPTIMIZATIONS: ENABLED`: the AVX-512 tile-list kernels are on. NAMD's `+notiles`
+  option turns them off.
 
 On more than one node, the job's log shows the `fi_info` listing of provider `efa`.
 

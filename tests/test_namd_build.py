@@ -242,9 +242,27 @@ def test_charm_is_built_with_the_mpi_smp_layer_and_the_hosts_flags(tmp_path, hos
 def test_namd_is_configured_against_that_charm_tcl_and_the_static_fftw(tmp_path, host_tools):
     b = built(build(tmp_path, host_tools))
     config = b.args("config.args")
-    assert config == ["Linux-x86_64-g++", "--charm-arch", "mpi-linux-x86_64-smp", "--with-tcl", "--tcl-prefix",
+    assert config == ["Linux-AVX512-g++", "--charm-arch", "mpi-linux-x86_64-smp", "--with-tcl", "--tcl-prefix",
                       "/usr", "--with-fftw3", "--fftw-prefix", str(b.install / "fftw"), "--cc", "gcc", "--cxx", "g++"]
     assert any(line.endswith(f"/{config[0]} | -j4") for line in b.log("make.log")), b.log("make.log")
+
+
+def test_namd_is_compiled_with_its_avx512_arch_and_the_env_script_says_so(tmp_path, host_tools):
+    """NAMD's Linux-AVX512-g++ arch (AVX-512 and the tile-list kernels): ./config's first argument, make's build
+    directory, and the env script's comment line, which is the env script's only line that names the arch."""
+    b = built(build(tmp_path, host_tools))
+    assert b.args("config.args")[0] == "Linux-AVX512-g++"
+    (namd_make,) = [line for line in b.log("make.log") if "/Linux-" in line]
+    assert namd_make.split(" | ")[0].endswith("/Linux-AVX512-g++"), namd_make
+    assert (b.install / "namd-3.0.2-x86-env.sh").read_text() == (
+        "#!/bin/bash\n"
+        "# NAMD 3.0.2 — x86_64 (Charm++ mpi-linux-x86_64-smp over OpenMPI/EFA, NAMD arch Linux-AVX512-g++)\n"
+        "module load openmpi/4.1.7 libfabric-aws 2>/dev/null || true\n"
+        f'export NAMD_ROOT="{b.install}"\n'
+        'export PATH="${NAMD_ROOT}/bin:${PATH}"\n'
+        'export LD_LIBRARY_PATH="${NAMD_ROOT}/lib:${LD_LIBRARY_PATH:-}"\n'
+        'export NAMD_VERSION="3.0.2"\n'
+        'export CHARM_ARCH="mpi-linux-x86_64-smp"\n')
 
 
 def test_fftw_is_fetched_built_static_into_the_install_and_its_build_tree_removed(tmp_path, host_tools):

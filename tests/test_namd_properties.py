@@ -36,7 +36,7 @@ from hypothesis import assume, given, settings, strategies as st
 
 def env_script(version: str, install_dir: str, charm_arch: str,
                openmpi_module: str = "openmpi/4.1.7",
-               namd_arch: str = "Linux-x86_64-g++") -> str:
+               namd_arch: str = "Linux-AVX512-g++") -> str:
     """Mirror of the env-script heredoc in build_namd_x86.sbatch.
 
     Returns the full text the build script writes to
