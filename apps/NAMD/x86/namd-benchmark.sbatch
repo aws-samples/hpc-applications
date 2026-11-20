@@ -7,8 +7,8 @@
 #SBATCH --time=02:00:00
 #SBATCH --output=namd-x86-%j.out
 #
-# Run a standard NAMD benchmark (ApoA1 / F1-ATPase / STMV) on x86 HPC instances
-# over EFA.
+# Run a standard NAMD benchmark (ApoA1 / F1-ATPase / STMV / DHFR) on x86 HPC
+# instances over EFA.
 #
 # NAMD is built on Charm++ (MPI/SMP backend over the system OpenMPI). This
 # launcher uses mpirun to start PROCS_PER_NODE processes per node (default 1),
@@ -28,7 +28,7 @@
 # Override via --export=ALL,...:
 #   NAMD_ENV    env script from the build (default: the build of this node's
 #               instance family under ${BASE_DIR}/x86_64/, see below)
-#   MODEL       ApoA1 | ATPase | STMV              (default ApoA1)
+#   MODEL       ApoA1 | ATPase | STMV | DHFR       (default ApoA1)
 #   TIMESTEPS   the run's numsteps, 1..10000000    (default 1000: six
 #               Benchmark time lines, see below)
 #   PPN         worker threads (PEs) per process   (default: the process's
@@ -56,8 +56,8 @@ fail() { echo "ERROR: $*" >&2; exit 1; }
 
 # --- Validate MODEL ------------------------------------------------------
 case "${MODEL}" in
-  ApoA1|ATPase|STMV) ;;
-  *) fail "MODEL='${MODEL}' invalid (supported: ApoA1, ATPase, STMV)" ;;
+  ApoA1|ATPase|STMV|DHFR) ;;
+  *) fail "MODEL='${MODEL}' invalid (supported: ApoA1, ATPase, STMV, DHFR)" ;;
 esac
 
 # --- Validate overrides --------------------------------------------------
@@ -244,12 +244,17 @@ else
 fi
 
 # --- Fetch + cache the benchmark deck ------------------------------------
+# ApoA1, F1-ATPase and STMV come from NAMD's utilities page, DHFR from NAMD's
+# benchmark page, whose deck is set up for NAMD's GPU modes: the launcher runs
+# its GPU-offload NVE config, which sets no GPU option (doGPUres 0).
 declare -A DECK_URL=(
   [ApoA1]="https://www.ks.uiuc.edu/Research/namd/utilities/apoa1.tar.gz"
   [ATPase]="https://www.ks.uiuc.edu/Research/namd/utilities/f1atpase.tar.gz"
   [STMV]="https://www.ks.uiuc.edu/Research/namd/utilities/stmv.tar.gz"
+  [DHFR]="https://www.ks.uiuc.edu/Research/namd/benchmarks/systems/dhfr_gpu.tar.gz"
 )
-declare -A DECK_CONF=( [ApoA1]="apoa1.namd" [ATPase]="f1atpase.namd" [STMV]="stmv.namd" )
+declare -A DECK_CONF=( [ApoA1]="apoa1.namd" [ATPase]="f1atpase.namd" [STMV]="stmv.namd"
+                       [DHFR]="dhfr_gpuoff_nve.namd" )
 CACHE_DIR="${BASE_DIR}/benchmarks/${MODEL}"
 CONF="${DECK_CONF[${MODEL}]}"
 if [ ! -s "${CACHE_DIR}/${CONF}" ]; then
@@ -259,8 +264,8 @@ if [ ! -s "${CACHE_DIR}/${CONF}" ]; then
   if curl -fsSL --max-time 600 --retry 3 -o "${tmp}/deck.tar.gz" "${DECK_URL[${MODEL}]}"; then
     mkdir "${tmp}/deck"
     tar xzf "${tmp}/deck.tar.gz" -C "${tmp}/deck"
-    # decks extract into a subdir (apoa1/, f1atpase/ or stmv/); flatten its
-    # files, not the downloaded archive, into the cache
+    # decks extract into a subdir (apoa1/, f1atpase/, stmv/ or dhfr_gpu/);
+    # flatten its files, not the downloaded archive, into the cache
     find "${tmp}/deck" -type f -exec cp -n {} "${CACHE_DIR}/" \;
     rm -rf "${tmp}"
   else
@@ -284,12 +289,20 @@ cd "${WORK}" || fail "cannot cd into ${WORK}"
 RUNCONF="run-${MODEL}.namd"
 cp "${CONF}" "${RUNCONF}"
 # The run's length: numsteps (and a final 'run N') become TIMESTEPS, by default
-# 1000. NAMD prints a timing line every 5 x stepspercycle steps (100 for the
-# three decks), "Initial time:" for the first three and "Benchmark time:" from
-# step 400 to step 900: six Benchmark time lines in a 1,000-step run, two in the
+# 1000. NAMD prints a timing line every 5 x stepspercycle steps (100 for these
+# decks: stepspercycle 20, which DHFR's config leaves at NAMD's default),
+# "Initial time:" for the first three and "Benchmark time:" from step 400 to
+# step 900: six Benchmark time lines in a 1,000-step run, two in the utilities
 # decks' own 500 steps.
 sed -i -E "s/^[[:space:]]*numsteps[[:space:]]+[0-9]+/numsteps ${TIMESTEPS}/I" "${RUNCONF}"
 sed -i -E "s/^[[:space:]]*run[[:space:]]+[0-9]+/run ${TIMESTEPS}/I" "${RUNCONF}"
+# DHFR's config sets its run length and two switches in Tcl variables
+# ("run $num_steps_run"): the run length becomes TIMESTEPS; doBenchmark 0 drops
+# its benchmarkTime limit, so NAMD runs every step asked for; skipFFTWconfig 0
+# leaves FFTW's planning and the load balancer at NAMD's defaults, as the other
+# decks run.
+sed -i -E "s/^([[:space:]]*set[[:space:]]+num_steps_run[[:space:]]+)[0-9]+/\1${TIMESTEPS}/" "${RUNCONF}"
+sed -i -E 's/^([[:space:]]*set[[:space:]]+(doBenchmark|skipFFTWconfig)[[:space:]]+)1([[:space:]]|$)/\10\3/' "${RUNCONF}"
 grep -qiE "^[[:space:]]*outputTiming" "${RUNCONF}" || echo "outputTiming 20" >> "${RUNCONF}"
 # The decks write their output files (.coor, .vel, .xsc) to /usr/tmp/<name>:
 # the run config keeps the name and drops the directory, so NAMD writes them in

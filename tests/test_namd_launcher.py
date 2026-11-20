@@ -2,12 +2,12 @@
 
 These tests pin:
 - the settings it refuses before mpirun starts (MODEL, TIMESTEPS, PPN, BASE_DIR);
-- the deck: fetched from the NAMD utilities page into BASE_DIR/benchmarks/<MODEL>/ when the cache lacks it, reused
-  with no download when it holds it, and copied into a run directory of its own;
-- the run's config: numsteps (and a run line) from TIMESTEPS, by default 1000, an outputTiming line when the deck has
-  none, and the deck's output name
-  without its directory, so NAMD writes its output files in the run directory; and the deck's downloaded archive kept
-  out of the cache and the run directory;
+- the deck: fetched from the NAMD utilities page (DHFR's from NAMD's benchmark page) into BASE_DIR/benchmarks/<MODEL>/
+  when the cache lacks it, reused with no download when it holds it, and copied into a run directory of its own;
+- the run's config: numsteps (and a run line) from TIMESTEPS, by default 1000, and for DHFR's GPU-offload config its
+  num_steps_run, with doBenchmark and skipFFTWconfig set to 0; an outputTiming line when the deck has none, and the
+  deck's output name without its directory, so NAMD writes its output files in the run directory; and the deck's
+  downloaded archive kept out of the cache and the run directory;
 - mpirun's command line, on one node and on two (where the job first checks EFA with fi_info), and NAMD's PEs;
 - the result: days/ns from the last "Benchmark time:" line, ns/day = 1 / days/ns, and the NAMDRESULT line;
 - the job's exit status: NAMD's when it fails; when NAMD exits 0, a result only from a complete run (NAMD's closing
@@ -70,6 +70,7 @@ pytestmark = pytest.mark.skipif(BASH is None, reason="needs bash")
 
 JOB_ID = "4242"
 UTILITIES = "https://www.ks.uiuc.edu/Research/namd/utilities/"
+BENCHMARKS = "https://www.ks.uiuc.edu/Research/namd/benchmarks/systems/"
 # Host commands the script must not find: the stubs stand in for some of them, and it runs none of the others.
 HIDDEN = frozenset({"curl", "srun", "sbatch", "scontrol", "squeue", "sinfo", "mpirun", "mpiexec", "module", "lscpu",
                     "nproc", "fi_info", "namd3", "ssh", "aws", "sudo"})
@@ -89,14 +90,27 @@ DECKS = {
                ["coordinates             f1atpase.pdb", "structure               f1atpase.psf",
                 "outputname              /usr/tmp/f1atpase", "timestep                1.0",
                 "numsteps                500", "stepspercycle           20", "outputTiming\t\t20"]),
+    # NAMD's GPU benchmark config, which sets its run length and switches in Tcl variables.
+    "DHFR": ("dhfr_gpu.tar.gz", "dhfr_gpu", "dhfr_gpuoff_nve.namd",
+             ["set doBenchmark  1    ;# a synthetic comment", "set benchtime    60", "set doGPUres     0",
+              "set skipFFTWconfig 1", "set doMTS        1", "set num_steps_run   5000  ;# a synthetic comment",
+              "structure           dhfr_gpu.psf", "coordinates         dhfr_gpu.pdb", "outputName          out_dhfr",
+              "outputTiming        2500", "if { $doBenchmark } {", "  benchmarkTime        $benchtime", "}",
+              "run                  $num_steps_run"]),
 }
+# The page each deck comes from, when it is not the utilities page.
+DECK_PAGES = {"DHFR": BENCHMARKS}
+
+
+def deck_url(model: str) -> str:
+    return DECK_PAGES.get(model, UTILITIES) + DECKS[model][0]
 DECK_DATA = ("psf", "pdb")   # the other files of a deck, named <top>.<ext>
 
 # The stub curl. It logs each call's arguments to STATE/curl.log. The instance metadata answers as STUB_IMDS says:
 # ok (a token, then STUB_INSTANCE_TYPE), none (no answer: exit 28, no output), error (an HTTP error: exit 22 and no
 # output under -f, an HTML page and exit 0 without it), text (STUB_IMDS_TEXT for the type), cut-off (the type less
-# its last five characters, then exit 28). A deck URL copies STUB_DECKS/<tarball> to the -o path. Anything else:
-# exit 22.
+# its last five characters, then exit 28). A deck URL (NAMD's utilities or benchmark page) copies STUB_DECKS/<tarball>
+# to the -o path. Anything else: exit 22.
 CURL_STUB = r"""#!/bin/bash
 printf '%s\n' "$*" >> "${STATE}/curl.log"
 url="" out="" fail=0 prev=""
@@ -112,6 +126,7 @@ for a in "$@"; do
 done
 page='<html><head><title>404 Not Found</title></head>
 <body><h1>Not Found</h1><p>The requested URL /latest/meta-data/ was not found on this server.</p></body></html>'
+ks=https://www.ks.uiuc.edu/Research/namd
 case "${url}" in
     http://169.254.169.254/latest/api/token)
         case "${STUB_IMDS}" in
@@ -127,7 +142,7 @@ case "${url}" in
             text) printf '%s' "${STUB_IMDS_TEXT}"; exit 0 ;;
             cut-off) printf '%s' "${STUB_INSTANCE_TYPE%?????}"; exit 28 ;;
         esac ;;
-    https://www.ks.uiuc.edu/Research/namd/utilities/*.tar.gz)
+    "${ks}"/utilities/*.tar.gz|"${ks}"/benchmarks/systems/*.tar.gz)
         name="${url##*/}"
         [ -n "${out}" ] && [ -f "${STUB_DECKS}/${name}" ] || exit 22
         cp "${STUB_DECKS}/${name}" "${out}"
@@ -173,7 +188,8 @@ echo "  Socket(s):                     2"
 # arguments (one per line), its working directory, FI_PROVIDER ("unset" when none) and a copy of the run config (its
 # last argument); then it prints a synthetic namd.out (STUB_NAMD_OUT: complete, no-wallclock, zero-days, no-bench or
 # sci-days) and ends with STUB_RC. Like NAMD, it prints three "Initial time:" lines and then one "Benchmark time:" line
-# per 100 steps from step 400 to 900; the last one gives STUB_DAYS days/ns, the others 0.5. With STUB_TILES set, it
+# per 100 steps from step 400 to 900 of the config's run length (its numsteps, or DHFR's "set num_steps_run"); the
+# last one gives STUB_DAYS days/ns, the others 0.5. With STUB_TILES set, it
 # prints NAMD's line on the AVX-512 tile kernels with that word (ENABLED or DISABLED).
 MPIRUN_STUB = r"""#!/bin/bash
 if [ "${1:-}" = --version ]; then echo "mpirun (Open MPI) 4.1.7"; exit 0; fi
@@ -186,7 +202,8 @@ pwd > "${d}/cwd"
 printf '%s' "${FI_PROVIDER-unset}" > "${d}/fi_provider"
 conf="${!#}"
 [ -f "${conf}" ] && cp "${conf}" "${d}/config"
-steps="$(awk 'tolower($1) == "numsteps" { s = $2 } END { print s + 0 }' "${conf}" 2>/dev/null)"
+steps="$(awk 'tolower($1) == "numsteps" { s = $2 } $1 == "set" && $2 == "num_steps_run" { s = $3 }
+              END { print s + 0 }' "${conf}" 2>/dev/null)"
 phases=$(( steps / 100 )); [ "${phases}" -gt 9 ] && phases=9
 bench=$(( phases > 3 ? phases - 3 : 0 ))
 days="${STUB_DAYS:-0.25}"
@@ -408,7 +425,7 @@ def mpi_words(call: dict) -> list[str]:
 
 
 def deck_downloads(job: Job) -> list[str]:
-    return [line for line in job.curl if UTILITIES in line]
+    return [line for line in job.curl if "https://www.ks.uiuc.edu/Research/namd/" in line]
 
 
 def assert_refused(job: Job, message: str) -> None:
@@ -454,7 +471,8 @@ def test_no_efa_on_two_nodes_stops_the_job_before_mpirun(tmp_path, host_tools):
 
 REFUSED = [
     pytest.param({"MODEL": "apoa1"}, "MODEL='apoa1' invalid", id="MODEL=apoa1"),
-    pytest.param({"MODEL": "DHFR"}, "MODEL='DHFR' invalid (supported: ApoA1, ATPase, STMV)", id="MODEL=DHFR"),
+    pytest.param({"MODEL": "JAC"}, "MODEL='JAC' invalid (supported: ApoA1, ATPase, STMV, DHFR)", id="MODEL=JAC"),
+    pytest.param({"MODEL": "dhfr"}, "MODEL='dhfr' invalid", id="MODEL=dhfr"),
     pytest.param({"MODEL": "F1-ATPase"}, "MODEL='F1-ATPase' invalid", id="MODEL=F1-ATPase"),
     *(pytest.param({"TIMESTEPS": v}, f"TIMESTEPS='{v}' invalid", id=f"TIMESTEPS={v}")
       for v in ("0", "10000001", "1e3")),
@@ -495,7 +513,7 @@ def test_a_deck_missing_from_the_cache_is_downloaded_and_copied_into_the_run_dir
     call = started(job)
     name, top, conf, _ = DECKS[model]
     downloads = deck_downloads(job)
-    assert len(downloads) == 1 and downloads[0].endswith(UTILITIES + name), downloads
+    assert len(downloads) == 1 and downloads[0].endswith(deck_url(model)), downloads
     cache = job.base / "benchmarks" / model
     assert (cache / conf).read_text().splitlines() == DECKS[model][3]
     (run_dir,) = job.run_dirs()
@@ -1060,12 +1078,42 @@ def test_f1_atpase_comes_from_its_tarball_and_runs_its_config(tmp_path, host_too
     assert any(line.startswith("NAMDRESULT model=ATPase ") for line in job.out), job.out
 
 
+def test_dhfr_comes_from_namds_benchmark_page_and_runs_its_gpu_offload_config_on_the_cpu(tmp_path, host_tools):
+    """MODEL=DHFR: dhfr_gpu.tar.gz from NAMD's benchmark page and dhfr_gpuoff_nve.namd, with doBenchmark and
+    skipFFTWconfig set to 0 and its run length to TIMESTEPS; every other line as the deck has it."""
+    job = run(tmp_path, host_tools, env={"MODEL": "DHFR"})
+    call = started(job)
+    assert deck_downloads(job)[0].endswith(BENCHMARKS + "dhfr_gpu.tar.gz")
+    assert namd_words(call)[-1] == "run-DHFR.namd"
+    changed = {"set doBenchmark  1    ;# a synthetic comment": "set doBenchmark  0    ;# a synthetic comment",
+               "set skipFFTWconfig 1": "set skipFFTWconfig 0",
+               "set num_steps_run   5000  ;# a synthetic comment": "set num_steps_run   1000  ;# a synthetic comment"}
+    assert call["config"] == [changed.get(line, line) for line in DECKS["DHFR"][3]]
+    (run_dir,) = job.run_dirs()
+    assert sum("Benchmark time:" in line for line in (run_dir / "namd.out").read_text().splitlines()) == 6
+    assert any(line.startswith("NAMDRESULT model=DHFR ") for line in job.out), job.out
+
+
+@pytest.mark.parametrize("steps", ["500", "20000"])
+def test_timesteps_sets_dhfrs_run_length(steps, tmp_path, host_tools):
+    config = started(run(tmp_path, host_tools, env={"MODEL": "DHFR", "TIMESTEPS": steps}))["config"]
+    assert run_length(config) == [f"set num_steps_run   {steps}  ;# a synthetic comment"]
+    assert "run                  $num_steps_run" in config
+
+
+def run_length(config: list[str]) -> list[str]:
+    """The lines that set the run config's length: numsteps, or DHFR's num_steps_run."""
+    return [line for line in config if line.lower().startswith("numsteps") or line.startswith("set num_steps_run")]
+
+
 @pytest.mark.parametrize("model", list(DECKS))
 def test_by_default_the_run_is_1000_steps(model, tmp_path, host_tools):
-    """The run config's numsteps is 1000, the cached deck keeps its own, and NAMD prints six Benchmark time lines."""
+    """The run config's numsteps (DHFR's num_steps_run) is 1000, the cached deck keeps its own, and NAMD prints six
+    Benchmark time lines."""
     job = run(tmp_path, host_tools, env={"MODEL": model})
     config = started(job)["config"]
-    assert [line for line in config if line.lower().startswith("numsteps")] == ["numsteps 1000"]
+    expected = ["set num_steps_run   1000  ;# a synthetic comment"] if model == "DHFR" else ["numsteps 1000"]
+    assert run_length(config) == expected
     _, _, conf, lines = DECKS[model]
     cached = (job.base / "benchmarks" / model / conf).read_text().splitlines()
     assert cached == lines

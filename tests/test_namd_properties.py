@@ -7,7 +7,7 @@ The shell scripts under apps/NAMD/ contain pure-function logic:
   * env-script string generation (the heredoc in build_namd_x86.sbatch)
   * NAMD stdout parsing for `Info: Benchmark time: ... <days/ns> days/ns`
     and `WallClock: <s>`, with days/ns -> ns/day = 1 / days_per_ns
-  * MODEL validation (ApoA1 / ATPase / STMV) and deck-cache reuse
+  * MODEL validation (ApoA1 / ATPase / STMV / DHFR) and deck-cache reuse
 
 We re-implement that logic in Python below and exercise it with
 Hypothesis-generated inputs to verify the properties hold. The Python
@@ -24,6 +24,7 @@ Validates: Requirements 2.6, 2.7, 1.4, 6.1, 6.2
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from textwrap import dedent
 
 from hypothesis import assume, given, settings, strategies as st
@@ -109,11 +110,11 @@ def parse_namd_output(text: str) -> tuple[float, float, float | None]:
     return days_per_ns, ns_per_day, wall
 
 
-SUPPORTED_MODELS = ("ApoA1", "ATPase", "STMV")
+SUPPORTED_MODELS = ("ApoA1", "ATPase", "STMV", "DHFR")
 
 
 def model_is_valid(model: str) -> bool:
-    """Mirror of the `case ${MODEL} in ApoA1|ATPase|STMV)` guard."""
+    """Mirror of the `case ${MODEL} in ApoA1|ATPase|STMV|DHFR)` guard."""
     return model in SUPPORTED_MODELS
 
 
@@ -146,7 +147,7 @@ charm_archs = st.sampled_from([
     "mpi-linux-arm8-smp",
 ])
 openmpi_modules = st.sampled_from(["openmpi/4.1.7", "openmpi5/5.0.9amzn1"])
-models = st.sampled_from(["ApoA1", "ATPase", "STMV"])
+models = st.sampled_from(SUPPORTED_MODELS)
 bad_models = st.text(min_size=0, max_size=12).filter(
     lambda s: s not in SUPPORTED_MODELS
 )
@@ -325,6 +326,13 @@ class TestModelAndDeckCache:
     @given(model=bad_models)
     def test_unsupported_models_rejected(self, model) -> None:
         assert model_is_valid(model) is False
+
+    def test_the_mirror_lists_the_launchers_models(self) -> None:
+        """SUPPORTED_MODELS is exactly the MODEL values namd-benchmark.sbatch's case statement takes."""
+        script = Path(__file__).resolve().parents[1] / "apps" / "NAMD" / "x86" / "namd-benchmark.sbatch"
+        m = re.search(r'^case "\$\{MODEL\}" in\n\s*([A-Za-z0-9|]+)\) ;;$', script.read_text(), re.MULTILINE)
+        assert m, "no MODEL case statement found"
+        assert tuple(m.group(1).split("|")) == SUPPORTED_MODELS
 
     @settings(max_examples=50)
     @given(present=st.booleans())

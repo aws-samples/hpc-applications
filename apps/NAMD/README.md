@@ -110,7 +110,7 @@ pass `sbatch --time` for a longer run. The launcher:
 | Variable | Default | Description |
 |---|---|---|
 | `NAMD_ENV` | the build of the node's instance family | The build's env script |
-| `MODEL` | `ApoA1` | `ApoA1`, `ATPase` (F1-ATPase) or `STMV` |
+| `MODEL` | `ApoA1` | `ApoA1`, `ATPase` (F1-ATPase), `STMV` or `DHFR` |
 | `TIMESTEPS` | `1000` | The run's `numsteps` (and a `run` line's steps), 1 to 10,000,000 |
 | `PPN` | the process's cores − 1 | Worker threads (PEs) per process, 1 to 192. With one process per node on hpc8a.96xlarge and hpc7a.96xlarge: 23, 47, 71, 95, 119, 143, 167, 191 or 192 (see below). With more than one, the process's cores − 1 |
 | `PROCS_PER_NODE` | `1` | NAMD processes per node: a number that divides the node's cores and leaves each process at least two (see "Processes per node") |
@@ -173,13 +173,21 @@ values.
 
 | `MODEL` | System | Atoms | Steps in the deck | PME grid | Deck |
 |---|---|--:|--:|---|---|
+| `DHFR` | Dihydrofolate reductase (the JAC benchmark) | 23,558 | 1,000,000 | 64 × 64 × 64 | [`dhfr_gpu.tar.gz`](https://www.ks.uiuc.edu/Research/namd/benchmarks/systems/dhfr_gpu.tar.gz) |
 | `ApoA1` | Apolipoprotein A1 | 92,224 | 500 | 108 × 108 × 80 | [`apoa1.tar.gz`](https://www.ks.uiuc.edu/Research/namd/utilities/apoa1.tar.gz) |
 | `ATPase` | F1-ATPase | 327,506 | 500 | 192 × 144 × 144 | [`f1atpase.tar.gz`](https://www.ks.uiuc.edu/Research/namd/utilities/f1atpase.tar.gz) |
 | `STMV` | Satellite tobacco mosaic virus | 1,066,628 | 500 | 216 × 216 × 216 | [`stmv.tar.gz`](https://www.ks.uiuc.edu/Research/namd/utilities/stmv.tar.gz) |
 
-The three decks come from the [NAMD utilities page](https://www.ks.uiuc.edu/Research/namd/utilities/), each with PME
-and a time step of 1 fs. The launcher runs 1,000 steps of each by default (`TIMESTEPS`). It fetches each deck on first
-use and keeps it at `${BASE_DIR}/benchmarks/<MODEL>/`; delete that directory to fetch it again.
+ApoA1, F1-ATPase and STMV come from the [NAMD utilities page](https://www.ks.uiuc.edu/Research/namd/utilities/), each
+with PME and a time step of 1 fs. DHFR comes from [NAMD's benchmark page](https://www.ks.uiuc.edu/Research/namd/benchmarks/),
+whose deck is set up for NAMD's GPU modes. The launcher runs its GPU-offload NVE config, `dhfr_gpuoff_nve.namd`, which
+sets no GPU option (its `doGPUres` is 0): PME, a time step of 2 fs with rigid bonds, and full electrostatics every
+second step. In the run's config, `doBenchmark` and `skipFFTWconfig` become 0, so NAMD runs every step asked for, with
+no `benchmarkTime` limit, and keeps its default FFTW planning and load balancer, as the other decks do.
+
+The launcher runs 1,000 steps of each deck by default (`TIMESTEPS`; DHFR's config takes them through its
+`num_steps_run`). It fetches each deck on first use and keeps it at `${BASE_DIR}/benchmarks/<MODEL>/`; delete that
+directory to fetch it again.
 
 ## Metrics
 
@@ -189,10 +197,10 @@ NAMD prints its speed while it runs, on lines of this form:
 Info: Benchmark time: <CPUs> CPUs <s> s/step <d> days/ns <MB> MB memory
 ```
 
-NAMD prints a timing line every 5 × `stepspercycle` steps, 100 for the three decks: `Initial time:` for the first
-three, then `Benchmark time:` up to step 900, each one the wall time per step over the 100 steps before it. A run of
-1,000 steps, the launcher's default, prints six `Benchmark time:` lines, for steps 400 to 900; the decks' own 500 steps
-print two. NAMD's user guide ("Improving Parallel Scaling") points to these lines to measure parallel performance.
+NAMD prints a timing line every 5 × `stepspercycle` steps, 100 for these decks (DHFR's config leaves `stepspercycle`
+at NAMD's default, 20): `Initial time:` for the first three, then `Benchmark time:` up to step 900, each one the wall
+time per step over the 100 steps before it. A run of 1,000 steps, the launcher's default, prints six `Benchmark time:`
+lines, for steps 400 to 900; the utilities decks' own 500 steps print two. NAMD's user guide ("Improving Parallel Scaling") points to these lines to measure parallel performance.
 The launcher takes the days/ns of the last one and reports ns/day = 1 / (days/ns), with NAMD's closing `WallClock:`
 time.
 
@@ -246,7 +254,7 @@ made with other layouts or kernels stay apart.
 | File | Description |
 |---|---|
 | [`x86/build_namd_x86.sbatch`](x86/build_namd_x86.sbatch) | Builds static FFTW, Charm++ (`mpi-linux-x86_64-smp`, on the system Open MPI) and NAMD; installs `namd3` and its env script |
-| [`x86/namd-benchmark.sbatch`](x86/namd-benchmark.sbatch) | Runs ApoA1, F1-ATPase or STMV with `mpirun`; fetches and caches the deck; reports days/ns and ns/day, and records a complete run |
+| [`x86/namd-benchmark.sbatch`](x86/namd-benchmark.sbatch) | Runs ApoA1, F1-ATPase, STMV or DHFR with `mpirun`; fetches and caches the deck; reports days/ns and ns/day, and records a complete run |
 | [`dynamodb/record-benchmark.sh`](dynamodb/record-benchmark.sh) | Records one run in the shared AI-Powered HPC benchmark dataset (see "Contribute your results") |
 | [`dynamodb/README.md`](dynamodb/README.md) | How to run the recorder by hand |
 | [`tests/test_namd_launcher.py`](../../tests/test_namd_launcher.py), [`tests/test_namd_build.py`](../../tests/test_namd_build.py), [`tests/test_namd_properties.py`](../../tests/test_namd_properties.py), [`tests/test_namd_recorder.py`](../../tests/test_namd_recorder.py) | Tests of the two scripts and the recorder, with stubs only: no NAMD, MPI, Slurm or AWS needed |
