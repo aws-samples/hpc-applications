@@ -6,15 +6,23 @@
 #   OSU_SHA256   the SHA-256 of its tarball (default: the one this script knows for OSU_VERSION; for a release it
 #                does not know, the download is not checked, and a NOTE says so)
 #   INSTALL_DIR  an absolute path: OMB is installed in INSTALL_DIR/install and its build logs are kept in
-#                INSTALL_DIR/logs (default /fsx/OSU-Benchmark-OpenMPI)
+#                INSTALL_DIR/logs (default /fsx/OSU-Benchmark-OpenMPI, or /fsx/OSU-Benchmark-OpenMPI5 with
+#                OMPI_MODULE=openmpi5)
 #   MAKE_JOBS    parallel make jobs (default: nproc)
+#   OMPI_MODULE  openmpi (the default: the EFA installer's Open MPI 4) or openmpi5 (its Open MPI 5)
 # The build runs in a directory of its own under TMPDIR (or /tmp), removed once OMB is installed. A step that stops
 # prints its exit status and the end of its log, keeps that directory, and ends the script with that status.
 set -euo pipefail
 
 OSU_VERSION="${OSU_VERSION:-7.5.3}"
 OSU_SHA256="${OSU_SHA256:-}"
-INSTALL_DIR="${INSTALL_DIR:-/fsx/OSU-Benchmark-OpenMPI}"
+OMPI_MODULE="${OMPI_MODULE:-openmpi}"
+case "${OMPI_MODULE}" in
+    openmpi)  OMPI_MAJOR=4; INSTALL_DEFAULT=/fsx/OSU-Benchmark-OpenMPI ;;
+    openmpi5) OMPI_MAJOR=5; INSTALL_DEFAULT=/fsx/OSU-Benchmark-OpenMPI5 ;;
+    *) echo "ERROR: OMPI_MODULE=${OMPI_MODULE}: use openmpi (Open MPI 4) or openmpi5 (Open MPI 5)" >&2; exit 1 ;;
+esac
+INSTALL_DIR="${INSTALL_DIR:-${INSTALL_DEFAULT}}"
 MAKE_JOBS="${MAKE_JOBS:-$(nproc)}"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -63,7 +71,8 @@ if ! declare -F module >/dev/null 2>&1 && [ -r /etc/profile.d/modules.sh ]; then
 fi
 if declare -F module >/dev/null 2>&1; then
     set +u
-    module load openmpi || echo "NOTE: module load openmpi did not succeed: using the mpirun on the PATH" >&2
+    module load "${OMPI_MODULE}" \
+        || echo "NOTE: module load ${OMPI_MODULE} did not succeed: using the mpirun on the PATH" >&2
     set -u
 else
     echo "NOTE: no module command: using the MPI on the PATH" >&2
@@ -71,9 +80,9 @@ fi
 MPI_VERSION=$(mpirun --version 2>/dev/null) || true
 MPI_VERSION=${MPI_VERSION%%$'\n'*}
 case "${MPI_VERSION}" in
-    *"(Open MPI) 4."*) ;;
-    *) die "mpirun is not Open MPI 4 (mpirun --version: ${MPI_VERSION:-no output}): load the openmpi module, or put" \
-           "the EFA installer's Open MPI 4 first on the PATH" ;;
+    *"(Open MPI) ${OMPI_MAJOR}."*) ;;
+    *) die "mpirun is not Open MPI ${OMPI_MAJOR} (mpirun --version: ${MPI_VERSION:-no output}): load the" \
+           "${OMPI_MODULE} module, or put the EFA installer's Open MPI ${OMPI_MAJOR} first on the PATH" ;;
 esac
 
 BUILD_DIR=$(mktemp -d "${TMPDIR:-/tmp}/osu-build.XXXXXX")
@@ -141,3 +150,4 @@ echo "==> Done. OMB ${OSU_VERSION} is installed in ${INSTALL_DIR}/install"
 echo "    Build record: ${INSTALL_DIR}/install/osu-build.txt"
 echo "    Build logs: ${INSTALL_DIR}/logs/${OSU_VERSION}-${STAMP}"
 echo "    Run it with osu_benchmarks_openmpi.sbatch (README.md, \"Run\")"
+[ "${OMPI_MODULE}" = openmpi ] || echo "    with OMPI_MODULE=${OMPI_MODULE} in the job's environment"

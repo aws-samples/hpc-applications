@@ -14,8 +14,10 @@
 #
 # Settings, in the job's environment (`OSU_TESTS="latency bw" sbatch osu_benchmarks_openmpi.sbatch`) rather than in
 # an sbatch --export list (README.md, "Settings"):
+#   OMPI_MODULE  openmpi (the default: the EFA installer's Open MPI 4) or openmpi5 (its Open MPI 5)
 #   OSU_DIR      the libexec/osu-micro-benchmarks/mpi directory of an OMB install (default: the one
-#                build_osu_benchmarks_openmpi.sh installs, under /fsx/OSU-Benchmark-OpenMPI/install)
+#                build_osu_benchmarks_openmpi.sh installs for OMPI_MODULE, under /fsx/OSU-Benchmark-OpenMPI/install
+#                or /fsx/OSU-Benchmark-OpenMPI5/install)
 #   OSU_TESTS    the tests, in order (default "latency bw bibw mbw_mr allreduce")
 #   OSU_PPN      ranks per node of the multi-pair and collective tests, 1 to the node's cores (default: every core)
 #   OSU_ARGS     options for every test, such as "-m 1:65536 -i 1000"
@@ -110,9 +112,17 @@ done
 read -r -d '' -a OSU_ARGV < <(printf '%s' "${OSU_ARGS:-}") || true
 # <<< shared: job and settings
 
-# The OMB install: where build_osu_benchmarks_openmpi.sh installs it.
-OSU_DIR="${OSU_DIR:-/fsx/OSU-Benchmark-OpenMPI/install/libexec/osu-micro-benchmarks/mpi}"
+# The MPI, the EFA installer's Open MPI 4 (OMPI_MODULE=openmpi, the default) or Open MPI 5 (OMPI_MODULE=openmpi5),
+# and its OMB install, where build_osu_benchmarks_openmpi.sh installs it for that MPI.
+OMPI_MODULE="${OMPI_MODULE:-openmpi}"
+case "${OMPI_MODULE}" in
+    openmpi)  OMPI_MAJOR=4; OSU_ROOT=/fsx/OSU-Benchmark-OpenMPI ;;
+    openmpi5) OMPI_MAJOR=5; OSU_ROOT=/fsx/OSU-Benchmark-OpenMPI5 ;;
+    *) die "OMPI_MODULE=${OMPI_MODULE}: use openmpi (Open MPI 4) or openmpi5 (Open MPI 5)" ;;
+esac
+OSU_DIR="${OSU_DIR:-${OSU_ROOT}/install/libexec/osu-micro-benchmarks/mpi}"
 BUILD_HINT="bash build_osu_benchmarks_openmpi.sh"
+[ "${OMPI_MODULE}" = openmpi ] || BUILD_HINT="OMPI_MODULE=${OMPI_MODULE} ${BUILD_HINT}"
 
 # >>> shared: binaries
 osu_binary() {  # <test>: its binary
@@ -127,10 +137,10 @@ for t in "${TESTS[@]}"; do
 done
 # <<< shared: binaries
 
-# The MPI: the EFA installer's Open MPI 4 (module openmpi) and its libfabric (module libfabric-aws).
-module_load openmpi
+# The MPI: the EFA installer's Open MPI (module OMPI_MODULE) and its libfabric (module libfabric-aws).
+module_load "${OMPI_MODULE}"
 module_load libfabric-aws
-mpi_check "(Open MPI) 4." "Open MPI 4"
+mpi_check "(Open MPI) ${OMPI_MAJOR}." "Open MPI ${OMPI_MAJOR}"
 MPI_NAME="Open MPI ${MPI_VERSION##*) }"
 
 # >>> shared: instance type

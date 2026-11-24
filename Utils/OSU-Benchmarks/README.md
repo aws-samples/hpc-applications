@@ -14,7 +14,11 @@ Two build scripts are provided, one per MPI implementation. Run the appropriate 
 bash build_osu_benchmarks_openmpi.sh
 ```
 
-Installs to `/fsx/OSU-Benchmark-OpenMPI/install`, built with the EFA installer's Open MPI 4 (`module load openmpi`).
+Installs to `/fsx/OSU-Benchmark-OpenMPI/install`, built with the EFA installer's Open MPI 4 (`module load openmpi`). With the EFA installer's Open MPI 5 instead (`module load openmpi5`), it installs to `/fsx/OSU-Benchmark-OpenMPI5/install`:
+
+```bash
+OMPI_MODULE=openmpi5 bash build_osu_benchmarks_openmpi.sh
+```
 
 **Intel MPI:**
 
@@ -34,8 +38,9 @@ Settings, in the environment (`MAKE_JOBS=8 bash build_osu_benchmarks_openmpi.sh`
 |---|---|---|
 | `OSU_VERSION` | `7.5.3` | The OMB release to build |
 | `OSU_SHA256` | the SHA-256 the script knows for `OSU_VERSION` | The tarball's SHA-256, 64 hexadecimal digits. For a release the script does not know, the download is not checked unless you set it, and a NOTE says so |
-| `INSTALL_DIR` | `/fsx/OSU-Benchmark-OpenMPI`, `/fsx/OSU-Benchmark-IntelMPI` | An absolute path: OMB is installed in `<INSTALL_DIR>/install`, its build logs are kept in `<INSTALL_DIR>/logs` |
+| `INSTALL_DIR` | `/fsx/OSU-Benchmark-OpenMPI` (`/fsx/OSU-Benchmark-OpenMPI5` with `OMPI_MODULE=openmpi5`), `/fsx/OSU-Benchmark-IntelMPI` | An absolute path: OMB is installed in `<INSTALL_DIR>/install`, its build logs are kept in `<INSTALL_DIR>/logs` |
 | `MAKE_JOBS` | the node's CPUs (`nproc`) | Parallel `make` jobs |
+| `OMPI_MODULE` | `openmpi` | The Open MPI script's MPI: `openmpi` (Open MPI 4) or `openmpi5` (Open MPI 5) |
 
 A value out of its range stops the script before anything is downloaded. Without a `module` command (on an image without Environment Modules), the scripts use the MPI on the `PATH`, after the same check.
 
@@ -47,6 +52,12 @@ Submit the job script matching your MPI build:
 
 ```bash
 sbatch osu_benchmarks_openmpi.sbatch
+```
+
+**Open MPI 5**, built with `OMPI_MODULE=openmpi5`:
+
+```bash
+OMPI_MODULE=openmpi5 sbatch osu_benchmarks_openmpi.sbatch
 ```
 
 **Intel MPI:**
@@ -89,7 +100,8 @@ Pass the settings in the job's environment, as in `OSU_TESTS="latency bw" sbatch
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `OSU_DIR` | the build script's install: `/fsx/OSU-Benchmark-OpenMPI/install/libexec/osu-micro-benchmarks/mpi` (Open MPI), `/fsx/OSU-Benchmark-IntelMPI/install/libexec/osu-micro-benchmarks/mpi` (Intel MPI) | The `libexec/osu-micro-benchmarks/mpi` directory of an OMB install. When the build record (`osu-build.txt`) is in the install directory, the job prints its OMB version and MPI |
+| `OSU_DIR` | the build script's install: `/fsx/OSU-Benchmark-OpenMPI/install/libexec/osu-micro-benchmarks/mpi` (Open MPI 4), `/fsx/OSU-Benchmark-OpenMPI5/install/libexec/osu-micro-benchmarks/mpi` (Open MPI 5), `/fsx/OSU-Benchmark-IntelMPI/install/libexec/osu-micro-benchmarks/mpi` (Intel MPI) | The `libexec/osu-micro-benchmarks/mpi` directory of an OMB install. When the build record (`osu-build.txt`) is in the install directory, the job prints its OMB version and MPI |
+| `OMPI_MODULE` | `openmpi` | Open MPI: `openmpi` (the EFA installer's Open MPI 4) or `openmpi5` (its Open MPI 5); any other value stops the job before anything runs |
 | `OSU_TESTS` | `latency bw bibw mbw_mr allreduce` | The tests, in order, with or without the `osu_` prefix: `latency`, `bw`, `bibw` (2 ranks); `mbw_mr`, `multi_lat` (in pairs: an even number of ranks); `allreduce`, `allgather`, `alltoall`, `bcast`, `barrier`, `reduce`, `reduce_scatter` |
 | `OSU_PPN` | every core of the node | Ranks per node of the multi-pair and collective tests, from 1 to the node's cores |
 | `OSU_ARGS` | none | OMB options for every test, split at blanks, such as `-m 1:65536 -i 1000` |
@@ -111,7 +123,8 @@ The two job scripts run the same tests at the same layouts, with the same defaul
 
 ```bash
 sbatch -p <queue> --constraint=<feature> --nodes=2 --exclusive --time=01:00:00 \
-    --wrap 'bash osu_benchmarks_openmpi.sbatch; bash osu_benchmarks_intelmpi.sbatch'
+    --wrap 'bash osu_benchmarks_openmpi.sbatch; OMPI_MODULE=openmpi5 bash osu_benchmarks_openmpi.sbatch;
+            bash osu_benchmarks_intelmpi.sbatch'
 ```
 
 Submit it from this directory: the job runs the two scripts from the directory you submit from, writes their output to `slurm-<job id>.out`, and passes the settings in its environment to both.
@@ -123,7 +136,7 @@ What the job scripts set, and why:
 - **Open MPI**: `--mca pml cm --mca mtl ofi` (Open MPI's cm point-to-point layer over libfabric) and `FI_PROVIDER=efa`, passed to every rank with `-x`, as this repository's other Open MPI job scripts set them.
 - **Intel MPI**: `I_MPI_FABRICS=shm:ofi`, `I_MPI_OFI_PROVIDER=efa` and `I_MPI_MULTIRAIL=1`. Intel MPI's module puts its own libfabric first unless `I_MPI_OFI_LIBRARY_INTERNAL` is `0` as it loads, so the job script and its build script export `I_MPI_OFI_LIBRARY_INTERNAL=0` first, then load `intelmpi` and `libfabric-aws` once each.
 - **Intel MPI's bootstrap**: `I_MPI_HYDRA_BOOTSTRAP=slurm`, so that Intel MPI starts its processes with `srun`, inside the job. Slurm 23.11 and later set `I_MPI_HYDRA_BOOTSTRAP=slurm` and `I_MPI_HYDRA_BOOTSTRAP_EXEC_EXTRA_ARGS=--external-launcher` for a job submitted with no `I_MPI_HYDRA_BOOTSTRAP` in its environment, but a login profile can export another value, such as `ssh`, which the job then carries. The job script sets `slurm` whatever the job carries, and `--external-launcher` too when the job gives no extra argument of its own and carries `OMPI_MCA_plm_slurm_args=--external-launcher`, which Slurm sets where `srun` has that option.
-- **Device RDMA**: Open MPI 4.1 asks libfabric for API version 1.5 ([mtl_ofi_component.c](https://github.com/open-mpi/ompi/blob/v4.1.7/ompi/mca/mtl/ofi/mtl_ofi_component.c#L670)). With API 1.18 or later, libfabric's EFA provider uses device RDMA wherever the device supports RDMA read; with an older API, it leaves device RDMA off on EFA devices `0xefa0` and `0xefa1` (PCI device ids) unless `FI_EFA_USE_DEVICE_RDMA=1`, and uses it by default on later devices. With `FI_EFA_USE_DEVICE_RDMA=1` on a device with no RDMA read, it stops the program ([efa_rdm_util.c](https://github.com/ofiwg/libfabric/blob/v2.4.0/prov/efa/src/rdm/efa_rdm_util.c#L24-L69)). Every instance type with Nitro v4 or later supports RDMA read, and of the Nitro v3 (EFA v1, PCI device `0xefa0`) types AWS lists p4d.24xlarge and p4de.24xlarge with it ([Supported instance types](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa.html#efa-instance-types)). So both job scripts set `FI_EFA_USE_DEVICE_RDMA=1` when every device in `/sys/class/infiniband` is an EFA device (PCI vendor `0x1d0f`) whose PCI device is not `0xefa0`, and leave it unset otherwise. A value in the job's environment is kept: on an instance type whose `0xefa0` devices support RDMA read, set it there. The job prints which, and why.
+- **Device RDMA**: Open MPI 4.1 asks libfabric for API version 1.5 ([mtl_ofi_component.c](https://github.com/open-mpi/ompi/blob/v4.1.7/ompi/mca/mtl/ofi/mtl_ofi_component.c#L670)), and Open MPI 5.0 for 1.18 ([mtl_ofi_component.c](https://github.com/open-mpi/ompi/blob/v5.0.9/ompi/mca/mtl/ofi/mtl_ofi_component.c#L615)). With API 1.18 or later, libfabric's EFA provider uses device RDMA wherever the device supports RDMA read; with an older API, it leaves device RDMA off on EFA devices `0xefa0` and `0xefa1` (PCI device ids) unless `FI_EFA_USE_DEVICE_RDMA=1`, and uses it by default on later devices. With `FI_EFA_USE_DEVICE_RDMA=1` on a device with no RDMA read, it stops the program ([efa_rdm_util.c](https://github.com/ofiwg/libfabric/blob/v2.4.0/prov/efa/src/rdm/efa_rdm_util.c#L24-L69)). Every instance type with Nitro v4 or later supports RDMA read, and of the Nitro v3 (EFA v1, PCI device `0xefa0`) types AWS lists p4d.24xlarge and p4de.24xlarge with it ([Supported instance types](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa.html#efa-instance-types)). So both job scripts set `FI_EFA_USE_DEVICE_RDMA=1` when every device in `/sys/class/infiniband` is an EFA device (PCI vendor `0x1d0f`) whose PCI device is not `0xefa0`, and leave it unset otherwise. A value in the job's environment is kept: on an instance type whose `0xefa0` devices support RDMA read, set it there. The job prints which, and why.
 - **Pinning**: one rank per core (Open MPI `--bind-to core`; Intel MPI `I_MPI_PIN_DOMAIN=core` with `I_MPI_PIN_ORDER=compact`), and, on two or more nodes, each rank of a pair test on the same core of its node. Open MPI runs a pair test under `taskset -c <core>`, with `--bind-to none`, since it refuses `--cpu-set` beside `--map-by`; Intel MPI takes `I_MPI_PIN_PROCESSOR_LIST`, with no domain or order, under which Intel MPI would not take the list.
 
 The job reads the EFA devices on its first node only, and applies what it finds there, the device RDMA setting and the pair tests' core, to every node: run it on nodes of one instance type, for example with `--constraint`.
