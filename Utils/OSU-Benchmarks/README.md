@@ -124,7 +124,7 @@ Pass the settings in the job's environment, as in `OSU_TESTS="latency bw" sbatch
 | `FI_EFA_USE_DEVICE_RDMA` | `1` on a node with EFA devices only, none of them `0xefa0`; else unset | See "EFA and MPI settings" |
 | `I_MPI_FABRICS` | `shm:ofi` | Intel MPI: shared memory between the ranks of a node, libfabric between nodes |
 | `I_MPI_OFI_PROVIDER` | `efa` | Intel MPI: libfabric's provider |
-| `I_MPI_MULTIRAIL` | `1` | Intel MPI: the ranks use every EFA device of their node |
+| `I_MPI_MULTIRAIL` | `1` | Intel MPI: the ranks of a node use its EFA devices, each rank the device next to its core (Intel MPI's NIC pinning, which its startup report at `I_MPI_DEBUG=5` shows) |
 | `I_MPI_DEBUG` | `5` on the first test only | Intel MPI: its startup report, which names the libfabric version and provider (see "Reading the output"). A value you give applies to every test |
 | `I_MPI_PIN_DOMAIN`, `I_MPI_PIN_ORDER`, `I_MPI_PIN_PROCESSOR_LIST` | set per test by the job | Intel MPI's pinning. When you set any of them, the job sets none, and your pinning applies to every test |
 | `I_MPI_OFI_LIBRARY_INTERNAL` | `0` | Intel MPI: `0` uses the EFA installer's libfabric (see "EFA and MPI settings") |
