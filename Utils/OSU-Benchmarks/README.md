@@ -94,6 +94,18 @@ The jobs keep OMB's defaults. In OMB 7.5.3, the point-to-point tests send messag
 
 Every test runs, also after one that ends with another exit status than 0. The job then prints a summary, one line per test, and ends with 1 when any test ended with another exit status than 0, else with 0.
 
+## Reading the output
+
+The output starts with a line that names the MPI, the number of nodes and their instance type, then the nodes, the OMB build (from its build record), the settings in force, libfabric's version (`fi_info --version`), and each EFA device of the job's first node with its PCI vendor and device and its NUMA node. Then, for each test: a layout line, OMB's own output, and one line per EFA device of the first node with how much each of its counters grew during the test: `tx_bytes` and `rx_bytes`, and the RDMA read, RDMA write and retransmit counters the device has (`/sys/class/infiniband/<device>/ports/1/hw_counters`, see [Monitor an EFA](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa-working-monitor.html)).
+
+The job's first test runs with the MPI's report of what it chose: Open MPI with `--mca mtl_ofi_verbose 1 --mca mtl_base_verbose 1`, Intel MPI with `I_MPI_DEBUG=5`. After it, one line gives each value of its provider lines once (Open MPI's `mtl:ofi:prov` lines, Intel MPI's `libfabric version` and `libfabric provider` lines), or a NOTE says that it printed none.
+
+What to look for:
+
+- the provider is `efa`;
+- the counters of the EFA devices grew during the tests between nodes, on every EFA device of the node for the tests with a rank on every core of nodes that have more than one device, such as hpc7a.96xlarge and hpc8a.96xlarge;
+- the RDMA read counters (`rdma_read_bytes`, `rdma_read_resp_bytes`) grew during the large messages of `osu_bw` and `osu_bibw` when device RDMA is on (see "EFA and MPI settings").
+
 ## Settings
 
 Pass the settings in the job's environment, as in `OSU_TESTS="latency bw" sbatch osu_benchmarks_openmpi.sbatch`: sbatch passes its environment to the job. For why not in an `--export` list, see "Passing settings".
@@ -111,7 +123,7 @@ Pass the settings in the job's environment, as in `OSU_TESTS="latency bw" sbatch
 | `I_MPI_FABRICS` | `shm:ofi` | Intel MPI: shared memory between the ranks of a node, libfabric between nodes |
 | `I_MPI_OFI_PROVIDER` | `efa` | Intel MPI: libfabric's provider |
 | `I_MPI_MULTIRAIL` | `1` | Intel MPI: the ranks use every EFA device of their node |
-| `I_MPI_DEBUG` | `5` | Intel MPI: its startup report, which names the libfabric version and provider |
+| `I_MPI_DEBUG` | `5` on the first test only | Intel MPI: its startup report, which names the libfabric version and provider (see "Reading the output"). A value you give applies to every test |
 | `I_MPI_PIN_DOMAIN`, `I_MPI_PIN_ORDER`, `I_MPI_PIN_PROCESSOR_LIST` | set per test by the job | Intel MPI's pinning. When you set any of them, the job sets none, and your pinning applies to every test |
 | `I_MPI_OFI_LIBRARY_INTERNAL` | `0` | Intel MPI: `0` uses the EFA installer's libfabric (see "EFA and MPI settings") |
 

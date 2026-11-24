@@ -236,10 +236,69 @@ if [ "${NODES}" -ge 2 ] && [ "${PAIR_PINNED}" = 1 ]; then
 fi
 # <<< shared: build record and settings
 
+# >>> shared: provider check
+# What carried the tests. The job's first test runs with the MPI's report of what it chose (see run_test), whose
+# provider lines are then summarized; after each test, one line per EFA device of this node, the job's first, gives
+# how much each of its counters grew during the test (EFA's hw_counters: bytes sent and received, and the RDMA and
+# retransmit counters the device has).
+LIBFABRIC=$(fi_info --version 2>/dev/null | sed -n 's/^libfabric: *//p' | head -n 1) || LIBFABRIC=""
+echo "libfabric: ${LIBFABRIC:-unknown (fi_info --version named none)}"
+[ "${#EFA_DEVICES[@]}" -gt 0 ] || echo "EFA devices: none in ${efa_sysfs}"
+for d in "${EFA_DEVICES[@]}"; do
+    vendor=$(cat "${efa_sysfs}/${d}/device/vendor" 2>/dev/null) || vendor=""
+    pci_device=$(cat "${efa_sysfs}/${d}/device/device" 2>/dev/null) || pci_device=""
+    numa=$(cat "${efa_sysfs}/${d}/device/numa_node" 2>/dev/null) || numa=""
+    echo "EFA device ${d}: PCI ${vendor:-unknown}:${pci_device:-unknown}, NUMA node ${numa:-unknown}"
+done
+EFA_COUNTERS=(tx_bytes rx_bytes rdma_read_bytes rdma_read_resp_bytes rdma_write_bytes rdma_write_recv_bytes
+              retrans_pkts)
+efa_counters() {  # "<device> <counter> <value>", for each counter of EFA_COUNTERS each device has
+    local d c v
+    for d in "${EFA_DEVICES[@]}"; do
+        for c in "${EFA_COUNTERS[@]}"; do
+            v=$(cat "${efa_sysfs}/${d}/ports/1/hw_counters/${c}" 2>/dev/null) || continue
+            case "${v}" in ''|*[!0-9]*) continue ;; esac
+            echo "${d} ${c} ${v}"
+        done
+    done
+}
+efa_traffic() {  # <test> <efa_counters before it>: one line per device, how much each counter grew during the test
+    local after
+    after=$(efa_counters)
+    if [ -z "${after}" ]; then
+        echo "NOTE: no EFA counter of this node is readable (${efa_sysfs}/<device>/ports/1/hw_counters)"
+        return 0
+    fi
+    printf '%s\n' "${after}" | BEFORE="$2" awk -v test="$1" '
+        BEGIN { n = split(ENVIRON["BEFORE"], lines, "\n")
+                for (i = 1; i <= n; i++) { split(lines[i], f, " "); if (f[3] != "") b[f[1] " " f[2]] = f[3] } }
+        { key = $1 " " $2
+          if (!($1 in text)) order[++m] = $1
+          text[$1] = text[$1] sprintf(" %s %+.0f", $2, (key in b) ? $3 - b[key] : 0) }
+        END { for (i = 1; i <= m; i++) print "==> EFA " order[i] " during osu_" test ":" text[order[i]] }'
+}
+provider_summary() {  # <test>: each value of the provider lines in its output (FIRST_OUTPUT), once
+    local found
+    found=$(sed -n -e 's/.*\(mtl:ofi:prov[a-z:]*\): *\([^[:space:]]*\).*/\1: \2/p' \
+                   -e 's/.*\(libfabric version\): *\([^[:space:]]*\).*/\1: \2/p' \
+                   -e 's/.*\(libfabric provider\): *\([^[:space:]]*\).*/\1: \2/p' "${FIRST_OUTPUT}" 2>/dev/null \
+            | awk '!seen[$0]++' | paste -sd ';' - | sed 's/;/; /g')
+    if [ -n "${found}" ]; then
+        echo "==> provider, from osu_$1: ${found}"
+    else
+        echo "NOTE: osu_$1 printed no provider line (Open MPI's mtl:ofi:prov lines, Intel MPI's libfabric version" \
+             "and provider lines)"
+    fi
+}
+FIRST_TEST=1
+FIRST_OUTPUT=$(mktemp "${TMPDIR:-/tmp}/osu-first-test.XXXXXX") || FIRST_OUTPUT=/dev/null
+# <<< shared: provider check
+
 # run_test <binary> <ranks> <ranks per node> <core, or empty>: one test, its ranks spread over the nodes as given,
 # each bound to a core by Open MPI, or, when <core> is given, all of them to that CPU of their node by taskset:
 # Open MPI refuses --cpu-set beside --map-by, and Open MPI 4.1 reads its list as hwloc's logical CPU numbers,
-# while <core> is the operating system's.
+# while <core> is the operating system's. The job's first test also prints the provider lines of Open MPI's ofi
+# MTL (mtl_ofi_verbose and mtl_base_verbose at 1).
 run_test() {
     local args=("${MCA_ARGS[@]}") program=("$1")
     if [ -n "$4" ]; then
@@ -250,6 +309,7 @@ run_test() {
     fi
     args+=(-np "$2" --map-by "ppr:$3:node" -x FI_PROVIDER)
     [ -z "${FI_EFA_USE_DEVICE_RDMA:-}" ] || args+=(-x FI_EFA_USE_DEVICE_RDMA)
+    [ "${FIRST_TEST}" = 0 ] || args+=(--mca mtl_ofi_verbose 1 --mca mtl_base_verbose 1)
     mpirun "${args[@]}" "${program[@]}" "${OSU_ARGV[@]}"
 }
 
@@ -294,8 +354,18 @@ for t in "${TESTS[@]}"; do
             ppn=${PPN}
             echo "==> osu_${t}: ${RANKS} ranks, ${PPN} per node on ${NODES} node(s)" ;;
     esac
-    run_test "$(osu_binary "${t}")" "${np}" "${ppn}" "${core}"
-    rc=$?
+    BEFORE=$(efa_counters)
+    if [ "${FIRST_TEST}" = 1 ]; then
+        run_test "$(osu_binary "${t}")" "${np}" "${ppn}" "${core}" 2>&1 | tee "${FIRST_OUTPUT}"
+        rc=${PIPESTATUS[0]}
+        FIRST_TEST=0
+        provider_summary "${t}"
+        [ "${FIRST_OUTPUT}" = /dev/null ] || rm -f "${FIRST_OUTPUT}"
+    else
+        run_test "$(osu_binary "${t}")" "${np}" "${ppn}" "${core}"
+        rc=$?
+    fi
+    efa_traffic "${t}" "${BEFORE}"
     STATUS+=("${t}:${rc}")
 done
 echo "==> Summary"
