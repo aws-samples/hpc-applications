@@ -90,7 +90,7 @@ By default each job runs these OMB tests, in this order, each with OMB's own mes
 
 On two or more nodes, both ranks of a pair test run on the same core of their node: the first CPU of the NUMA node of the node's first EFA device (core 0 when that is unknown), which puts each next to that device. The other tests, and the pair tests of a job of one node, bind each rank to a core of its own.
 
-The jobs keep OMB's defaults. In OMB 7.5.3, the point-to-point tests send messages of up to 4 MiB (8.0b2's, up to 1 MiB); `osu_latency` runs 10,000 iterations after 100 of warm-up up to 8 KiB, then 1,000 after 10; the bandwidth tests run 100 iterations after 10, then 20 after 2, with a window of 64 messages; the collectives send messages of up to 1 MiB, 1,000 iterations after 100, then 100 after 10. `OSU_ARGS` gives every test other values (for example `-m 1:65536 -i 1000 -x 100`).
+The jobs keep OMB's defaults. In OMB 7.5.3, the point-to-point tests send messages of up to 4 MiB (8.0b2's, up to 1 MiB); `osu_latency` runs 10,000 iterations after 100 of warm-up up to 8 KiB, then 1,000 after 10; `osu_bw` and `osu_bibw` run 100 iterations after 10, then 20 after 2, with a window of 64 messages; `osu_mbw_mr` runs 100 iterations after 10 at every size, with the same window, so that with one rank per core it takes most of the job's time; the collectives send messages of up to 1 MiB, 1,000 iterations after 100, then 100 after 10. `OSU_ARGS` gives every test other values (for example `-m 1:65536 -i 1000 -x 100`).
 
 Every test runs, also after one that ends with another exit status than 0. The job then prints a summary, one line per test, and ends with 1 when any test ended with another exit status than 0, else with 0.
 
