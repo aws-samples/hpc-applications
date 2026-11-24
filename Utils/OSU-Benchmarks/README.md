@@ -106,6 +106,8 @@ What to look for:
 - the counters of the EFA devices grew during the tests between nodes, on every EFA device of the node for the tests with a rank on every core of nodes that have more than one device, such as hpc7a.96xlarge and hpc8a.96xlarge;
 - the RDMA read counters (`rdma_read_bytes`, `rdma_read_resp_bytes`) grew during the large messages of `osu_bw` and `osu_bibw` when device RDMA is on (see "EFA and MPI settings").
 
+With Open MPI 5 on nodes with more than one EFA device, the job's first test also prints Open MPI's notice that it "cannot select an optimal device because the current process is not bound". The job binds the two ranks of a pair test with `taskset`, which Open MPI 5 does not see, so Open MPI 5 takes the first EFA device that libfabric lists, whatever the core, and its `mtl:ofi:provider:domain` line names that device. Check it against the EFA device lines, which give each device's NUMA node: it should be the device on the NUMA node of the pair tests' core. Open MPI 4 and Intel MPI take, for each rank, the EFA device next to its core. The notice ends with a NUL byte, so `grep` reads the output file as binary data: use `grep -a` on it.
+
 ## Settings
 
 Pass the settings in the job's environment, as in `OSU_TESTS="latency bw" sbatch osu_benchmarks_openmpi.sbatch`: sbatch passes its environment to the job. For why not in an `--export` list, see "Passing settings".
