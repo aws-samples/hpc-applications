@@ -168,6 +168,8 @@ I_MPI_PMI_LIBRARY=/opt/slurm/lib/libpmi2.so I_MPI_FABRICS=shm:ofi I_MPI_OFI_PROV
 
 Set `FI_EFA_USE_DEVICE_RDMA=1` only where every EFA device supports RDMA read (see "EFA and MPI settings"). `srun --mpi=list` names the PMI plugins of your Slurm; `/opt/slurm/lib` is where AWS ParallelCluster installs Slurm's libraries. With `srun`, Slurm places and binds the ranks by its own view of the node: on a cluster whose Slurm nodes are defined by a CPU count alone, that view has no sockets or cores.
 
+With Open MPI 4, whose PMIx is older than the one Slurm's `pmix` plugin is built with, PMIx prints twice for each rank that a requested component was not found (framework `gds`, component `shmem2`), and the test then runs. `PMIX_MCA_gds=hash` in the environment of `srun` keeps it quiet.
+
 ## EFA and MPI settings
 
 What the job scripts set, and why:
