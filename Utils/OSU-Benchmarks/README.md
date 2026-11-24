@@ -145,6 +145,27 @@ sbatch -p <queue> --constraint=<feature> --nodes=2 --exclusive --time=01:00:00 \
 
 Submit it from this directory: the job runs the two scripts from the directory you submit from, writes their output to `slurm-<job id>.out`, and passes the settings in its environment to both.
 
+## Starting the tests with srun
+
+The job scripts start every test with `mpirun`, which places the ranks by the node's own sockets and cores. To start a test with Slurm's `srun` instead, inside an allocation, use the PMI that your MPI takes from Slurm, and pass the MPI's settings in the environment, since `srun` takes no MPI options. For a pair test on two nodes:
+
+```bash
+# Open MPI 4 (module openmpi) or 5 (module openmpi5), over PMIx
+module load openmpi libfabric-aws
+OMPI_MCA_pml=cm OMPI_MCA_mtl=ofi FI_PROVIDER=efa FI_EFA_USE_DEVICE_RDMA=1 \
+    srun --mpi=pmix --nodes=2 --ntasks-per-node=1 \
+    /fsx/OSU-Benchmark-OpenMPI/install/libexec/osu-micro-benchmarks/mpi/pt2pt/osu_latency
+
+# Intel MPI, over Slurm's PMI-2 library
+export I_MPI_OFI_LIBRARY_INTERNAL=0
+module load intelmpi libfabric-aws
+I_MPI_PMI_LIBRARY=/opt/slurm/lib/libpmi2.so I_MPI_FABRICS=shm:ofi I_MPI_OFI_PROVIDER=efa I_MPI_MULTIRAIL=1 \
+    FI_EFA_USE_DEVICE_RDMA=1 srun --mpi=pmi2 --nodes=2 --ntasks-per-node=1 \
+    /fsx/OSU-Benchmark-IntelMPI/install/libexec/osu-micro-benchmarks/mpi/pt2pt/osu_latency
+```
+
+Set `FI_EFA_USE_DEVICE_RDMA=1` only where every EFA device supports RDMA read (see "EFA and MPI settings"). `srun --mpi=list` names the PMI plugins of your Slurm; `/opt/slurm/lib` is where AWS ParallelCluster installs Slurm's libraries. With `srun`, Slurm places and binds the ranks by its own view of the node: on a cluster whose Slurm nodes are defined by a CPU count alone, that view has no sockets or cores.
+
 ## EFA and MPI settings
 
 What the job scripts set, and why:
