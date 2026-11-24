@@ -8,8 +8,8 @@ These tests pin:
   command at all, the MPI on the PATH is used, with a NOTE; and mpirun --version must name the script's MPI, else the
   script stops before the download;
 - the download (curl, failing on an HTTP error and giving up on an attempt after 5 minutes) of the release tarball,
-  checked against OSU_SHA256 or the SHA-256 the script knows for the release (8.0b2's is pinned here); a release it
-  does not know is built unchecked, with a NOTE;
+  checked against OSU_SHA256 or the SHA-256 the script knows for the release (7.5.3's and 8.0b2's are pinned here); a
+  release it does not know is built unchecked, with a NOTE;
 - the build in a directory of its own under TMPDIR, in the unpacked source (which OMB 8.0b2's makefiles need):
   configure (CC=mpicc CXX=mpicxx and the prefix INSTALL_DIR/install), make -j MAKE_JOBS (nproc by default), make
   install, each step with its own log;
@@ -53,9 +53,10 @@ BASH = shutil.which("bash")
 pytestmark = pytest.mark.skipif(BASH is None, reason="needs bash")
 
 # The release the scripts build when OSU_VERSION is unset.
-DEFAULT_VERSION = "8.0b2"
+DEFAULT_VERSION = "7.5.3"
 # The SHA-256 the scripts know for each release.
-KNOWN_SHA256 = {"8.0b2": "2ea96f0d569b012e70eb5cf8d1025890a228e0dfdb3e84d202c3cf53ee34f1b7"}
+KNOWN_SHA256 = {"7.5.3": "ab7f970659e14c9246f3eac43828573f519eabf34fff9734e6f831a862caea6b",
+                "8.0b2": "2ea96f0d569b012e70eb5cf8d1025890a228e0dfdb3e84d202c3cf53ee34f1b7"}
 URL = "https://mvapich.cse.ohio-state.edu/download/mvapich/osu-micro-benchmarks-{}.tar.gz"
 # The binaries the stub make installs, as OMB lays them out under <prefix>/libexec/osu-micro-benchmarks/mpi.
 BINARIES = ("pt2pt/osu_latency", "pt2pt/osu_bw", "pt2pt/osu_bibw", "pt2pt/osu_mbw_mr", "pt2pt/osu_multi_lat",
@@ -397,7 +398,7 @@ def test_a_given_sha256_that_differs_stops_the_script(kind, tmp_path, host_tools
     assert_nothing_installed(build)
 
 
-@pytest.mark.parametrize("version", ["8.0b2"])
+@pytest.mark.parametrize("version", ["7.5.3", "8.0b2"])
 @pytest.mark.parametrize("kind", SCRIPTS)
 def test_the_sha256_the_scripts_know_for_each_release(kind, version, tmp_path, host_tools):
     """The SHA-256 of the release tarball on the OMB download page, which a synthetic tarball does not match."""

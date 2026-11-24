@@ -3,7 +3,7 @@
 # osu_benchmarks_intelmpi.sbatch.
 #
 # Settings, in the environment (for example `MAKE_JOBS=8 bash build_osu_benchmarks_intelmpi.sh`):
-#   OSU_VERSION  the OMB release to build (default 8.0b2)
+#   OSU_VERSION  the OMB release to build (default 7.5.3)
 #   OSU_SHA256   the SHA-256 of its tarball (default: the one this script knows for OSU_VERSION; for a release it
 #                does not know, the download is not checked, and a NOTE says so)
 #   INSTALL_DIR  an absolute path: OMB is installed in INSTALL_DIR/install and its build logs are kept in
@@ -15,7 +15,7 @@
 # prints its exit status and the end of its log, keeps that directory, and ends the script with that status.
 set -euo pipefail
 
-OSU_VERSION="${OSU_VERSION:-8.0b2}"
+OSU_VERSION="${OSU_VERSION:-7.5.3}"
 OSU_SHA256="${OSU_SHA256:-}"
 INSTALL_DIR="${INSTALL_DIR:-/fsx/OSU-Benchmark-IntelMPI}"
 MAKE_JOBS="${MAKE_JOBS:-$(nproc)}"
@@ -25,6 +25,7 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 # The SHA-256 of each OMB release tarball this script knows.
 known_sha256() {
     case "$1" in
+        7.5.3) echo ab7f970659e14c9246f3eac43828573f519eabf34fff9734e6f831a862caea6b ;;
         8.0b2) echo 2ea96f0d569b012e70eb5cf8d1025890a228e0dfdb3e84d202c3cf53ee34f1b7 ;;
         *) return 1 ;;
     esac

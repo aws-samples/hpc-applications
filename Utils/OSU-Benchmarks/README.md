@@ -24,7 +24,7 @@ bash build_osu_benchmarks_intelmpi.sh
 
 Installs to `/fsx/OSU-Benchmark-IntelMPI/install`, built with Intel MPI over the EFA installer's libfabric: the script exports `I_MPI_OFI_LIBRARY_INTERNAL=0` before `module load intelmpi`, then loads `libfabric-aws`.
 
-Both scripts download OSU Micro-Benchmarks 8.0b2 and check the download's SHA-256 against the one they know for that release.
+Both scripts download OSU Micro-Benchmarks 7.5.3 and check the download's SHA-256 against the one they know for it. They also know the SHA-256 of 8.0b2, the beta of OMB 8.0, which they built before: `OSU_VERSION=8.0b2 bash build_osu_benchmarks_openmpi.sh` builds it, checked.
 
 Each script first checks that `mpirun --version` names its MPI. Then it builds in a directory of its own under `$TMPDIR` (or `/tmp`): it unpacks the source there and, in the unpacked source, configures it with the MPI's compiler wrappers (`CC=mpicc CXX=mpicxx`), compiles it with `make -j` and installs it with `make install`, each step with its own log. If a step ends with another exit status than 0, the script prints that status, the last 30 lines of the step's log and the build directory, which it keeps, and ends with that status. Once OMB is installed, its logs go to `<INSTALL_DIR>/logs/<version>-<UTC time>/`, and `<INSTALL_DIR>/install/osu-build.txt` records the OMB version, the tarball's SHA-256, the MPI (`mpirun --version`), the compiler (`mpicc --version`), the time and the host; the build directory is then removed. The other files in `INSTALL_DIR` stay as they are: the source and objects of a build made in `INSTALL_DIR` itself, as these scripts made before, and an earlier release's tests in `<INSTALL_DIR>/install` that this release does not install (`make install` replaces the tests of the same name).
 
@@ -32,7 +32,7 @@ Settings, in the environment (`MAKE_JOBS=8 bash build_osu_benchmarks_openmpi.sh`
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `OSU_VERSION` | `8.0b2` | The OMB release to build |
+| `OSU_VERSION` | `7.5.3` | The OMB release to build |
 | `OSU_SHA256` | the SHA-256 the script knows for `OSU_VERSION` | The tarball's SHA-256, 64 hexadecimal digits. For a release the script does not know, the download is not checked unless you set it, and a NOTE says so |
 | `INSTALL_DIR` | `/fsx/OSU-Benchmark-OpenMPI`, `/fsx/OSU-Benchmark-IntelMPI` | An absolute path: OMB is installed in `<INSTALL_DIR>/install`, its build logs are kept in `<INSTALL_DIR>/logs` |
 | `MAKE_JOBS` | the node's CPUs (`nproc`) | Parallel `make` jobs |
