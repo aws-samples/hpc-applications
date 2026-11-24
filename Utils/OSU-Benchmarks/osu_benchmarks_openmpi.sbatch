@@ -222,6 +222,25 @@ echo "==> OSU Micro-Benchmarks | ${MPI_NAME} | ${NODES} x ${instanceType:-unknow
 echo "Nodes: ${NODE_LIST:-${SLURM_JOB_NODELIST:-unknown}}"
 # <<< shared: header
 
+# >>> shared: node positions
+# Each node's instance id, to read the nodes' places in the network with EC2's instance topology (README.md, "Which
+# two nodes you measured"). One srun step reads it from each node's instance metadata: no answer within a few
+# seconds, an HTTP error, an answer cut off at that limit, or an answer that is not an instance id (tested in the C
+# locale) gives "unknown".
+INSTANCE_ID_READ='TOKEN=$(curl -fs --connect-timeout 2 --max-time 5 -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") || TOKEN=""
+instanceId=$(curl -fs --connect-timeout 2 --max-time 5 -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id) || instanceId=""
+if ! ( LC_ALL=C; [[ "${instanceId}" =~ ^i-[0-9a-f]{8,17}$ ]] ); then instanceId=""; fi
+echo "$(hostname) ${instanceId:-unknown}"'
+INSTANCE_IDS=$(srun --nodes="${NODES}" --ntasks="${NODES}" --ntasks-per-node=1 \
+                   bash -c "${INSTANCE_ID_READ}" 2>/dev/null) || true
+if [ -n "${INSTANCE_IDS}" ]; then
+    echo "Instance ids:"
+    printf '%s\n' "${INSTANCE_IDS}" | LC_ALL=C sort -V | sed 's/^/    /'
+else
+    echo "NOTE: srun gave no instance id of the nodes"
+fi
+# <<< shared: node positions
+
 # >>> shared: build record and settings
 BUILD_RECORD="${OSU_DIR%/libexec/osu-micro-benchmarks/mpi}/osu-build.txt"
 record_value() { sed -n "s/^$1=//p" "${BUILD_RECORD}" | head -n 1; }

@@ -179,3 +179,13 @@ What the job scripts set, and why:
 The job reads the EFA devices on its first node only, and applies what it finds there, the device RDMA setting and the pair tests' core, to every node: run it on nodes of one instance type, for example with `--constraint`.
 
 To check that EFA works on a node before you measure it, see [Utils/test-efa](../test-efa/).
+
+## Which two nodes you measured
+
+The pair tests measure the two nodes they ran on, and the instances of one cluster placement group can connect to different nodes of the network. After the node list, the job prints each node's instance id, read from its instance metadata. While the instances run, EC2's instance topology gives the network nodes above each of them, from the top layer of the network down to the node it connects to:
+
+```bash
+aws ec2 describe-instance-topology --region <region> --instance-ids <first node's instance id> <second node's instance id>
+```
+
+Two instances whose last network node is the same connect to the same node of the network; the fewer network nodes they have in common, from the top layer down, the more hops lie between them. The call needs the IAM permission `ec2:DescribeInstanceTopology`, answers for running instances only, and covers some instance types, hpc6a, hpc6id, hpc7a and hpc8a among them ([Amazon EC2 topology](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-topology.html)). Keep the two nodes' network nodes with the results you compare.
