@@ -38,7 +38,8 @@
 # license, and stage it at ${BASE_DIR}/src/ before submitting this job. Set
 # NAMD_SRC to override the path, or NAMD_SRC_URL to fetch from a private mirror.
 #
-# Override via --export=ALL,...:
+# Override in the job's environment, which sbatch passes to the job
+# (TARGET_CPU=c8i sbatch -p c8i -C c8i.96xlarge build_namd_x86.sbatch):
 #   NAMD_VERSION   NAMD release (default 3.0.2)
 #   BASE_DIR       install root (default /fsx/namd)
 #   TARGET_CPU     hpc8a | hpc7a | m8a | c8i | r8i | hpc6id | hpc6a (default hpc8a)

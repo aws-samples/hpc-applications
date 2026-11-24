@@ -15,7 +15,9 @@ Charm++ has several network layers (`netlrts`, `mpi`, `ucx`, `ofi`, `verbs`, `mu
 layer on top of the system Open MPI, which carries the traffic between nodes over EFA through its libfabric provider.
 It builds the SMP variant of that layer (`mpi-linux-x86_64-smp`): each NAMD process runs `PPN` worker threads (PEs)
 and one communication thread. The launcher starts `PROCS_PER_NODE` processes per node, one by default, so each node
-runs `PROCS_PER_NODE` × (`PPN` + 1) threads. A run on one node uses the same binary.
+runs `PROCS_PER_NODE` × (`PPN` + 1) threads. A run on one node uses the same binary. On more than one node the layout
+matters, and with at most 8 cores per process the launcher also sets two libfabric settings for EFA (see "More than one
+node").
 
 ## Build
 
@@ -29,8 +31,10 @@ runs `PROCS_PER_NODE` × (`PPN` + 1) threads. A run on one node uses the same bi
 sbatch x86/build_namd_x86.sbatch
 
 # The c8i build, on a c8i node
-sbatch -p c8i -C c8i.96xlarge --export=ALL,TARGET_CPU=c8i x86/build_namd_x86.sbatch
+TARGET_CPU=c8i sbatch -p c8i -C c8i.96xlarge x86/build_namd_x86.sbatch
 ```
+
+Settings such as `TARGET_CPU` go in the job's environment, which sbatch passes to the job (see "Passing settings").
 
 The build script:
 
@@ -81,8 +85,8 @@ two hours (`#SBATCH --time=02:00:00`); pass `sbatch --time` to change it.
 # ApoA1 on one node
 sbatch --nodes=1 x86/namd-benchmark.sbatch
 
-# STMV on four nodes, over EFA
-sbatch --nodes=4 --export=ALL,MODEL=STMV x86/namd-benchmark.sbatch
+# STMV on four hpc8a.96xlarge nodes, over EFA, with 24 processes per node (see "More than one node")
+MODEL=STMV PROCS_PER_NODE=24 sbatch --nodes=4 x86/namd-benchmark.sbatch
 
 # ApoA1 on one hpc7a.96xlarge
 sbatch -p hpc7a -C hpc7a.96xlarge x86/namd-benchmark.sbatch
@@ -95,19 +99,25 @@ pass `sbatch --time` for a longer run. The launcher:
    from the instance type in the instance metadata, and sources its env script. With no build for that family, it
    takes the only build under `${BASE_DIR}/x86_64/`, with a `NOTE:` on stderr that names it; with several, it stops and
    asks for `NAMD_ENV`. An AVX-512 build on a node whose CPU has no AVX-512 stops the job before anything runs;
-2. on more than one node, checks EFA with `fi_info -p efa`;
+2. on more than one node, checks EFA with `fi_info -p efa`. When each process has at most 8 cores, it sets
+   `FI_EFA_MR_CACHE_ENABLE=0` and `FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE=0`. A value the job's environment gives
+   either one is kept, at any layout (see "More than one node"). It prints the values it passes on a line that starts
+   with `EFA:`, or, when it passes neither, that libfabric's defaults apply;
 3. fetches the deck into a cache on first use (its files, not the downloaded archive; for 20STMV, builds it, see
    "Benchmark models"), and copies it into a run
    directory of its own, `${BASE_DIR}/Run/<job>-<MODEL>-<cluster>-<nodes>x<instance type>-<PPN>ppn-<UTC time>/` (with
    `<PROCS_PER_NODE>x<PPN>ppn` for more than one process per node). The run's config names its output files without
    the deck's `/usr/tmp/` directory, so NAMD writes them (`.coor`, `.vel`, `.xsc`) in the run directory;
 4. drops the page cache and enables transparent huge pages on every node, where `sudo` allows it;
-5. starts `namd3` with `mpirun`: `PROCS_PER_NODE` processes per node (`-np`, `--map-by ppr:<PROCS_PER_NODE>:node`),
+5. waits, at most 30 seconds, while systemd-logind closes a session of the user on the node (see "Passing
+   settings"), with a line that starts with `==> waited` when it does;
+6. starts `namd3` with `mpirun`: `PROCS_PER_NODE` processes per node (`-np`, `--map-by ppr:<PROCS_PER_NODE>:node`),
    each with `+ppn PPN` worker threads, and `+setcpuaffinity` with the cores of each thread (see "Processes per node"
    and, below a full node of hpc8a.96xlarge or hpc7a.96xlarge, the flexible-cores list). It prints the whole command
    line first, on a line that starts with `==> mpirun`. On more than one node, Open MPI sends its traffic over EFA
-   (`--mca pml cm --mca mtl ofi`, `FI_PROVIDER=efa`);
-6. reports the result of a complete run (see "Metrics") and records it with the contribution recorder (see
+   (`--mca pml cm --mca mtl ofi`, `FI_PROVIDER=efa`), and passes the EFA settings of step 2 that it sets or keeps
+   to every process (`-x`);
+7. reports the result of a complete run (see "Metrics") and records it with the contribution recorder (see
    "Contribute your results").
 
 | Variable | Default | Description |
@@ -116,11 +126,24 @@ pass `sbatch --time` for a longer run. The launcher:
 | `MODEL` | `ApoA1` | `ApoA1`, `ATPase` (F1-ATPase), `STMV`, `DHFR` or `20STMV` |
 | `TIMESTEPS` | `1000` | The run's `numsteps` (and a `run` line's steps), 1 to 10,000,000 |
 | `PPN` | the process's cores − 1 | Worker threads (PEs) per process, 1 to 192. With one process per node on hpc8a.96xlarge and hpc7a.96xlarge: 23, 47, 71, 95, 119, 143, 167, 191 or 192 (see below). With more than one, the process's cores − 1 |
-| `PROCS_PER_NODE` | `1` | NAMD processes per node: a number that divides the node's cores and leaves each process at least two (see "Processes per node") |
+| `PROCS_PER_NODE` | `1` | NAMD processes per node: a number that divides the node's cores and leaves each process at least two (see "Processes per node"). On more than one node, see "More than one node" |
+| `FI_EFA_MR_CACHE_ENABLE`, `FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE` | `0` and `0` on more than one node with at most 8 cores per process; libfabric's defaults otherwise | libfabric's EFA settings, which the launcher passes to every process when it sets them (see "More than one node"). On more than one node it keeps a value you give either one in the job's environment, at any layout: `0` (for the cache also `false`, `no` or `off`) brings the other to `0` too unless you give it a value, and any other value leaves the other at libfabric's default. On one node the launcher sets neither |
 | `NAMD_EXTRA_ARGS` | none | `namd3` options added before the config, each a `+` and a name, for example `+notiles`. The launcher sets `+ppn`, `+setcpuaffinity`, `+pemap` and `+commap` itself |
 | `BASE_DIR` | `/fsx/namd` | Root of the deck cache and the run directories (an absolute path) |
 | `SOURCE` | `Community` | Your organization's label on the recorded runs (see "Contribute your results") |
 | `DYNAMODB_RECORDER` | found from the submit directory | The contribution recorder to call (see "Contribute your results") |
+
+## Passing settings
+
+Pass the settings above in the job's environment, as the examples do (`MODEL=STMV sbatch ...`): sbatch passes its
+environment to the job. With an `--export` list instead (`sbatch --export=ALL,MODEL=STMV ...`), Slurm loads your login
+environment on the job's first node with `su - <user>`, which opens and closes a systemd-logind session there. On
+nodes where systemd-logind removes a user's IPC objects once the user's last session has ended (`RemoveIPC=yes`, its
+default), your files in `/dev/shm` on that node are removed about 10 seconds later
+([logind.conf](https://www.freedesktop.org/software/systemd/man/latest/logind.conf.html), `RemoveIPC=` and
+`UserStopDelaySec=`), including the shared memory that MPI creates for the processes on the node. So before it starts
+MPI, the launcher waits while systemd-logind closes such a session (`loginctl show-user <uid> -p State` reads
+`closing`), at most 30 seconds; with no such session it does not wait.
 
 ## Processes per node
 
@@ -147,11 +170,88 @@ number.
 | hpc6a.48xlarge | 96 | any divisor of 96 up to 48 |
 | hpc6id.32xlarge | 64 | any divisor of 64 up to 32 |
 
-For example, STMV on two hpc8a.96xlarge nodes with four processes per node, each with 47 worker threads:
+For example, STMV on two hpc8a.96xlarge nodes with 24 processes per node, each with 7 worker threads:
 
 ```bash
-sbatch --nodes=2 --export=ALL,MODEL=STMV,PROCS_PER_NODE=4 x86/namd-benchmark.sbatch
+MODEL=STMV PROCS_PER_NODE=24 sbatch --nodes=2 x86/namd-benchmark.sbatch
 ```
+
+## More than one node
+
+On more than one node, two things set NAMD's speed beyond the node count: the number of processes per node, which you
+set, and two libfabric settings for EFA, which the launcher sets when each process has at most 8 cores.
+
+**The processes per node.** Each process's communication thread carries all of that process's messages to other
+processes, so on more than one node the process count sets how many threads share that work. Give each process 8
+cores. This was measured on hpc8a.96xlarge, where `PROCS_PER_NODE=24` (8 cores per process), with the EFA settings
+below, ran fastest on two nodes of the six layouts measured, on both bases of the tables below, and on hpc6id.32xlarge,
+which ran 8 processes per node of 8 cores. For the other types the advice is applied by cores per process: 24
+processes per node on hpc7a.96xlarge, m8a.48xlarge, c8i.96xlarge and r8i.96xlarge, and 12 on hpc6a.48xlarge.
+
+**The EFA settings.** By default, libfabric's EFA provider registers the memory of each message larger than one
+packet with the EFA device as it sends it, through a cache that finds an earlier registration only when the new
+message lies inside it. The memory of NAMD's messages keeps coming back at new addresses and sizes, so for thousands of
+steps a share of those messages, more than a quarter at first, need a registration of their own, each a command that
+the device processes in turn. Those registrations set the time per step, and NAMD's `Benchmark time:` lines, which the
+launcher reports, fall in those steps. With
+
+```bash
+export FI_EFA_MR_CACHE_ENABLE=0 FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE=0
+```
+
+passed to every process (`mpirun -x`), the provider instead copies every message larger than one packet into buffers
+it registered at start-up, and registers no message's memory. The copies are work for each process's communication
+thread. On more than one node the launcher therefore sets the two settings when each process has at most 8 cores,
+where they made both the launcher's result and the later steps faster, and leaves libfabric's defaults with larger
+processes, where they made the later steps slower (tables below). The job's log says which on a line that starts with
+`EFA:`. A value you give either setting in the job's environment is kept, at any layout. Turning one off asks for
+the two together: with `FI_EFA_MR_CACHE_ENABLE=0` (or `false`, `no` or `off`), or with
+`FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE=0`, the launcher passes `0` for the other one too, unless you give it a value as
+well. Any other value leaves the other setting at libfabric's default, so `FI_EFA_MR_CACHE_ENABLE=1` alone runs with
+libfabric's defaults at any layout. Keep the two together if you set both: with the cache off and the medium protocol
+on, the provider registers the memory of every medium-sized message with no cache. On one node the launcher sets
+neither: the processes of one node reach each other through shared memory, and the EFA device carries none of their
+messages.
+
+The tables give STMV's speed on more than one node against one node of the same type at the same layout (higher is
+faster; 2.00× is twice as fast), from 10,000-step runs, on two bases: the launcher's result, the run's last
+`Benchmark time:` line, which NAMD prints in the first 1,000 steps whatever the run's length; and the mean time per
+step of steps 5,001 to 10,000.
+
+| hpc8a.96xlarge, 24 processes per node of 7 worker threads (8 cores each) | With the two settings: the launcher's result | With them: steps 5,001 to 10,000 | Without them: the launcher's result | Without them: steps 5,001 to 10,000 |
+|---|--:|--:|--:|--:|
+| 2 nodes | 1.93× | 1.92× | 0.77× | 1.54× |
+| 4 nodes | 2.70× | 2.63× | 0.72× | 1.61× |
+| 8 nodes | 4.06× | 3.79× | 0.80× | 1.83× |
+
+| hpc8a.96xlarge, 2 nodes: processes per node (cores each) | With the two settings: the launcher's result | With them: steps 5,001 to 10,000 | Without them: the launcher's result | Without them: steps 5,001 to 10,000 | The launcher |
+|---|--:|--:|--:|--:|---|
+| 24 (8) | 1.93× | 1.92× | 0.77× | 1.54× | sets them |
+| 12 (16) | 1.11× | 1.11× | not measured | not measured | leaves the defaults |
+| 8 (24) | 0.88× | 0.90× | 0.50× | 1.08× | leaves the defaults |
+| 4 (48) | 0.45× | 0.45× | 0.44× | 0.78× | leaves the defaults |
+| 2 (96) | 0.45× | 0.45× | 0.43× | 0.73× | leaves the defaults |
+| 1 (192) | 0.23× | 0.23× | 0.26× | 0.39× | leaves the defaults |
+
+| hpc6id.32xlarge, 2 nodes, 8 processes per node of 7 worker threads (8 cores each) | With the two settings | Without them |
+|---|--:|--:|
+| The launcher's result | 1.87× | 1.28× |
+| Steps 5,001 to 10,000 | 1.86× | 1.71× |
+
+- With the two settings, steps 5,001 to 10,000 ran at 92% to 101% of the speed of the launcher's result, on every node
+  count and layout measured. At 24 processes per node, three pairs of hpc8a.96xlarge nodes gave 1.81× to 1.94× on two
+  nodes by the launcher's result, and 1.78× to 1.92× on steps 5,001 to 10,000; the tables give the pair that also ran
+  without the settings.
+- Without them, the time per step keeps falling for thousands of steps: on hpc8a.96xlarge, steps 5,001 to 10,000 ran
+  1.5 to 2.3 times as fast as the launcher's result.
+- With more than 8 cores per process, the settings made steps 5,001 to 10,000 slower: 1.20 times as slow at 8
+  processes per node, and 1.6 to 1.7 times at 1, 2 and 4. At 8 processes per node they made the launcher's result 1.76
+  times as fast, and at 1, 2 and 4 it was 0.89 to 1.04 times as fast with them. At 12 processes per node the runs used
+  the settings only.
+- On one node the settings changed the time per step by no more than the runs' own spread. Messages of 1 MiB or more
+  are copied too, instead of read by the other node's device (RDMA read): STMV on two nodes sends none, a larger system
+  or more nodes might.
+- These figures are for STMV with the launcher's build. 20STMV runs with one process per node (see "Benchmark models").
 
 ## Cores per node on hpc8a.96xlarge and hpc7a.96xlarge
 
@@ -226,7 +326,9 @@ lines, for steps 400 to 900; the utilities decks' own 500 steps print two. 20STM
 24, so NAMD prints its timing lines every 120 steps: five `Benchmark time:` lines in 1,000 steps, for steps 480 to
 960, and six in the config's own 1,200. NAMD's user guide ("Improving Parallel Scaling") points to these lines to
 measure parallel performance. The launcher takes the days/ns of the last one and reports ns/day = 1 / (days/ns), with
-NAMD's closing `WallClock:` time.
+NAMD's closing `WallClock:` time. On more than one node, these lines come close to the speed of the run's later steps
+only with the EFA settings of "More than one node", which the launcher sets with at most 8 cores per process: with
+libfabric's defaults the time per step keeps falling for thousands of steps, and these lines fall in those steps.
 
 When NAMD fails, the job ends with NAMD's exit status, after an `ERROR:` that names the run's `namd.out`. When NAMD
 exits 0, the launcher reports a result only from a complete run: `namd.out` must have NAMD's closing `WallClock:` line,
@@ -254,7 +356,10 @@ In the run directory's `namd.out`:
 - `Info: MIXED PRECISION AVX-512 TILES OPTIMIZATIONS: ENABLED`: the AVX-512 tile-list kernels are on. NAMD's `+notiles`
   option turns them off.
 
-On more than one node, the job's log shows the `fi_info` listing of provider `efa`.
+On more than one node, the job's log shows the `fi_info` listing of provider `efa`, and a line that starts with
+`EFA:`: `EFA: FI_EFA_MR_CACHE_ENABLE=0 FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE=0` with at most 8 cores per process, and
+`EFA: libfabric's defaults (...)` with larger processes. When your job gives either setting a value, the line names
+the values passed, and a setting left alone as `... at libfabric's default`.
 
 ## Contribute your results
 

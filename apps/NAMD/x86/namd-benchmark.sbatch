@@ -14,7 +14,11 @@
 # launcher uses mpirun to start PROCS_PER_NODE processes per node (default 1),
 # each with PPN worker threads and a communication thread, so inter-node traffic
 # rides EFA through OpenMPI's libfabric provider. Single-node runs use the same
-# binary.
+# binary. On more than one node, with at most 8 cores per process, libfabric's
+# EFA provider copies every message larger than one packet into buffers it
+# registered at start-up, instead of registering each message's memory with the
+# device (FI_EFA_MR_CACHE_ENABLE=0, FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE=0; see
+# the README, "More than one node").
 #
 # Performance metric: NAMD prints `Info: Benchmark time: ... <days/ns> days/ns`.
 # The launcher extracts days/ns from the LAST such line and reports
@@ -25,7 +29,9 @@
 # with status 1. A complete run is then recorded with the contribution
 # recorder, apps/NAMD/dynamodb/record-benchmark.sh (see the end of this script).
 #
-# Override via --export=ALL,...:
+# Override in the job's environment, which sbatch passes to the job
+# (MODEL=STMV sbatch --nodes=2 namd-benchmark.sbatch), rather than with an
+# --export list (see the README, "Passing settings"):
 #   NAMD_ENV    env script from the build (default: the build of this node's
 #               instance family under ${BASE_DIR}/x86_64/, see below)
 #   MODEL       ApoA1 | ATPase | STMV | DHFR | 20STMV   (default ApoA1)
@@ -239,6 +245,53 @@ if [ "${NODES}" -gt 1 ]; then
   cat /tmp/fi_efa.$$; rm -f /tmp/fi_efa.$$
   [ "${rc}" -eq 0 ] || fail "fi_info -p efa failed (rc=${rc}); EFA unavailable for multi-node run"
   export FI_PROVIDER=efa FI_EFA_USE_DEVICE_RDMA=1 RDMAV_FORK_SAFE=1
+  # libfabric's EFA provider otherwise registers the memory of each message
+  # larger than one packet with the EFA device as it sends it, through a cache
+  # that finds a registration only when the message lies inside an earlier one.
+  # The memory of NAMD's messages keeps coming back at new addresses and sizes,
+  # so on more than one node those registrations, each a command to the device,
+  # set the time per step for thousands of steps. With these two settings the
+  # provider copies every message larger than one packet into buffers it
+  # registered at start-up, and registers no message's memory. The copy and its
+  # handshake are work for each process's communication thread, so the settings
+  # pay when the node's messages are spread over many processes: the launcher
+  # sets them when each process has at most 8 cores. With larger processes it
+  # leaves libfabric's defaults, which run long jobs faster there (see the
+  # README, "More than one node").
+  # A value the job's environment gives either setting is kept, and passed
+  # whatever the layout. A value that turns its setting off (for the cache 0,
+  # false, no or off, the words libfabric reads as off; for the medium size 0)
+  # asks for the two together, so the launcher then passes 0 for the other too,
+  # unless the job gives the other a value as well. With any other value the
+  # other setting keeps libfabric's default: the cache off with the medium
+  # protocol on would register the memory of every medium-sized message with
+  # no cache. An empty value counts as none.
+  MR_CACHE="${FI_EFA_MR_CACHE_ENABLE:-}" MEDIUM_MAX="${FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE:-}"
+  unset FI_EFA_MR_CACHE_ENABLE FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE
+  if [ -n "${MR_CACHE}${MEDIUM_MAX}" ]; then
+    if [ -z "${MEDIUM_MAX}" ] && [[ "${MR_CACHE,,}" =~ ^(0|false|no|off)$ ]]; then MEDIUM_MAX=0; fi
+    if [ -z "${MR_CACHE}" ] && [[ "${MEDIUM_MAX}" =~ ^0+$ ]]; then MR_CACHE=0; fi
+  elif (( G <= 8 )); then
+    MR_CACHE=0 MEDIUM_MAX=0
+  fi
+  EFA_PASS=()
+  if [ -n "${MR_CACHE}" ]; then
+    export FI_EFA_MR_CACHE_ENABLE="${MR_CACHE}"
+    EFA_PASS+=( -x FI_EFA_MR_CACHE_ENABLE )
+  fi
+  if [ -n "${MEDIUM_MAX}" ]; then
+    export FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE="${MEDIUM_MAX}"
+    EFA_PASS+=( -x FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE )
+  fi
+  if [ -n "${MR_CACHE}" ] && [ -n "${MEDIUM_MAX}" ]; then
+    echo "EFA: FI_EFA_MR_CACHE_ENABLE=${MR_CACHE} FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE=${MEDIUM_MAX}"
+  elif [ -n "${MR_CACHE}" ]; then
+    echo "EFA: FI_EFA_MR_CACHE_ENABLE=${MR_CACHE}, and FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE at libfabric's default"
+  elif [ -n "${MEDIUM_MAX}" ]; then
+    echo "EFA: FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE=${MEDIUM_MAX}, and FI_EFA_MR_CACHE_ENABLE at libfabric's default"
+  else
+    echo "EFA: libfabric's defaults (each process has ${G} cores; the launcher sets FI_EFA_MR_CACHE_ENABLE=0 and FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE=0 with 8 or fewer)"
+  fi
 else
   echo "single node — local SMP run, EFA not required"
 fi
@@ -394,6 +447,28 @@ echo "==> dropping page caches + enabling THP on all nodes (best-effort)"
 srun --ntasks="${NODES}" --ntasks-per-node=1 bash -c \
   'sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true; echo always | sudo tee /sys/kernel/mm/transparent_hugepage/enabled >/dev/null 2>&1 || true'
 
+# --- Wait while systemd-logind closes this user ---------------------------
+# A job submitted with an --export list starts with Slurm loading the user's
+# login environment (su - <user>) on the first node. That opens and closes a
+# systemd-logind session, and where logind removes a user's IPC objects once
+# the user's last session has ended (RemoveIPC=yes, its default), it removes the
+# user's files in /dev/shm about 10 seconds later (UserStopDelaySec), the shared
+# memory MPI creates for the processes on the node among them. So while logind
+# is closing this user, the launcher waits, at most 30 s: logind is done with
+# the user right after that clean-up. With no such session (a job submitted
+# without an --export list, a user with an open session or lingering), loginctl
+# answers at once and nothing waits.
+LOGIND_WAITED=0
+if command -v loginctl >/dev/null 2>&1; then
+  while [ "$(loginctl show-user "$(id -u)" -p State --value 2>/dev/null)" = closing ] && (( LOGIND_WAITED < 60 )); do
+    sleep 0.5
+    LOGIND_WAITED=$(( LOGIND_WAITED + 1 ))
+  done
+  if (( LOGIND_WAITED > 0 )); then
+    echo "==> waited $(( LOGIND_WAITED / 2 )).$(( LOGIND_WAITED % 2 * 5 )) s while systemd-logind closed this user's session, before starting MPI"
+  fi
+fi
+
 # --- Launch NAMD ---------------------------------------------------------
 # Charm++ MPI/SMP build: launch with mpirun, P processes per node
 # (--map-by ppr:P:node), each spawning PPN worker threads (+ppn) plus a comm
@@ -401,7 +476,8 @@ srun --ntasks="${NODES}" --ntasks-per-node=1 bash -c \
 echo "==> launching NAMD: ${NODES} node(s) x ${P} process(es) x ${PPN} PEs"
 MPI_ARGS=( -np "$(( NODES * P ))" --map-by "ppr:${P}:node" --bind-to none )
 if [ "${NODES}" -gt 1 ]; then
-  MPI_ARGS+=( --mca pml cm --mca mtl ofi -x FI_PROVIDER -x FI_EFA_USE_DEVICE_RDMA -x RDMAV_FORK_SAFE )
+  MPI_ARGS+=( --mca pml cm --mca mtl ofi -x FI_PROVIDER -x FI_EFA_USE_DEVICE_RDMA -x RDMAV_FORK_SAFE
+              ${EFA_PASS[@]+"${EFA_PASS[@]}"} )
 fi
 NAMD_ARGS=( +ppn "${PPN}" +setcpuaffinity ${MAP_ARGS[@]+"${MAP_ARGS[@]}"} ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} )
 echo "==> mpirun ${MPI_ARGS[*]} ${NAMD3} ${NAMD_ARGS[*]} ${RUNCONF}"

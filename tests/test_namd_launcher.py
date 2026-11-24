@@ -15,6 +15,14 @@ These tests pin:
   deck's output name without its directory, so NAMD writes its output files in the run directory; and the deck's
   downloaded archive kept out of the cache and the run directory;
 - mpirun's command line, on one node and on two (where the job first checks EFA with fi_info), and NAMD's PEs;
+- on more than one node with at most 8 cores per process, FI_EFA_MR_CACHE_ENABLE=0 and
+  FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE=0 in mpirun's environment and passed to the ranks (-x), with the line that
+  names them; with more cores per process, neither, and a line that says libfabric's defaults apply; a value the job
+  already gives either setting kept and passed whatever the layout: one that turns its setting off (the cache's 0,
+  false or OFF, the medium size's 0) brings the other to 0 too unless the job gives it, any other value leaves the
+  other at libfabric's default, and an empty value counts as none; on one node, neither;
+- the wait before mpirun while systemd-logind closes the user (loginctl's State "closing"), and none when loginctl
+  gives another state, no state, or is not on the PATH;
 - the result: days/ns from the last "Benchmark time:" line, ns/day = 1 / days/ns, and the NAMDRESULT line;
 - the job's exit status: NAMD's when it fails; when NAMD exits 0, a result only from a complete run (NAMD's closing
   WallClock: line, and a positive days/ns on the last Benchmark time line), and otherwise status 1 with no result,
@@ -44,8 +52,9 @@ These tests pin:
   the job log prints.
 
 They run the script with stubs of curl (the instance metadata and the deck downloads), srun, fi_info, nproc, lscpu,
-mpirun and the contribution recorder (DYNAMODB_RECORDER), from a temporary directory, with a clean environment and a
-PATH that holds no other MPI, Slurm, ssh, curl, aws or sudo command: no NAMD, MPI, Slurm, AWS or network is needed.
+loginctl, mpirun and the contribution recorder (DYNAMODB_RECORDER), from a temporary directory, with a clean
+environment and a PATH that holds no other MPI, Slurm, ssh, curl, aws, sudo or loginctl command: no NAMD, MPI, Slurm,
+AWS, systemd-logind or network is needed.
 The stub mpirun notes its arguments and prints a synthetic namd.out, and the stub recorder notes its arguments and
 environment. The script reads /proc/cpuinfo, so these tests run a copy of it that reads a synthetic cpuinfo instead
 and differs from the script in that path alone (checked here). Every value is synthetic.
@@ -79,7 +88,7 @@ UTILITIES = "https://www.ks.uiuc.edu/Research/namd/utilities/"
 BENCHMARKS = "https://www.ks.uiuc.edu/Research/namd/benchmarks/systems/"
 # Host commands the script must not find: the stubs stand in for some of them, and it runs none of the others.
 HIDDEN = frozenset({"curl", "srun", "sbatch", "scontrol", "squeue", "sinfo", "mpirun", "mpiexec", "module", "lscpu",
-                    "nproc", "fi_info", "namd3", "ssh", "aws", "sudo"})
+                    "nproc", "fi_info", "namd3", "ssh", "aws", "sudo", "loginctl"})
 
 # Each deck: its tarball's name, its top directory, its config, and the lines of its config (keywords as in the
 # decks on the NAMD utilities page, values synthetic).
@@ -200,10 +209,24 @@ echo "  Thread(s) per core:            1"
 echo "  Core(s) per socket:            ${per}"
 echo "  Socket(s):                     2"
 """
+# loginctl: logs its arguments to STATE/loginctl.log and answers `show-user <uid> -p State --value` as STUB_LOGIND
+# says: none (the default: exit 1, as for a user systemd-logind does not know), active, or closing:<n> (closing for
+# its first n calls, then exit 1, as once logind has freed the user).
+LOGINCTL_STUB = r"""#!/bin/bash
+printf '%s\n' "$*" >> "${STATE}/loginctl.log"
+calls=$(wc -l < "${STATE}/loginctl.log")
+case "${STUB_LOGIND:-none}" in
+    active) echo active; exit 0 ;;
+    closing:*) [ "${calls}" -le "${STUB_LOGIND#closing:}" ] && { echo closing; exit 0; }; exit 1 ;;
+    *) exit 1 ;;
+esac
+"""
 # mpirun: `mpirun --version` prints an Open MPI version line. For any other call it notes, in its own directory, its
-# arguments (one per line), its working directory, FI_PROVIDER ("unset" when none) and a copy of the run config (its
-# last argument); then it prints a synthetic namd.out (STUB_NAMD_OUT: complete, no-wallclock, zero-days, no-bench or
-# sci-days) and ends with STUB_RC. Like NAMD, it prints three "Initial time:" lines and then one "Benchmark time:" line
+# arguments (one per line), its working directory, FI_PROVIDER, FI_EFA_MR_CACHE_ENABLE and
+# FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE ("unset" when none), the number of loginctl calls made before it, and a copy of
+# the run config (its last argument); then it prints a synthetic namd.out (STUB_NAMD_OUT: complete, no-wallclock,
+# zero-days, no-bench or sci-days) and ends with STUB_RC. Like NAMD, it prints three "Initial time:" lines and then one
+# "Benchmark time:" line
 # per 100 steps from step 400 to 900 of the config's run length (its numsteps, or the steps of its run commands:
 # DHFR's "run $num_steps_run"); the last one gives STUB_DAYS days/ns, the others 0.5. As NAMD does, it prints the
 # numsteps parameter as NUMBER OF STEPS (0 when the config sets none) and, for a config with run commands, a
@@ -218,6 +241,9 @@ mkdir "${d}"
 printf '%s\n' "$@" > "${d}/args"
 pwd > "${d}/cwd"
 printf '%s' "${FI_PROVIDER-unset}" > "${d}/fi_provider"
+printf '%s' "${FI_EFA_MR_CACHE_ENABLE-unset}" > "${d}/efa_mr_cache"
+printf '%s' "${FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE-unset}" > "${d}/efa_medium_max"
+if [ -f "${STATE}/loginctl.log" ]; then wc -l < "${STATE}/loginctl.log" | tr -d ' ' > "${d}/loginctl_calls"; else echo 0 > "${d}/loginctl_calls"; fi
 conf="${!#}"
 [ -f "${conf}" ] && cp "${conf}" "${d}/config"
 read -r steps nparam tclrun <<< "$(awk 'tolower($1) == "numsteps" { n = $2 } $1 == "set" && $2 == "num_steps_run" { v = $3 }
@@ -295,6 +321,7 @@ class Job:
     srun: list[str]       # each srun call's arguments
     fi_info: list[str]    # each fi_info call's arguments
     lscpu: list[str]      # each lscpu call's LC_ALL
+    loginctl: list[str]   # each loginctl call's arguments
     base: Path            # BASE_DIR
     state: Path
     recorder: list[dict]  # the stub recorder's calls: args, cwd and env ({name: value})
@@ -398,20 +425,23 @@ def runnable_copy(work: Path, cpuinfo: str) -> Path:
 def run(work: Path, tools: Path, nodes: int = 1, env: dict[str, str | None] | None = None, imds: str = "ok",
         itype: str = "hpc8a.96xlarge", namd_out: str = "complete", rc: int = 0, cached: dict | None = None,
         decks: dict | None = None, builds: tuple = (HPC8A_BUILD,), cpuinfo: str = CPUINFO_AVX512,
-        psfgen: bool = True, kit: list[str] | None = None) -> Job:
+        psfgen: bool = True, kit: list[str] | None = None, loginctl: bool = True) -> Job:
     """Run the script as a job on `nodes` nodes, from `work`/submit, with BASE_DIR `work`/base.
 
     `imds` and `itype` set the stub instance metadata, `namd_out` and `rc` the stub mpirun's output and exit status.
     `cached` puts decks in the cache ({MODEL: config lines or None for the default}), `decks` changes the tarballs the
     stub curl serves ({MODEL: config lines}). `builds` are the synthetic builds ((dirname, exports), ...), `cpuinfo`
-    the node's /proc/cpuinfo, `psfgen` whether the builds hold psfgen, and `kit` the lines of the 20STMV scripts'
-    config. DYNAMODB_RECORDER is the stub recorder. `env` adds variables to the job's environment, or unsets them
-    (None)."""
+    the node's /proc/cpuinfo, `psfgen` whether the builds hold psfgen, `kit` the lines of the 20STMV scripts'
+    config, and `loginctl` whether the stub loginctl is on the PATH (STUB_LOGIND sets its answers). DYNAMODB_RECORDER
+    is the stub recorder. `env` adds variables to the job's environment, or unsets them (None)."""
     stubs, state, submit, base, served, tmp = (work / d for d in ("stubs", "state", "submit", "base", "decks", "tmp"))
     for d in (stubs, state, submit, base, served, tmp):
         d.mkdir(parents=True, exist_ok=True)
-    for name, text in {"curl": CURL_STUB, "srun": SRUN_STUB, "fi_info": FI_INFO_STUB, "nproc": NPROC_STUB,
-                       "lscpu": LSCPU_STUB, "mpirun": MPIRUN_STUB, "recorder-stub": RECORDER_STUB}.items():
+    stub_scripts = {"curl": CURL_STUB, "srun": SRUN_STUB, "fi_info": FI_INFO_STUB, "nproc": NPROC_STUB,
+                    "lscpu": LSCPU_STUB, "mpirun": MPIRUN_STUB, "recorder-stub": RECORDER_STUB}
+    if loginctl:
+        stub_scripts["loginctl"] = LOGINCTL_STUB
+    for name, text in stub_scripts.items():
         (stubs / name).write_text(text)
         (stubs / name).chmod(0o755)
     for model in DECKS:
@@ -446,6 +476,9 @@ def run(work: Path, tools: Path, nodes: int = 1, env: dict[str, str | None] | No
     for d in sorted(state.glob("mpirun-call-*"), key=lambda p: int(p.name.rsplit("-", 1)[1])):
         calls.append({"args": (d / "args").read_text().splitlines(), "cwd": (d / "cwd").read_text().strip(),
                       "fi_provider": (d / "fi_provider").read_text(),
+                      "efa_mr_cache": (d / "efa_mr_cache").read_text(),
+                      "efa_medium_max": (d / "efa_medium_max").read_text(),
+                      "loginctl_calls": int((d / "loginctl_calls").read_text()),
                       "config": (d / "config").read_text().splitlines() if (d / "config").exists() else None})
 
     def log(name: str) -> list[str]:
@@ -455,8 +488,8 @@ def run(work: Path, tools: Path, nodes: int = 1, env: dict[str, str | None] | No
     for d in sorted(state.glob("recorder-call-*"), key=lambda p: int(p.name.rsplit("-", 1)[1])):
         recorder.append({"args": (d / "args").read_text().splitlines(), "cwd": (d / "cwd").read_text().strip(),
                          "env": dict(line.split("=", 1) for line in (d / "env").read_text().splitlines())})
-    return Job(proc, calls, log("curl.log"), log("srun.log"), log("fi_info.log"), log("lscpu.log"), base, state,
-               recorder)
+    return Job(proc, calls, log("curl.log"), log("srun.log"), log("fi_info.log"), log("lscpu.log"), log("loginctl.log"),
+               base, state, recorder)
 
 
 def started(job: Job) -> dict:
@@ -499,6 +532,8 @@ def test_one_node_runs_one_process_with_191_pes_and_reports_the_last_benchmark_l
     assert namd_words(call) == [namd3, "+ppn", "191", "+setcpuaffinity", "+commap", "0-191:192", "+pemap",
                                 "1-191:192.191", "run-ApoA1.namd"]
     assert call["fi_provider"] == "unset"
+    assert call["efa_mr_cache"] == "unset" and call["efa_medium_max"] == "unset"
+    assert not any(line.startswith("EFA: ") for line in job.out)
     assert "NAMDRESULT model=ApoA1 nodes=1 ppn=191 instance=hpc8a.96xlarge days_per_ns=0.25 ns_per_day=4.0000 " \
            "wallclock=12.500000 procs_per_node=1" in job.out
     assert any(re.fullmatch(r"\s*model=ApoA1\s+nodes=1 x hpc8a\.96xlarge\s+procs/node=1\s+ppn=191\s+"
@@ -512,9 +547,150 @@ def test_two_nodes_check_efa_and_send_mpis_traffic_over_it(tmp_path, host_tools)
                                "--mca", "mtl", "ofi", "-x", "FI_PROVIDER", "-x", "FI_EFA_USE_DEVICE_RDMA", "-x",
                                "RDMAV_FORK_SAFE"]
     assert call["fi_provider"] == "efa"
+    # One process per node has 192 cores: more than 8, so libfabric's defaults apply (the README's "More than one
+    # node": with few, large processes the two settings make long runs slower).
+    assert call["efa_mr_cache"] == "unset" and call["efa_medium_max"] == "unset"
+    assert "EFA: libfabric's defaults (each process has 192 cores; the launcher sets FI_EFA_MR_CACHE_ENABLE=0 and " \
+           "FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE=0 with 8 or fewer)" in job.out
     assert job.fi_info == ["-p efa -t FI_EP_RDM"]
     assert "NAMDRESULT model=STMV nodes=2 ppn=191 instance=hpc8a.96xlarge days_per_ns=0.25 ns_per_day=4.0000 " \
            "wallclock=12.500000 procs_per_node=1" in job.out
+
+
+EFA_SETTINGS_PASSED = ["-x", "FI_EFA_MR_CACHE_ENABLE", "-x", "FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE"]
+
+
+@pytest.mark.parametrize("itype, cores, procs", [
+    pytest.param("hpc8a.96xlarge", 192, 24, id="hpc8a x 24: 8 cores each"),
+    pytest.param("hpc6a.48xlarge", 96, 12, id="hpc6a x 12: 8 cores each"),
+    pytest.param("hpc6id.32xlarge", 64, 8, id="hpc6id x 8: 8 cores each"),
+    pytest.param("c8i.96xlarge", 192, 48, id="c8i x 48: 4 cores each"),
+])
+def test_two_nodes_with_at_most_8_cores_per_process_set_the_efa_settings(itype, cores, procs, tmp_path, host_tools):
+    cpuinfo = CPUINFO_AVX2 if itype.startswith("hpc6a") else CPUINFO_AVX512
+    job = run(tmp_path, host_tools, nodes=2, itype=itype, builds=ALL_TARGETS, cpuinfo=cpuinfo,
+              env={"MODEL": "STMV", "PROCS_PER_NODE": str(procs), "SLURM_CPUS_ON_NODE": str(cores)})
+    call = started(job)
+    # No message's memory is registered with the EFA device: messages above one packet are copied into the provider's
+    # own registered buffers (the README's "More than one node").
+    assert call["efa_mr_cache"] == "0" and call["efa_medium_max"] == "0"
+    assert mpi_words(call)[-4:] == EFA_SETTINGS_PASSED
+    assert "EFA: FI_EFA_MR_CACHE_ENABLE=0 FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE=0" in job.out
+
+
+@pytest.mark.parametrize("itype, cores, procs", [
+    pytest.param("hpc8a.96xlarge", 192, 12, id="hpc8a x 12: 16 cores each"),
+    pytest.param("hpc8a.96xlarge", 192, 2, id="hpc8a x 2: 96 cores each"),
+    pytest.param("hpc6a.48xlarge", 96, 8, id="hpc6a x 8: 12 cores each"),
+    pytest.param("hpc6id.32xlarge", 64, 4, id="hpc6id x 4: 16 cores each"),
+    pytest.param("c8i.96xlarge", 192, 16, id="c8i x 16: 12 cores each"),
+])
+def test_two_nodes_with_more_than_8_cores_per_process_keep_libfabrics_defaults(itype, cores, procs, tmp_path,
+                                                                                host_tools):
+    cpuinfo = CPUINFO_AVX2 if itype.startswith("hpc6a") else CPUINFO_AVX512
+    job = run(tmp_path, host_tools, nodes=2, itype=itype, builds=ALL_TARGETS, cpuinfo=cpuinfo,
+              env={"MODEL": "STMV", "PROCS_PER_NODE": str(procs), "SLURM_CPUS_ON_NODE": str(cores)})
+    call = started(job)
+    assert call["efa_mr_cache"] == "unset" and call["efa_medium_max"] == "unset"
+    words = mpi_words(call)
+    assert "FI_EFA_MR_CACHE_ENABLE" not in words and "FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE" not in words
+    assert f"EFA: libfabric's defaults (each process has {cores // procs} cores; the launcher sets " \
+           "FI_EFA_MR_CACHE_ENABLE=0 and FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE=0 with 8 or fewer)" in job.out
+
+
+@pytest.mark.parametrize("given, mr_cache, medium_max", [
+    pytest.param({"FI_EFA_MR_CACHE_ENABLE": "0"}, "0", "0", id="the cache off"),
+    pytest.param({"FI_EFA_MR_CACHE_ENABLE": "false"}, "false", "0", id="the cache off as false"),
+    pytest.param({"FI_EFA_MR_CACHE_ENABLE": "OFF"}, "OFF", "0", id="the cache off as OFF"),
+    pytest.param({"FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE": "0"}, "0", "0", id="the medium protocol off"),
+])
+def test_one_setting_turned_off_in_the_jobs_environment_brings_both_with_larger_processes(given, mr_cache, medium_max,
+                                                                                          tmp_path, host_tools):
+    """One process per node (192 cores) gets no settings by default; a job that turns either off (for the cache 0, or
+    a word libfabric reads as off) gets both, its own value kept and the other 0, passed to the ranks."""
+    job = run(tmp_path, host_tools, nodes=2, env={"MODEL": "STMV", **given})
+    call = started(job)
+    assert call["efa_mr_cache"] == mr_cache and call["efa_medium_max"] == medium_max
+    assert mpi_words(call)[-4:] == EFA_SETTINGS_PASSED
+    assert f"EFA: FI_EFA_MR_CACHE_ENABLE={mr_cache} FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE={medium_max}" in job.out
+
+
+EFA_RESULT_FILE = {"FI_EFA_MR_CACHE_ENABLE": "efa_mr_cache", "FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE": "efa_medium_max"}
+
+
+@pytest.mark.parametrize("procs", [
+    pytest.param(1, id="1 process per node: 192 cores each"),
+    pytest.param(24, id="24 per node: 8 cores each"),
+])
+@pytest.mark.parametrize("given, other", [
+    pytest.param({"FI_EFA_MR_CACHE_ENABLE": "1"}, "FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE", id="the cache on"),
+    pytest.param({"FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE": "65536"}, "FI_EFA_MR_CACHE_ENABLE",
+                 id="the medium size 65536"),
+])
+def test_one_setting_left_on_in_the_jobs_environment_leaves_the_other_at_libfabrics_default(procs, given, other,
+                                                                                            tmp_path, host_tools):
+    """A job value that leaves its setting on (the cache on, a medium size above 0) is kept and passed whatever the
+    layout, and the other setting keeps libfabric's default: the launcher never makes the cache off with the medium
+    protocol on, nor the medium protocol off with the cache on."""
+    (name, value), = given.items()
+    job = run(tmp_path, host_tools, nodes=2, env={"MODEL": "STMV", "PROCS_PER_NODE": str(procs), **given})
+    call = started(job)
+    assert call[EFA_RESULT_FILE[name]] == value and call[EFA_RESULT_FILE[other]] == "unset"
+    words = mpi_words(call)
+    assert words[-2:] == ["-x", name] and other not in words
+    assert f"EFA: {name}={value}, and {other} at libfabric's default" in job.out
+
+
+@pytest.mark.parametrize("procs, mr_cache, medium_max", [
+    pytest.param(1, "unset", "unset", id="1 process per node: libfabric's defaults"),
+    pytest.param(24, "0", "0", id="24 per node: the launcher's settings"),
+])
+def test_an_empty_setting_in_the_jobs_environment_counts_as_none(procs, mr_cache, medium_max, tmp_path, host_tools):
+    job = run(tmp_path, host_tools, nodes=2,
+              env={"MODEL": "STMV", "PROCS_PER_NODE": str(procs), "FI_EFA_MR_CACHE_ENABLE": ""})
+    call = started(job)
+    assert call["efa_mr_cache"] == mr_cache and call["efa_medium_max"] == medium_max
+    if procs == 1:
+        assert "FI_EFA_MR_CACHE_ENABLE" not in mpi_words(call)
+        assert "EFA: libfabric's defaults (each process has 192 cores; " in "\n".join(job.out)
+    else:
+        assert mpi_words(call)[-4:] == EFA_SETTINGS_PASSED
+        assert "EFA: FI_EFA_MR_CACHE_ENABLE=0 FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE=0" in job.out
+
+
+def test_two_nodes_keep_the_efa_settings_the_job_already_sets(tmp_path, host_tools):
+    job = run(tmp_path, host_tools, nodes=2,
+              env={"FI_EFA_MR_CACHE_ENABLE": "1", "FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE": "65536"})
+    call = started(job)
+    assert call["efa_mr_cache"] == "1" and call["efa_medium_max"] == "65536"
+    assert mpi_words(call)[-4:] == EFA_SETTINGS_PASSED
+    assert "EFA: FI_EFA_MR_CACHE_ENABLE=1 FI_EFA_INTER_MAX_MEDIUM_MESSAGE_SIZE=65536" in job.out
+
+
+@pytest.mark.parametrize("nodes", [1, 2])
+def test_the_launcher_waits_while_logind_closes_the_user_before_mpirun(nodes, tmp_path, host_tools):
+    job = run(tmp_path, host_tools, nodes=nodes, env={"STUB_LOGIND": "closing:3"})
+    call = started(job)
+    # Three answers "closing", 0.5 s apart, then the freed user's error: four calls, all before mpirun.
+    assert job.loginctl == [f"show-user {os.getuid()} -p State --value"] * 4
+    assert call["loginctl_calls"] == 4
+    assert "==> waited 1.5 s while systemd-logind closed this user's session, before starting MPI" in job.out
+
+
+@pytest.mark.parametrize("logind", ["none", "active"])
+def test_no_wait_when_logind_is_not_closing_the_user(logind, tmp_path, host_tools):
+    job = run(tmp_path, host_tools, env={"STUB_LOGIND": logind})
+    call = started(job)
+    assert job.loginctl == [f"show-user {os.getuid()} -p State --value"]
+    assert call["loginctl_calls"] == 1
+    assert not any(line.startswith("==> waited ") for line in job.out)
+
+
+def test_no_loginctl_on_the_path_means_no_wait(tmp_path, host_tools):
+    job = run(tmp_path, host_tools, nodes=2, loginctl=False)
+    call = started(job)
+    assert job.loginctl == [] and call["loginctl_calls"] == 0
+    assert not any(line.startswith("==> waited ") for line in job.out)
 
 
 def test_no_efa_on_two_nodes_stops_the_job_before_mpirun(tmp_path, host_tools):
