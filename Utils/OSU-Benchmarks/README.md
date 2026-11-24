@@ -96,7 +96,7 @@ Every test runs, also after one that ends with another exit status than 0. The j
 
 ## Settings
 
-Pass the settings in the job's environment, as in `OSU_TESTS="latency bw" sbatch osu_benchmarks_openmpi.sbatch`: sbatch passes its environment to the job.
+Pass the settings in the job's environment, as in `OSU_TESTS="latency bw" sbatch osu_benchmarks_openmpi.sbatch`: sbatch passes its environment to the job. For why not in an `--export` list, see "Passing settings".
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -116,6 +116,10 @@ Pass the settings in the job's environment, as in `OSU_TESTS="latency bw" sbatch
 | `I_MPI_OFI_LIBRARY_INTERNAL` | `0` | Intel MPI: `0` uses the EFA installer's libfabric (see "EFA and MPI settings") |
 
 The Intel MPI job also sets `I_MPI_HYDRA_BOOTSTRAP=slurm`, whatever the job's environment gives (see "EFA and MPI settings"). An unknown test, an `OSU_PPN` out of its range, an odd number of ranks for `osu_mbw_mr` or `osu_multi_lat`, or a missing binary stops the job before any MPI starts, with a message that says why.
+
+## Passing settings
+
+Pass the settings above in the job's environment, as the examples do (`OSU_TESTS=latency sbatch ...`): sbatch passes its environment to the job. With an `--export` list instead (`sbatch --export=ALL,OSU_TESTS=latency ...`, or any other value but `ALL` or `NIL`, `NONE` included), Slurm loads your login environment on the job's first node with `su - <user>`, which opens and closes a systemd-logind session there. On nodes where systemd-logind removes a user's IPC objects once the user's last session has ended (`RemoveIPC=yes`, its default), your files in `/dev/shm` on that node are removed about 10 seconds later ([logind.conf](https://www.freedesktop.org/software/systemd/man/latest/logind.conf.html), `RemoveIPC=` and `UserStopDelaySec=`), including the shared memory that MPI creates for the ranks on the node. So before the first test, the job waits while systemd-logind closes such a session (`loginctl show-user <uid> -p State` reads `closing`), at most 30 seconds, and prints how long it waited; with no such session it does not wait.
 
 ## Both MPIs on the same nodes
 

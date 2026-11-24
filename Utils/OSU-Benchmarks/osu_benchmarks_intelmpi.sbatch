@@ -278,6 +278,27 @@ run_test() {
     env "${vars[@]}" mpirun -np "$2" -ppn "$3" "$1" "${OSU_ARGV[@]}"
 }
 
+# >>> shared: logind wait
+# A job submitted with an sbatch --export list (any value but ALL or NIL, NONE included) starts with Slurm loading the
+# user's login environment (su - <user>) on the job's first node. That opens and closes a systemd-logind session, and
+# where logind removes a user's IPC objects once the user's last session has ended (RemoveIPC=yes, its default), it
+# removes the user's files in /dev/shm about 10 seconds later (UserStopDelaySec), the shared memory MPI creates for
+# the ranks on a node among them. So while logind is closing this user, the job waits, at most 30 s, before the first
+# test: logind is done with the user right after that clean-up. With no such session (a job submitted without an
+# --export list, a user with an open session or lingering), loginctl answers at once and nothing waits.
+LOGIND_WAITED=0
+if command -v loginctl >/dev/null 2>&1; then
+    while [ "$(loginctl show-user "$(id -u)" -p State --value 2>/dev/null)" = closing ] && (( LOGIND_WAITED < 60 )); do
+        sleep 0.5
+        LOGIND_WAITED=$(( LOGIND_WAITED + 1 ))
+    done
+    if (( LOGIND_WAITED > 0 )); then
+        echo "==> waited $(( LOGIND_WAITED / 2 )).$(( LOGIND_WAITED % 2 * 5 )) s while systemd-logind closed this" \
+             "user's session, before starting MPI"
+    fi
+fi
+# <<< shared: logind wait
+
 # >>> shared: tests
 STATUS=()
 for t in "${TESTS[@]}"; do
