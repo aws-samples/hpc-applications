@@ -85,8 +85,8 @@ two hours (`#SBATCH --time=02:00:00`); pass `sbatch --time` to change it.
 # ApoA1 on one node
 sbatch --nodes=1 x86/namd-benchmark.sbatch
 
-# STMV on four hpc8a.96xlarge nodes, over EFA, with 24 processes per node (see "More than one node")
-MODEL=STMV PROCS_PER_NODE=24 sbatch --nodes=4 x86/namd-benchmark.sbatch
+# STMV on four hpc8a.96xlarge nodes, over EFA, with 48 processes per node (see "More than one node")
+MODEL=STMV PROCS_PER_NODE=48 sbatch --nodes=4 x86/namd-benchmark.sbatch
 
 # ApoA1 on one hpc7a.96xlarge
 sbatch -p hpc7a -C hpc7a.96xlarge x86/namd-benchmark.sbatch
@@ -160,12 +160,16 @@ number.
   and the worker threads the others. Every node of the run uses the same cores.
 - With more than one process per node, `PPN` is G − 1: leave it unset. With one process, a `PPN` equal to the node's
   cores leaves no core for the communication thread: Charm++ then places the threads, and a `NOTE:` says so.
-- On hpc8a.96xlarge and hpc7a.96xlarge, each process's group must be whole CCDs of 8 cores: P = 1, 2, 3, 4, 6, 8, 12
-  or 24. Any other P stops the job before anything runs.
+- On hpc8a.96xlarge and hpc7a.96xlarge, each process's group must be whole CCDs of 8 cores, or half of one: P = 1, 2,
+  3, 4, 6, 8, 12, 24 or 48. At 48, two processes of 4 cores share each CCD and its L3 cache. Any other P stops the job
+  before anything runs.
+- Submit without `--ntasks-per-node`, as the examples do, or with `--ntasks-per-node` equal to `PROCS_PER_NODE`:
+  Open MPI starts at most Slurm's tasks per node on each node, so with fewer tasks per node than `PROCS_PER_NODE`
+  the run does not start.
 
 | Instance | Cores | P that the launcher takes |
 |---|--:|---|
-| hpc8a.96xlarge, hpc7a.96xlarge | 192 | 1, 2, 3, 4, 6, 8, 12, 24 |
+| hpc8a.96xlarge, hpc7a.96xlarge | 192 | 1, 2, 3, 4, 6, 8, 12, 24, 48 |
 | m8a.48xlarge, c8i.96xlarge, r8i.96xlarge | 192 | any divisor of 192 up to 96 |
 | hpc6a.48xlarge | 96 | any divisor of 96 up to 48 |
 | hpc6id.32xlarge | 64 | any divisor of 64 up to 32 |
@@ -182,11 +186,13 @@ On more than one node, two things set NAMD's speed beyond the node count: the nu
 set, and two libfabric settings for EFA, which the launcher sets when each process has at most 8 cores.
 
 **The processes per node.** Each process's communication thread carries all of that process's messages to other
-processes, so on more than one node the process count sets how many threads share that work. Give each process 8
-cores. This was measured on hpc8a.96xlarge, where `PROCS_PER_NODE=24` (8 cores per process), with the EFA settings
-below, ran fastest on two nodes of the six layouts measured, on both bases of the tables below, and on hpc6id.32xlarge,
-which ran 8 processes per node of 8 cores. For the other types the advice is applied by cores per process: 24
-processes per node on hpc7a.96xlarge, m8a.48xlarge, c8i.96xlarge and r8i.96xlarge, and 12 on hpc6a.48xlarge.
+processes, so on more than one node the process count sets how many threads share that work. On two nodes, give each
+process 8 cores; on four or more, 4. This was measured on hpc8a.96xlarge with the EFA settings below. On two nodes,
+`PROCS_PER_NODE=24` (8 cores per process) ran fastest of the seven layouts measured, on both bases of the tables below;
+on four and eight nodes, `PROCS_PER_NODE=48` (4 cores per process) ran 1.29 and 1.38 times as fast as 24 on the
+launcher's result. On hpc6id.32xlarge, 8 processes per node of 8 cores ran on two nodes. For the other types the
+advice is applied by cores per process: 24 or 48 processes per node on hpc7a.96xlarge, m8a.48xlarge, c8i.96xlarge and
+r8i.96xlarge, 12 or 24 on hpc6a.48xlarge, and 8 or 16 on hpc6id.32xlarge.
 
 **The EFA settings.** By default, libfabric's EFA provider registers the memory of each message larger than one
 packet with the EFA device as it sends it, through a cache that finds an earlier registration only when the new
@@ -226,12 +232,20 @@ step of steps 5,001 to 10,000.
 
 | hpc8a.96xlarge, 2 nodes: processes per node (cores each) | With the two settings: the launcher's result | With them: steps 5,001 to 10,000 | Without them: the launcher's result | Without them: steps 5,001 to 10,000 | The launcher |
 |---|--:|--:|--:|--:|---|
+| 48 (4) | 2.06× | 1.99× | not measured | not measured | sets them |
 | 24 (8) | 1.93× | 1.92× | 0.77× | 1.54× | sets them |
 | 12 (16) | 1.11× | 1.11× | not measured | not measured | leaves the defaults |
 | 8 (24) | 0.88× | 0.90× | 0.50× | 1.08× | leaves the defaults |
 | 4 (48) | 0.45× | 0.45× | 0.44× | 0.78× | leaves the defaults |
 | 2 (96) | 0.45× | 0.45× | 0.43× | 0.73× | leaves the defaults |
 | 1 (192) | 0.23× | 0.23× | 0.26× | 0.39× | leaves the defaults |
+
+| hpc8a.96xlarge, 48 processes per node of 3 worker threads (4 cores each), with the two settings | Against one node at 48 per node: the launcher's result | Against one node: steps 5,001 to 10,000 | Against 24 processes per node, the same allocation: the launcher's result | Against 24: steps 5,001 to 10,000 |
+|---|--:|--:|--:|--:|
+| 1 node | 1.00× | 1.00× | 0.91× | 0.89× |
+| 2 nodes | 2.06× | 1.99× | 0.94× | 0.97× |
+| 4 nodes | 3.83× | 3.81× | 1.29× | 1.30× |
+| 8 nodes | 6.15× | 6.11× | 1.38× | 1.44× |
 
 | hpc6id.32xlarge, 2 nodes, 8 processes per node of 7 worker threads (8 cores each) | With the two settings | Without them |
 |---|--:|--:|
@@ -269,7 +283,7 @@ values.
 - With no instance type from the instance metadata, a node that `lscpu` shows as AMD with 192 cores could be either
   type, so it gets the same check and lists, with a `NOTE:` on stderr. Any other node runs with no list, with a `NOTE:`
   that the check was skipped. The launcher reads `lscpu` only where the type changes what the job does: one process
-  below a full node, or groups that are not whole CCDs.
+  below a full node, or groups that are neither whole CCDs nor half of one.
 - Other instance types and sizes get no list and no check.
 
 ## Benchmark models

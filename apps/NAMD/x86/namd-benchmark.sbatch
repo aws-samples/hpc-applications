@@ -154,15 +154,16 @@ fi
 # job here, before anything runs. Below a full node, the threads are pinned to
 # the flexible-cores list of PPN + 1 cores: the communication thread to its
 # first core (+commap), the worker threads to the others (+pemap). With more
-# than one process per node, each process's G cores must be whole CCDs: P = 1,
-# 2, 3, 4, 6, 8, 12 or 24.
+# than one process per node, each process's G cores must be whole CCDs, or half
+# of one, so that every CCD holds the same threads: P = 1, 2, 3, 4, 6, 8, 12, 24
+# or 48 (at 48, two processes of 4 cores on each CCD).
 # With no instance type from the instance metadata, a node that lscpu shows as
 # AMD with 192 cores (sockets x cores per socket) could be either type and gets
 # the same check and lists; any other node runs with no list, with a NOTE on
 # stderr. lscpu is asked, and a NOTE printed, only where the type changes what
-# the job does: one process below a full node, or processes of a size that is
-# not a whole number of CCDs. Other instance types and sizes get no list and no
-# check.
+# the job does: one process below a full node, or processes whose cores are
+# neither whole CCDs nor half of one. Other instance types and sizes get no list
+# and no check.
 amd_192_cores() {
   local info vendor sockets per_socket
   info="$(LC_ALL=C lscpu 2>/dev/null)" || return 1
@@ -191,7 +192,7 @@ case "${INSTANCE_TYPE}" in
   hpc8a.96xlarge|hpc7a.96xlarge)
     FLEX_NODE="${INSTANCE_TYPE}"; FLEX_ON="this type" ;;
   "")
-    if { (( P == 1 && PPN + 1 < CORES_PER_NODE )) || (( P > 1 && G % 8 != 0 )); }; then
+    if { (( P == 1 && PPN + 1 < CORES_PER_NODE )) || (( P > 1 && G % 8 != 0 && G != 4 )); }; then
       if amd_192_cores; then
         FLEX_NODE="this 192-core AMD node"; FLEX_ON="this node"
         echo "NOTE: no instance type from the instance metadata; lscpu shows a 192-core AMD node, which could be an hpc8a.96xlarge or hpc7a.96xlarge, so their cores-per-node check and flexible-cores lists apply" >&2
@@ -202,8 +203,8 @@ case "${INSTANCE_TYPE}" in
 esac
 MAP_ARGS=()
 if [ -n "${FLEX_NODE}" ] && (( P > 1 )); then
-  (( G % 8 == 0 )) \
-    || fail "PROCS_PER_NODE=${P} gives each process ${G} cores, which would load the 24 CCDs of ${FLEX_NODE} unevenly; on ${FLEX_ON} use PROCS_PER_NODE=1, 2, 3, 4, 6, 8, 12 or 24 (see Utils/flexible-cores/)"
+  (( G % 8 == 0 || G == 4 )) \
+    || fail "PROCS_PER_NODE=${P} gives each process ${G} cores, which would load the 24 CCDs of ${FLEX_NODE} unevenly; on ${FLEX_ON} use PROCS_PER_NODE=1, 2, 3, 4, 6, 8, 12, 24 or 48 (see Utils/flexible-cores/)"
 elif [ -n "${FLEX_NODE}" ]; then
   case "${PPN}" in
     191|192) ;;   # the whole node

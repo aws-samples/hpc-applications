@@ -48,8 +48,8 @@ These tests pin:
 - processes per node (PROCS_PER_NODE, P): mpirun's -np and --map-by, and on a full node each process on G = cores / P
   consecutive cores, its communication thread on the first (+commap 0-<C-1>:G) and its G - 1 PEs on the others
   (+pemap 1-<C-1>:G.<G-1>), which these tests expand as Charm++ does and check core by core; the P values refused
-  (on hpc8a.96xlarge and hpc7a.96xlarge, groups that are not whole CCDs); NAMD_EXTRA_ARGS; and the mpirun command line
-  the job log prints.
+  (on hpc8a.96xlarge and hpc7a.96xlarge, groups that are neither whole CCDs nor half of one); NAMD_EXTRA_ARGS; and the
+  mpirun command line the job log prints.
 
 They run the script with stubs of curl (the instance metadata and the deck downloads), srun, fi_info, nproc, lscpu,
 loginctl, mpirun and the contribution recorder (DYNAMODB_RECORDER), from a temporary directory, with a clean
@@ -562,6 +562,7 @@ EFA_SETTINGS_PASSED = ["-x", "FI_EFA_MR_CACHE_ENABLE", "-x", "FI_EFA_INTER_MAX_M
 
 @pytest.mark.parametrize("itype, cores, procs", [
     pytest.param("hpc8a.96xlarge", 192, 24, id="hpc8a x 24: 8 cores each"),
+    pytest.param("hpc8a.96xlarge", 192, 48, id="hpc8a x 48: 4 cores each"),
     pytest.param("hpc6a.48xlarge", 96, 12, id="hpc6a x 12: 8 cores each"),
     pytest.param("hpc6id.32xlarge", 64, 8, id="hpc6id x 8: 8 cores each"),
     pytest.param("c8i.96xlarge", 192, 48, id="c8i x 48: 4 cores each"),
@@ -1167,14 +1168,34 @@ def test_more_than_one_process_takes_ppn_g_minus_1_only(tmp_path, host_tools):
 
 def procs_error(procs: int, node: str, on: str) -> str:
     return (f"ERROR: PROCS_PER_NODE={procs} gives each process {192 // procs} cores, which would load the 24 CCDs of "
-            f"{node} unevenly; on {on} use PROCS_PER_NODE=1, 2, 3, 4, 6, 8, 12 or 24 (see Utils/flexible-cores/)")
+            f"{node} unevenly; on {on} use PROCS_PER_NODE=1, 2, 3, 4, 6, 8, 12, 24 or 48 (see Utils/flexible-cores/)")
 
 
-@pytest.mark.parametrize("procs", [16, 32, 48, 64, 96])
+@pytest.mark.parametrize("procs", [16, 32, 64, 96])
 @pytest.mark.parametrize("itype", FLEX_TYPES)
-def test_on_hpc8a_and_hpc7a_groups_that_are_not_whole_ccds_stop_the_job(itype, procs, tmp_path, host_tools):
+def test_on_hpc8a_and_hpc7a_groups_that_are_neither_whole_ccds_nor_half_of_one_stop_the_job(itype, procs, tmp_path,
+                                                                                            host_tools):
     job = run(tmp_path, host_tools, itype=itype, builds=ALL_TARGETS, env={"PROCS_PER_NODE": str(procs)})
     assert_refused(job, procs_error(procs, itype, "this type"))
+
+
+@pytest.mark.parametrize("itype", FLEX_TYPES)
+def test_on_hpc8a_and_hpc7a_48_processes_take_half_a_ccd_each(itype, tmp_path, host_tools):
+    """At 48 processes per node each process's 4 cores lie in one CCD, and every CCD holds two processes: its 8 cores
+    carry two communication threads and six worker threads."""
+    job = run(tmp_path, host_tools, itype=itype, builds=ALL_TARGETS, env={"PROCS_PER_NODE": "48", "MODEL": "STMV"})
+    call = started(job)
+    assert mpi_words(call)[:6] == ["-np", "48", "--map-by", "ppr:48:node", "--bind-to", "none"]
+    assert namd_words(call)[1:3] == ["+ppn", "3"]
+    assert maps(call) == ("0-191:4", "1-191:4.3")
+    assert_whole_groups(call, 192, 48)
+    placed = process_cores(call, 48, 3)
+    assert all(len({c // 8 for c in (comm, *pes)}) == 1 for comm, pes in placed)
+    assert [sum(comm // 8 == ccd for comm, _ in placed) for ccd in range(24)] == [2] * 24
+    assert [sum(c // 8 == ccd for comm, pes in placed for c in (comm, *pes)) for ccd in range(24)] == [8] * 24
+    assert job.lscpu == []
+    (result,) = [line for line in job.out if line.startswith("NAMDRESULT ")]
+    assert " ppn=3 " in result and result.endswith(" procs_per_node=48")
 
 
 def test_with_no_type_lscpu_decides_for_groups_that_are_not_whole_ccds(tmp_path, host_tools):
@@ -1186,6 +1207,9 @@ def test_with_no_type_lscpu_decides_for_groups_that_are_not_whole_ccds(tmp_path,
     assert NOTE_SKIP in job.err
     job = run(tmp_path / "whole", host_tools, imds="none", env={"PROCS_PER_NODE": "4"})
     assert_whole_groups(started(job), 192, 4)
+    assert job.lscpu == []
+    job = run(tmp_path / "half", host_tools, imds="none", env={"PROCS_PER_NODE": "48"})
+    assert_whole_groups(started(job), 192, 48)
     assert job.lscpu == []
 
 
